@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.metadata
 import importlib.util
 import json
+import math
 import os
 import platform
 import subprocess
@@ -19,6 +20,13 @@ OPTIONAL_PACKAGES: dict[str, tuple[str, ...]] = {
     "tensorrt": ("tensorrt",),
     "cv2": ("opencv-python", "opencv-python-headless"),
 }
+DEFAULT_PROBE_TIMEOUT_SECONDS = 20.0
+
+
+def _validated_probe_timeout(probe_timeout_seconds: float) -> float:
+    if not math.isfinite(probe_timeout_seconds) or probe_timeout_seconds <= 0:
+        raise ValueError("probe_timeout_seconds must be a positive finite number")
+    return probe_timeout_seconds
 
 
 def _safe_error(error: object, limit: int = 300) -> str:
@@ -44,7 +52,13 @@ def _distribution_version(distributions: tuple[str, ...]) -> str | None:
     return None
 
 
-def _isolated_probe(module_name: str, include_cuda: bool) -> dict[str, Any]:
+def _isolated_probe(
+    module_name: str,
+    include_cuda: bool,
+    *,
+    probe_timeout_seconds: float = DEFAULT_PROBE_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    probe_timeout_seconds = _validated_probe_timeout(probe_timeout_seconds)
     script = (
         "import importlib,json;"
         f"m=importlib.import_module({module_name!r});"
@@ -58,7 +72,7 @@ def _isolated_probe(module_name: str, include_cuda: bool) -> dict[str, Any]:
             capture_output=True,
             check=False,
             text=True,
-            timeout=20,
+            timeout=probe_timeout_seconds,
         )
     except subprocess.TimeoutExpired:
         return {"probe_status": "timeout", "error": "isolated import probe timed out"}
@@ -77,8 +91,14 @@ def _isolated_probe(module_name: str, include_cuda: bool) -> dict[str, Any]:
     return {"probe_status": "ok", "runtime": payload, "error": None}
 
 
-def inspect_optional_package(module_name: str, distributions: tuple[str, ...]) -> dict[str, Any]:
+def inspect_optional_package(
+    module_name: str,
+    distributions: tuple[str, ...],
+    *,
+    probe_timeout_seconds: float = DEFAULT_PROBE_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     """Inspect module metadata before any isolated import probe."""
+    probe_timeout_seconds = _validated_probe_timeout(probe_timeout_seconds)
     present, discovery_error = _module_present(module_name)
     version = _distribution_version(distributions)
     result: dict[str, Any] = {
@@ -91,7 +111,11 @@ def inspect_optional_package(module_name: str, distributions: tuple[str, ...]) -
         return result
 
     if module_name == "torch" or version is None:
-        probe = _isolated_probe(module_name, include_cuda=module_name == "torch")
+        probe = _isolated_probe(
+            module_name,
+            include_cuda=module_name == "torch",
+            probe_timeout_seconds=probe_timeout_seconds,
+        )
         result.update(probe)
         runtime = result.get("runtime")
         if version is None and isinstance(runtime, dict):
@@ -112,10 +136,17 @@ def _ram_bytes() -> int | None:
     return page_size * physical_pages
 
 
-def doctor_report() -> dict[str, Any]:
+def doctor_report(
+    *, probe_timeout_seconds: float = DEFAULT_PROBE_TIMEOUT_SECONDS
+) -> dict[str, Any]:
     """Return a best-effort environment report without requiring ML packages."""
+    probe_timeout_seconds = _validated_probe_timeout(probe_timeout_seconds)
     packages = {
-        module: inspect_optional_package(module, distributions)
+        module: inspect_optional_package(
+            module,
+            distributions,
+            probe_timeout_seconds=probe_timeout_seconds,
+        )
         for module, distributions in OPTIONAL_PACKAGES.items()
     }
     optional_errors = any(
