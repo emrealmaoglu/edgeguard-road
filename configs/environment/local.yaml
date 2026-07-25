@@ -1,0 +1,3 @@
+# Declarative placeholder only; environment composition begins after WP-02 inventory.
+environment_id: local
+inventory_required: true

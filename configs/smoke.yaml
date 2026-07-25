@@ -1,0 +1,18 @@
+# Complete standalone configuration for the CPU-only synthetic smoke pipeline.
+schema_version: "1.0"
+project_name: edgeguard-road
+contract_version: "1.0"
+record_schema_version: "1.0"
+pipeline_name: dummy-smoke
+seed: 20260725
+input:
+  batch_size: 1
+  height: 32
+  width: 64
+  channels: 3
+model:
+  backend: dummy
+  num_classes: 4
+scorer:
+  name: dummy-normalized-magnitude
+  epsilon: 1.0e-6

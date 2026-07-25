@@ -1,0 +1,2 @@
+# Do not install CUDA, TensorRT, or Jetson PyTorch from PyPI before WP-02 inventory.
+-e .[jetson]

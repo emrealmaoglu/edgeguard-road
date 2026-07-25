@@ -1,0 +1,2 @@
+# Runtime-specific versions remain unpinned until WP-02 environment inventory.
+-e .[colab]

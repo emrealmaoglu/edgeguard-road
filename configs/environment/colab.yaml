@@ -1,0 +1,3 @@
+# Colab runtime and GPU versions must be measured on every session.
+environment_id: colab
+inventory_required: true

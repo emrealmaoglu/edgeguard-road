@@ -1,0 +1,58 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+
+# Data and external caches
+data/raw/
+data/processed/
+data/external/
+data/cache/
+datasets/
+cache/
+logits/
+*.npy
+*.npz
+
+# Models and deployment artifacts
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.plan
+
+# Videos and generated media
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Runtime artifacts: keep only policy and examples
+artifacts/**
+!artifacts/README.md
+!artifacts/manifest.example.json
+
+# Colab scratch files
+.config/
+drive/
+colab_tmp/
