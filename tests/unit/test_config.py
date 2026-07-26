@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from edgeguard.config import config_sha256, load_base_config, load_smoke_config
+from edgeguard.config import (
+    config_sha256,
+    load_base_config,
+    load_pidnet_spike_config,
+    load_smoke_config,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -24,6 +29,30 @@ def test_config_hash_is_stable() -> None:
 
     assert config_sha256(config) == config_sha256(config.model_copy(deep=True))
     assert len(config_sha256(config)) == 64
+
+
+def test_pidnet_spike_config_is_complete_and_pinned() -> None:
+    config = load_pidnet_spike_config(REPO_ROOT / "configs/pidnet_spike.yaml")
+
+    assert config.upstream.commit == "4c158cf24ce432f0a8cb43364fae38d93cee0dc3"
+    assert config.checkpoint.filename == "PIDNet_S_Cityscapes_val.pt"
+    assert config.checkpoint.license_status == "OPEN QUESTION"
+    assert config.sample.primary.relative_path == (
+        "samples/frankfurt_000000_002196_leftImg8bit.png"
+    )
+    assert config.sample.primary.sha256 == (
+        "78c65d3055fbd62e41d066813132c971a85dcdea4e5ef5459bad410bccead246"
+    )
+    assert config.sample.dataset_role == "plumbing_only"
+    assert config.input.model_dump() == {
+        "batch_size": 1,
+        "height": 512,
+        "width": 1024,
+        "channels": 3,
+        "color_space": "RGB",
+    }
+    assert config.model.augment is False
+    assert config.scorers == ("msp", "predictive_entropy")
 
 
 def test_smoke_config_rejects_duplicate_root_seed(tmp_path: Path) -> None:

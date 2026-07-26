@@ -2,20 +2,31 @@
 
 ## Backlog
 
-- WP-02 environment inventory.
-- WP-03 dataset role, license, and manifest infrastructure.
-- WP-04 dataset contracts and first adapters.
+- Stage 3: only after a successful human-reviewed real forward and source-integration
+  decision, implement the chosen PIDNet path and minimum Cityscapes val adapter.
+- Stage 4: only after scoring works and license/access approval, implement the
+  Fishyscapes Lost & Found validation development adapter.
+- Stage 5: run a native-logit ONNX measurement pilot without pre-freezing numerical
+  gates.
 
 ## Ready
 
-- None until human review of WP-01.
+- Human retrieval/upload of the exact official `PIDNet_S_Cityscapes_val.pt`, hash
+  review, and Colab execution of `notebooks/colab/01_pidnet_single_image_spike.ipynb`.
 
 ## In Progress
 
-- WP-01 human review and first local commit decision.
+- Stage 2 real-forward gate: upstream sample is verified; awaiting official-folder
+  checkpoint retrieval, filename/size/hash review, Colab execution, and visual sanity.
 
 ## Done
 
-- WP-00 initial governance scope and authority boundaries drafted.
-- WP-01 implementation and local verification: package, configs, contracts, synthetic
-  smoke pipeline, doctor, tests, CI, and thin Colab wrapper.
+- WP-00 governance foundation.
+- WP-01 repository, package, contract, smoke, doctor, test, and CI foundation.
+- WP-02 environment inventory tooling and configurable probe timeout.
+- Stage 1 source/evidence review and human approval of the PIDNet commit, dataset
+  roles, sealed SMIYC boundary, and restricted academic checkpoint usage.
+- Stage 2 local preparation: legal-image loader/manifest, preprocessing, strict
+  checkpoint guards, PIDNet runner, native/aligned output metadata, MSP/entropy,
+  repeat diagnostics, Colab execution notebook, fixed-checkout primary/fallback
+  sample provenance, official checkpoint access probe, and 98 passing local tests.

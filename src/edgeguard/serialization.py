@@ -9,6 +9,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import numpy.typing as npt
 from pydantic import BaseModel
 
 
@@ -41,3 +43,25 @@ def canonical_json(value: Any) -> str:
 def sha256_payload(value: Any) -> str:
     """Return the SHA-256 digest of a canonical JSON payload."""
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    """Hash a file as raw bytes without loading it all into memory."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def sha256_array(array: npt.NDArray[Any]) -> str:
+    """Hash array dtype, shape, and C-order bytes deterministically."""
+    contiguous = np.ascontiguousarray(array)
+    descriptor = {
+        "dtype": contiguous.dtype.str,
+        "shape": [int(dimension) for dimension in contiguous.shape],
+    }
+    digest = hashlib.sha256(canonical_json(descriptor).encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(contiguous.tobytes(order="C"))
+    return digest.hexdigest()
