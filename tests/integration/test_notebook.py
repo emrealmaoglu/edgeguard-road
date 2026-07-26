@@ -1,11 +1,13 @@
 """Static checks for the thin Colab execution wrapper."""
 
 import json
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NOTEBOOK = REPO_ROOT / "notebooks/colab/00_environment_and_smoke.ipynb"
 PIDNET_NOTEBOOK = REPO_ROOT / "notebooks/colab/01_pidnet_single_image_spike.ipynb"
+CITYSCAPES_NOTEBOOK = REPO_ROOT / "notebooks/colab/02_pidnet_cityscapes_val_eval.ipynb"
 PIDNET_RUNNER = REPO_ROOT / "scripts/run_pidnet_spike.py"
 
 
@@ -70,3 +72,31 @@ def test_pidnet_notebook_is_valid_execution_only_wrapper() -> None:
     runner_source = PIDNET_RUNNER.read_text(encoding="utf-8")
     assert '"command": ["python", "scripts/run_pidnet_spike.py"]' in runner_source
     assert "list(sys.argv)" not in runner_source
+
+
+def test_cityscapes_eval_notebook_is_thin_and_claim_safe() -> None:
+    payload = json.loads(CITYSCAPES_NOTEBOOK.read_text(encoding="utf-8"))
+
+    assert payload["nbformat"] == 4
+    assert payload["nbformat_minor"] >= 5
+    assert all(not cell.get("outputs") for cell in payload["cells"])
+    source = "\n".join(line for cell in payload["cells"] for line in cell.get("source", []))
+    assert "EdgeGuard-Road single-scale PIDNet-S Cityscapes-val evaluation" in source
+    assert "does not claim reproduction of the official PIDNet paper protocol" in source
+    assert "https://github.com/emrealmaoglu/edgeguard-road.git" in source
+    assert "Reviewed Commit C SHA" in source
+    assert "configs/cityscapes_eval_colab.yaml" in source
+    assert "scripts/verify_pidnet_checkpoint.py" in source
+    assert "scripts/prepare_cityscapes.py" in source
+    assert "scripts/run_cityscapes_eval.py" in source
+    assert "scripts/package_eval_artifacts.py" in source
+    assert re.search(r'"--subset-size"\s*,\s*"1"', source)
+    assert '"--all"' in source
+    assert re.search(r'"--device"\s*,\s*"cuda"', source)
+    assert "drive.mount" in source
+    assert "files.download" in source
+    assert "/Users/emrealmaoglu" not in source
+    assert "weights_only=False" not in source
+    lowered = source.lower()
+    for prohibited in ("api_key", "password=", "token=", "credential="):
+        assert prohibited not in lowered

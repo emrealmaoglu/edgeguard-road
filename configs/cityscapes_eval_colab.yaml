@@ -1,0 +1,45 @@
+schema_version: "1.0"
+project_name: edgeguard-road
+contract_version: "1.0"
+record_schema_version: "1.0"
+pipeline_name: pidnet-s-cityscapes-val-eval
+seed: 20260726
+dataset_name: Cityscapes
+dataset_role: id_validation/semantic_development
+split: val
+upstream:
+  repository_url: https://github.com/XuJiacong/PIDNet.git
+  commit: 4c158cf24ce432f0a8cb43364fae38d93cee0dc3
+checkpoint:
+  filename: PIDNet_S_Cityscapes_val.pt
+  sha256: b51aa935bdb64a0779d776f38267fd49f7cce59413910abbbf0a74934b3d7c01
+  repository_page: https://github.com/XuJiacong/PIDNet
+  source_url: https://drive.google.com/drive/folders/0BySIOtxxULinfjlGdGFiT3NQVUdLVDBxWnhhTjB4VXNBRkFOa281WHlkektYY2VBcWVZb1k?resourcekey=0-w0JIXUekD-FCW-Rm1Z-HfQ&usp=sharing
+  source_reference_access_date: "2026-07-26"
+  license_status: OPEN QUESTION
+  permitted_use: non-commercial academic thesis research
+input:
+  batch_size: 1
+  height: 1024
+  width: 2048
+  channels: 3
+  color_space: RGB
+metric_grid: source_label
+preprocess:
+  resize_mode: bilinear
+  pixel_scale: 0.00392156862745098
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+model:
+  backend: pidnet_s
+  num_classes: 19
+  augment: false
+alignment:
+  mode: bilinear
+  target: model_input
+  align_corners: true
+selection:
+  strategy: city_round_robin_v1
+scorers: [msp, predictive_entropy, max_logit, energy]
+energy_temperature: 1.0
+visual_count: 5

@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from edgeguard.config import (
     config_sha256,
     load_base_config,
+    load_pidnet_eval_config,
     load_pidnet_spike_config,
     load_smoke_config,
 )
@@ -108,3 +109,19 @@ def test_invalid_config_fails_fast(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError):
         load_smoke_config(invalid)
+
+
+def test_local_and_colab_eval_configs_are_independent_and_path_free() -> None:
+    local_path = REPO_ROOT / "configs/cityscapes_eval_local.yaml"
+    colab_path = REPO_ROOT / "configs/cityscapes_eval_colab.yaml"
+
+    local = load_pidnet_eval_config(local_path)
+    colab = load_pidnet_eval_config(colab_path)
+
+    assert (local.input.height, local.input.width) == (512, 1024)
+    assert local.metric_grid == "resized_model_input"
+    assert (colab.input.height, colab.input.width) == (1024, 2048)
+    assert colab.metric_grid == "source_label"
+    assert local.scorers == ("msp", "predictive_entropy", "max_logit", "energy")
+    assert "/Users/" not in local_path.read_text(encoding="utf-8")
+    assert "/content/" not in colab_path.read_text(encoding="utf-8")

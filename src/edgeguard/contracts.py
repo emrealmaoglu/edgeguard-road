@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from pathlib import PurePosixPath
 from typing import Any, Literal
 
 import numpy as np
@@ -203,6 +204,7 @@ class ArtifactManifest(GitProvenanceRecord):
     input_shape: list[int] = Field(min_length=1)
     precision: str = Field(min_length=1)
     environment: dict[str, Any]
+    files: dict[str, str] = Field(default_factory=dict)
     created_at: datetime
     created_by: str = Field(min_length=1)
     notes: str | None = None
@@ -213,6 +215,20 @@ class ArtifactManifest(GitProvenanceRecord):
         """Reject empty or non-positive artifact input dimensions."""
         if any(dimension <= 0 for dimension in value):
             raise ValueError("input_shape dimensions must be positive")
+        return value
+
+    @field_validator("files")
+    @classmethod
+    def require_safe_file_hashes(cls, value: dict[str, str]) -> dict[str, str]:
+        """Require relative POSIX artifact names and lowercase SHA-256 values."""
+        for name, digest in value.items():
+            path = PurePosixPath(name)
+            if not name or path.is_absolute() or ".." in path.parts or "\\" in name:
+                raise ValueError(f"unsafe artifact file name: {name!r}")
+            if len(digest) != 64 or any(
+                character not in "0123456789abcdef" for character in digest
+            ):
+                raise ValueError(f"invalid artifact file SHA-256 for {name!r}")
         return value
 
     @field_validator("created_at")

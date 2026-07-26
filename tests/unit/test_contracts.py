@@ -196,3 +196,16 @@ def test_artifact_manifest_rejects_invalid_hash() -> None:
                 "notes": None,
             }
         )
+
+
+def test_artifact_manifest_validates_relative_file_hash_inventory() -> None:
+    manifest = _provenance_record("artifact_manifest", "clean", COMMIT_SHA, False)
+    payload = manifest.model_dump(mode="json")
+    payload["files"] = {"visuals/sample.png": "3" * 64}
+
+    validated = ArtifactManifest.model_validate(payload)
+
+    assert validated.files == {"visuals/sample.png": "3" * 64}
+    payload["files"] = {"../checkpoint.pt": "3" * 64}
+    with pytest.raises(ValidationError, match="unsafe artifact file name"):
+        ArtifactManifest.model_validate(payload)

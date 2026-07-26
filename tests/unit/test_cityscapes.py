@@ -12,6 +12,7 @@ from edgeguard.data.cityscapes import (
     label_ids_to_train_ids,
     load_cityscapes_val_sample,
     resize_train_ids,
+    select_city_round_robin,
 )
 
 
@@ -108,3 +109,25 @@ def test_cityscapes_mask_resize_uses_nearest_neighbor() -> None:
 
     assert set(np.unique(resized)) == {0, 1, 18, 255}
     np.testing.assert_array_equal(resized[:2, :2], np.zeros((2, 2), dtype=np.uint8))
+
+
+def test_city_round_robin_selection_is_deterministic_across_cities(tmp_path: Path) -> None:
+    for sample_id in (
+        "munster_000000_000002",
+        "frankfurt_000000_000002",
+        "lindau_000000_000002",
+        "frankfurt_000000_000001",
+        "lindau_000000_000001",
+        "munster_000000_000001",
+    ):
+        _write_pair(tmp_path, sample_id)
+
+    selected = select_city_round_robin(discover_cityscapes_val(tmp_path), 5)
+
+    assert [sample.sample_id for sample in selected] == [
+        "frankfurt_000000_000001",
+        "lindau_000000_000001",
+        "munster_000000_000001",
+        "frankfurt_000000_000002",
+        "lindau_000000_000002",
+    ]

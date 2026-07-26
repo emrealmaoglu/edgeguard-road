@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import numpy.typing as npt
 
@@ -38,4 +40,29 @@ def predictive_entropy(logits: npt.NDArray[np.float32]) -> npt.NDArray[np.float3
     probabilities = stable_softmax(logits)
     clipped = np.clip(probabilities, np.finfo(np.float32).tiny, np.float32(1.0))
     scores = -np.sum(probabilities * np.log(clipped), axis=1, dtype=np.float32)
+    return validate_anomaly_map(scores.astype(np.float32, copy=False))
+
+
+def max_logit_anomaly_score(
+    logits: npt.NDArray[np.float32],
+) -> npt.NDArray[np.float32]:
+    """Return negative maximum raw logit; higher means more anomalous."""
+    validate_semantic_logits(logits)
+    scores = -np.max(logits, axis=1)
+    return validate_anomaly_map(scores.astype(np.float32, copy=False))
+
+
+def energy_anomaly_score(
+    logits: npt.NDArray[np.float32], *, temperature: float = 1.0
+) -> npt.NDArray[np.float32]:
+    """Return negative temperature-scaled log-sum-exp energy anomaly score."""
+    validate_semantic_logits(logits)
+    if not math.isfinite(temperature) or temperature <= 0.0:
+        raise ValueError("energy temperature must be a positive finite number")
+    temperature32 = np.float32(temperature)
+    scaled = logits / temperature32
+    maximum = np.max(scaled, axis=1, keepdims=True)
+    shifted = scaled - maximum
+    log_sum_exp = maximum[:, 0] + np.log(np.sum(np.exp(shifted), axis=1, dtype=np.float32))
+    scores = -temperature32 * log_sum_exp
     return validate_anomaly_map(scores.astype(np.float32, copy=False))

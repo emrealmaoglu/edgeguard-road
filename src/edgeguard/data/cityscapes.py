@@ -193,3 +193,31 @@ def build_cityscapes_val_manifest(root: Path) -> dict[str, Any]:
     }
     payload["manifest_sha256"] = sha256_payload(payload)
     return payload
+
+
+def select_city_round_robin(
+    samples: list[CityscapesValSample], count: int
+) -> list[CityscapesValSample]:
+    """Select deterministically by cycling through alphabetically sorted cities."""
+    if count <= 0 or count > len(samples):
+        raise ValueError(f"subset count must be between 1 and {len(samples)}")
+    grouped: dict[str, list[CityscapesValSample]] = {}
+    for sample in sorted(samples, key=lambda item: item.sample_id):
+        grouped.setdefault(sample.city, []).append(sample)
+
+    selected: list[CityscapesValSample] = []
+    offset = 0
+    cities = sorted(grouped)
+    while len(selected) < count:
+        added = False
+        for city in cities:
+            city_samples = grouped[city]
+            if offset < len(city_samples):
+                selected.append(city_samples[offset])
+                added = True
+                if len(selected) == count:
+                    break
+        if not added:
+            raise ValueError("could not complete deterministic Cityscapes selection")
+        offset += 1
+    return selected

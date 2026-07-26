@@ -196,6 +196,48 @@ class PIDNetSpikeConfig(BaseConfig):
     scorers: tuple[Literal["msp"], Literal["predictive_entropy"]]
 
 
+class PIDNetEvalInputConfig(StrictConfigModel):
+    """Input and metric grid for one fixed evaluation resolution."""
+
+    batch_size: Literal[1]
+    height: int = Field(ge=64, le=4096)
+    width: int = Field(ge=64, le=4096)
+    channels: Literal[3]
+    color_space: Literal["RGB"]
+
+
+class PIDNetEvalSelectionConfig(StrictConfigModel):
+    """Deterministic Cityscapes validation selection policy."""
+
+    strategy: Literal["city_round_robin_v1"]
+
+
+class PIDNetEvalConfig(BaseConfig):
+    """Standalone path-free PIDNet-S Cityscapes validation configuration."""
+
+    pipeline_name: Literal["pidnet-s-cityscapes-val-eval"]
+    seed: int = Field(ge=0, le=2**32 - 1)
+    dataset_name: Literal["Cityscapes"]
+    dataset_role: Literal["id_validation/semantic_development"]
+    split: Literal["val"]
+    upstream: PIDNetUpstreamConfig
+    checkpoint: PIDNetCheckpointConfig
+    input: PIDNetEvalInputConfig
+    metric_grid: Literal["resized_model_input", "source_label"]
+    preprocess: PIDNetPreprocessConfig
+    model: PIDNetSpikeModelConfig
+    alignment: PIDNetAlignmentConfig
+    selection: PIDNetEvalSelectionConfig
+    scorers: tuple[
+        Literal["msp"],
+        Literal["predictive_entropy"],
+        Literal["max_logit"],
+        Literal["energy"],
+    ]
+    energy_temperature: float = Field(gt=0.0, allow_inf_nan=False)
+    visual_count: int = Field(ge=0, le=10)
+
+
 def _load_config(path: Path, model_type: type[ConfigT]) -> ConfigT:
     """Load one YAML document without inheritance or composition."""
     with path.open("r", encoding="utf-8") as stream:
@@ -218,6 +260,11 @@ def load_smoke_config(path: Path) -> SmokeConfig:
 def load_pidnet_spike_config(path: Path) -> PIDNetSpikeConfig:
     """Load the complete standalone PIDNet-S spike config."""
     return _load_config(path, PIDNetSpikeConfig)
+
+
+def load_pidnet_eval_config(path: Path) -> PIDNetEvalConfig:
+    """Load one standalone PIDNet-S Cityscapes validation config."""
+    return _load_config(path, PIDNetEvalConfig)
 
 
 def config_sha256(config: BaseModel) -> str:

@@ -14,7 +14,7 @@ import numpy as np
 import numpy.typing as npt
 from PIL import Image
 
-from edgeguard.config import PIDNetSpikeConfig
+from edgeguard.config import PIDNetEvalConfig, PIDNetSpikeConfig
 from edgeguard.contracts import validate_model_input, validate_raw_rgb, validate_semantic_logits
 from edgeguard.serialization import sha256_file, sha256_payload
 
@@ -33,6 +33,27 @@ class PIDNetForwardResult:
     repeated_aligned_logits: npt.NDArray[np.float32]
     device: str
     torch_version: str
+    checkpoint_load_report: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PIDNetInferenceResult:
+    """One direct native-logit output and its aligned derivative."""
+
+    native_logits: npt.NDArray[np.float32]
+    aligned_logits: npt.NDArray[np.float32]
+
+
+@dataclass(frozen=True)
+class PIDNetInferenceSession:
+    """One strictly loaded PIDNet-S model reused across evaluation samples."""
+
+    model: Any
+    torch: Any
+    functional: Any
+    device: str
+    torch_version: str
+    num_classes: int
     checkpoint_load_report: dict[str, Any]
 
 
@@ -391,7 +412,7 @@ def _load_verified_pidnet_checkpoint(
     checkout: Path,
     checkpoint_path: Path,
     expected_checkpoint_sha256: str,
-    config: PIDNetSpikeConfig,
+    config: PIDNetSpikeConfig | PIDNetEvalConfig,
 ) -> _VerifiedPIDNetCheckpoint:
     upstream_report = verify_upstream_checkout(
         checkout,
@@ -467,7 +488,7 @@ def verify_pidnet_checkpoint_layout(
     checkout: Path,
     checkpoint_path: Path,
     expected_checkpoint_sha256: str,
-    config: PIDNetSpikeConfig,
+    config: PIDNetSpikeConfig | PIDNetEvalConfig,
 ) -> dict[str, Any]:
     """Strictly load the approved PIDNet-S checkpoint and return path-free evidence."""
     return _load_verified_pidnet_checkpoint(
@@ -492,17 +513,15 @@ def _select_torch_device(torch: Any, requested: Literal["auto", "cpu", "mps", "c
     return requested
 
 
-def run_pidnet_forward(
-    model_input: npt.NDArray[np.float32],
+def load_pidnet_session(
     *,
     checkout: Path,
     checkpoint_path: Path,
     expected_checkpoint_sha256: str,
-    config: PIDNetSpikeConfig,
+    config: PIDNetSpikeConfig | PIDNetEvalConfig,
     device: Literal["auto", "cpu", "mps", "cuda"] = "auto",
-) -> PIDNetForwardResult:
-    """Load the fixed model strictly and run two native/aligned forward passes."""
-    validate_model_input(model_input)
+) -> PIDNetInferenceSession:
+    """Strictly load one PIDNet-S model for repeated inference."""
     verified = _load_verified_pidnet_checkpoint(
         checkout=checkout,
         checkpoint_path=checkpoint_path,
@@ -514,7 +533,6 @@ def run_pidnet_forward(
         functional = importlib.import_module("torch.nn.functional")
     except (ImportError, OSError) as error:
         raise PIDNetSpikeError(f"PyTorch functional import failed: {error}") from error
-    model = verified.model
 
     torch.manual_seed(config.seed)
     selected_device = _select_torch_device(torch, device)
@@ -522,50 +540,98 @@ def run_pidnet_forward(
         torch.cuda.manual_seed_all(config.seed)
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
-    model.eval().to(selected_device)
-    tensor = torch.from_numpy(model_input).to(selected_device)
+    model = verified.model.eval().to(selected_device)
+    return PIDNetInferenceSession(
+        model=model,
+        torch=torch,
+        functional=functional,
+        device=selected_device,
+        torch_version=str(torch.__version__),
+        num_classes=config.model.num_classes,
+        checkpoint_load_report=verified.report,
+    )
 
+
+def infer_pidnet(
+    session: PIDNetInferenceSession,
+    model_input: npt.NDArray[np.float32],
+    *,
+    alignment_height: int,
+    alignment_width: int,
+    alignment_mode: str = "bilinear",
+    align_corners: bool = True,
+) -> PIDNetInferenceResult:
+    """Run one forward while preserving native and aligned raw logits separately."""
+    validate_model_input(model_input)
+    if alignment_height <= 0 or alignment_width <= 0:
+        raise PIDNetSpikeError("alignment dimensions must be positive")
+    tensor = session.torch.from_numpy(model_input).to(session.device)
+    with session.torch.inference_mode():
+        native = session.model(tensor)
+        if not isinstance(native, session.torch.Tensor):
+            raise PIDNetSpikeError(
+                "augment=False forward did not return one semantic tensor directly"
+            )
+        if native.dtype != session.torch.float32:
+            raise PIDNetSpikeError(f"native logits must be torch.float32, got {native.dtype}")
+        aligned = session.functional.interpolate(
+            native,
+            size=(alignment_height, alignment_width),
+            mode=alignment_mode,
+            align_corners=align_corners,
+        )
+        if aligned.dtype != session.torch.float32:
+            raise PIDNetSpikeError(f"aligned logits must be torch.float32, got {aligned.dtype}")
+        native_array = validate_semantic_logits(native.detach().cpu().numpy())
+        aligned_array = validate_semantic_logits(aligned.detach().cpu().numpy())
+
+    for name, array in (("native_logits", native_array), ("aligned_logits", aligned_array)):
+        if array.shape[0] != model_input.shape[0] or array.shape[1] != session.num_classes:
+            raise PIDNetSpikeError(f"{name} has unexpected batch/classes shape: {array.shape}")
+    if aligned_array.shape[2:] != (alignment_height, alignment_width):
+        raise PIDNetSpikeError(f"aligned logits have unexpected grid: {aligned_array.shape}")
+    return PIDNetInferenceResult(native_logits=native_array, aligned_logits=aligned_array)
+
+
+def run_pidnet_forward(
+    model_input: npt.NDArray[np.float32],
+    *,
+    checkout: Path,
+    checkpoint_path: Path,
+    expected_checkpoint_sha256: str,
+    config: PIDNetSpikeConfig,
+    device: Literal["auto", "cpu", "mps", "cuda"] = "auto",
+) -> PIDNetForwardResult:
+    """Load the fixed model strictly and run two native/aligned forward passes."""
+    session = load_pidnet_session(
+        checkout=checkout,
+        checkpoint_path=checkpoint_path,
+        expected_checkpoint_sha256=expected_checkpoint_sha256,
+        config=config,
+        device=device,
+    )
     native_results: list[npt.NDArray[np.float32]] = []
     aligned_results: list[npt.NDArray[np.float32]] = []
-    with torch.inference_mode():
-        for _ in range(2):
-            native = model(tensor)
-            if not isinstance(native, torch.Tensor):
-                raise PIDNetSpikeError(
-                    "augment=False forward did not return one semantic tensor directly"
-                )
-            if native.dtype != torch.float32:
-                raise PIDNetSpikeError(f"native logits must be torch.float32, got {native.dtype}")
-            aligned = functional.interpolate(
-                native,
-                size=(config.input.height, config.input.width),
-                mode=config.alignment.mode,
-                align_corners=config.alignment.align_corners,
-            )
-            if aligned.dtype != torch.float32:
-                raise PIDNetSpikeError(f"aligned logits must be torch.float32, got {aligned.dtype}")
-            native_array = native.detach().cpu().numpy()
-            aligned_array = aligned.detach().cpu().numpy()
-            native_results.append(validate_semantic_logits(native_array))
-            aligned_results.append(validate_semantic_logits(aligned_array))
-
-    for name, array in (
-        ("native_logits", native_results[0]),
-        ("aligned_logits", aligned_results[0]),
-    ):
-        if array.shape[0] != config.input.batch_size or array.shape[1] != config.model.num_classes:
-            raise PIDNetSpikeError(f"{name} has unexpected batch/classes shape: {array.shape}")
-    if aligned_results[0].shape[2:] != (config.input.height, config.input.width):
-        raise PIDNetSpikeError(f"aligned logits have unexpected grid: {aligned_results[0].shape}")
+    for _ in range(2):
+        inference = infer_pidnet(
+            session,
+            model_input,
+            alignment_height=config.input.height,
+            alignment_width=config.input.width,
+            alignment_mode=config.alignment.mode,
+            align_corners=config.alignment.align_corners,
+        )
+        native_results.append(inference.native_logits)
+        aligned_results.append(inference.aligned_logits)
 
     return PIDNetForwardResult(
         native_logits=native_results[0],
         aligned_logits=aligned_results[0],
         repeated_native_logits=native_results[1],
         repeated_aligned_logits=aligned_results[1],
-        device=selected_device,
-        torch_version=str(torch.__version__),
-        checkpoint_load_report=verified.report,
+        device=session.device,
+        torch_version=session.torch_version,
+        checkpoint_load_report=session.checkpoint_load_report,
     )
 
 
