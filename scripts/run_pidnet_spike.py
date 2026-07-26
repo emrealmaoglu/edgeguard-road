@@ -44,7 +44,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--upstream-checkout", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--checkpoint-access-date", required=True, help="download date: YYYY-MM-DD")
-    parser.add_argument("--expected-checkpoint-sha256", required=True)
     parser.add_argument(
         "--sample-access-date", required=True, help="checkout access date: YYYY-MM-DD"
     )
@@ -188,7 +187,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         model_input,
         checkout=args.upstream_checkout,
         checkpoint_path=args.checkpoint,
-        expected_checkpoint_sha256=args.expected_checkpoint_sha256,
+        expected_checkpoint_sha256=config.checkpoint.sha256,
         config=config,
     )
 
@@ -234,8 +233,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "checkpoint": {
             **forward.checkpoint_load_report,
             "repository_page": config.checkpoint.repository_page,
-            "official_file_url": config.checkpoint.official_file_url,
-            "official_collection_url": config.checkpoint.official_collection_url,
+            "source_url": config.checkpoint.source_url,
             "source_reference_access_date": config.checkpoint.source_reference_access_date,
             "file_access_date": checkpoint_access_date.isoformat(),
             "license_status": config.checkpoint.license_status,

@@ -36,6 +36,10 @@ def test_pidnet_spike_config_is_complete_and_pinned() -> None:
 
     assert config.upstream.commit == "4c158cf24ce432f0a8cb43364fae38d93cee0dc3"
     assert config.checkpoint.filename == "PIDNet_S_Cityscapes_val.pt"
+    assert config.checkpoint.sha256 == (
+        "b51aa935bdb64a0779d776f38267fd49f7cce59413910abbbf0a74934b3d7c01"
+    )
+    assert config.checkpoint.source_url.startswith("https://drive.google.com/drive/folders/")
     assert config.checkpoint.license_status == "OPEN QUESTION"
     assert config.sample.primary.relative_path == (
         "samples/frankfurt_000000_002196_leftImg8bit.png"

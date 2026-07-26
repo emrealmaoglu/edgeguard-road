@@ -9,9 +9,9 @@ upstream:
   commit: 4c158cf24ce432f0a8cb43364fae38d93cee0dc3
 checkpoint:
   filename: PIDNet_S_Cityscapes_val.pt
+  sha256: b51aa935bdb64a0779d776f38267fd49f7cce59413910abbbf0a74934b3d7c01
   repository_page: https://github.com/XuJiacong/PIDNet
-  official_file_url: https://drive.google.com/file/d/1JakgBam_GrzyUMp-NbEVVBPEIXLSCssH/view?usp=sharing
-  official_collection_url: https://drive.google.com/drive/folders/0BySIOtxxULinfjlGdGFiT3NQVUdLVDBxWnhhTjB4VXNBRkFOa281WHlkektYY2VBcWVZb1k?resourcekey=0-w0JIXUekD-FCW-Rm1Z-HfQ&usp=sharing
+  source_url: https://drive.google.com/drive/folders/0BySIOtxxULinfjlGdGFiT3NQVUdLVDBxWnhhTjB4VXNBRkFOa281WHlkektYY2VBcWVZb1k?resourcekey=0-w0JIXUekD-FCW-Rm1Z-HfQ&usp=sharing
   source_reference_access_date: "2026-07-26"
   license_status: OPEN QUESTION
   permitted_use: non-commercial academic thesis research

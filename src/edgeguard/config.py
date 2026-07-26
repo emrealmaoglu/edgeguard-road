@@ -97,11 +97,9 @@ class PIDNetCheckpointConfig(StrictConfigModel):
     """Human-approved checkpoint provenance without claiming a license grant."""
 
     filename: Literal["PIDNet_S_Cityscapes_val.pt"]
+    sha256: Literal["b51aa935bdb64a0779d776f38267fd49f7cce59413910abbbf0a74934b3d7c01"]
     repository_page: Literal["https://github.com/XuJiacong/PIDNet"]
-    official_file_url: Literal[
-        "https://drive.google.com/file/d/1JakgBam_GrzyUMp-NbEVVBPEIXLSCssH/view?usp=sharing"
-    ]
-    official_collection_url: Literal[
+    source_url: Literal[
         "https://drive.google.com/drive/folders/"
         "0BySIOtxxULinfjlGdGFiT3NQVUdLVDBxWnhhTjB4VXNBRkFOa281WHlkektYY2VBcWVZb1k"
         "?resourcekey=0-w0JIXUekD-FCW-Rm1Z-HfQ&usp=sharing"

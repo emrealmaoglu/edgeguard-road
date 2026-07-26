@@ -11,13 +11,14 @@
 
 ## Ready
 
-- Human retrieval/upload of the exact official `PIDNet_S_Cityscapes_val.pt`, hash
-  review, and Colab execution of `notebooks/colab/01_pidnet_single_image_spike.ipynb`.
+- Human upload of the config-pinned `PIDNet_S_Cityscapes_val.pt` and Colab execution
+  of `notebooks/colab/01_pidnet_single_image_spike.ipynb`; filename and hash are
+  checked automatically before load.
 
 ## In Progress
 
-- Stage 2 real-forward gate: upstream sample is verified; awaiting official-folder
-  checkpoint retrieval, filename/size/hash review, Colab execution, and visual sanity.
+- Stage 2 real-forward gate: upstream sample and checkpoint identity are pinned;
+  awaiting human Colab upload/execution and visual sanity review.
 
 ## Done
 

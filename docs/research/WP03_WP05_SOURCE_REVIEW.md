@@ -129,3 +129,20 @@ repository-directed replacement folder. The notebook accepts only the exact
 expected filename, records source references, access date, byte size, and SHA-256,
 then stops until the hash is reviewed. Model loading cannot occur before that
 review, and checkpoint license status remains **OPEN QUESTION**.
+
+### Human-verified checkpoint pin
+
+On 2026-07-26 the human owner reported a checkpoint obtained manually from the
+official README replacement Drive folder and approved the following immutable
+identity for the spike:
+
+- **Filename:** `PIDNet_S_Cityscapes_val.pt`
+- **SHA-256:**
+  `b51aa935bdb64a0779d776f38267fd49f7cce59413910abbbf0a74934b3d7c01`
+- **Source:** official XuJiacong/PIDNet README replacement Drive folder
+- **Checkpoint license:** **OPEN QUESTION**
+
+The local absolute storage path is intentionally not recorded. Codex did not open
+or load the reported file, and no byte size or real-forward result is inferred.
+The notebook now reads filename, source, and hash from the validated config and
+must reject a mismatch before `torch.load` can run.
