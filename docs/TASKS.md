@@ -2,21 +2,23 @@
 
 ## Backlog
 
-- P0 after Commit C: human-approved push of the exact reviewed commit, followed by
-  the clean single-image preflight and full 500-image Colab campaign.
-- P1 after the full Colab campaign: optional 20-image MPS run, minimal identity-protected
-  resume, boundary/interior analysis, correlations, and wider percentile reports.
-- P2 after the first full Colab campaign: ONNX/ORT and Fishyscapes development work.
+- P0 after this review: human-acquired and terms-approved Fishyscapes Lost & Found
+  validation inputs, deterministic external manifest, and a first real development run.
+- P1: FS Static generator pin/terms review and external generation from authorized
+  Cityscapes inputs; optional 20-image MPS run; minimal identity-protected resume;
+  boundary/interior analysis; correlations; and wider percentile reports.
+- P2: ONNX/ORT, calibration protocol, context/components/temporal, and Jetson work.
 
 ## Ready
 
-- Human review of the reported Commit C SHA and a separate push decision.
-- After push and exact-commit approval, run the clean commit in Colab.
+- Human review of the unstaged Cityscapes evidence, selection provenance correction,
+  Fishyscapes public-development adapter, and AP/FPR95 metric diff.
+- Human review of underlying Lost & Found image terms and manual source provenance.
 
 ## In Progress
 
-- No implementation block is in progress. The full-resolution Colab runner is ready,
-  but push and campaign execution remain human-gated.
+- No experiment is in progress. The implementation foundation is complete and awaits
+  human diff review; no restricted or sealed dataset access is authorized.
 
 ## Done
 
@@ -54,5 +56,17 @@
 - Colab preparation: full-resolution config, thin execution notebook, required
   single-image preflight, full 500-image invocation, and deterministic artifact
   packaging are locally validated. No Colab campaign result has been claimed.
-- Commit C human review and local commit approval. The commit remains local until a
-  separate push authorization is given.
+- Commit C human review, local commit approval, and separate push authorization.
+- Commit C `aa8803e8060af8cd704f81fb7c6903d0d48e2a6e` pushed to
+  `origin/feat/first-vertical-slice` with a clean worktree.
+- Full 500-image Cityscapes campaign: external evidence independently verified with
+  500 successes, zero failures, consistent pixel totals, finite four-score summaries,
+  and clean exact-commit provenance. Runtime is end-to-end pipeline timing, not pure
+  inference latency or Jetson FPS.
+- Selection provenance correction: `all_sorted_v1` for `--all`,
+  `city_round_robin_v1` for subset size, and `subset_manifest_preserved_v1` for
+  explicit manifests; deterministic visuals now span cities without changing
+  evaluation order.
+- Fishyscapes local foundation: manual-only public Lost & Found validation pairing,
+  root-free deterministic manifest, explicit 0/1/255 mask contract, and NumPy AP/FPR95
+  tests. No Fishyscapes data or SMIYC data was accessed.

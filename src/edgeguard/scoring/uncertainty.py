@@ -39,8 +39,11 @@ def predictive_entropy(logits: npt.NDArray[np.float32]) -> npt.NDArray[np.float3
     """Return unnormalized natural-log predictive entropy per pixel."""
     probabilities = stable_softmax(logits)
     clipped = np.clip(probabilities, np.finfo(np.float32).tiny, np.float32(1.0))
-    scores = -np.sum(probabilities * np.log(clipped), axis=1, dtype=np.float32)
-    return validate_anomaly_map(scores.astype(np.float32, copy=False))
+    scores = np.asarray(
+        -np.sum(probabilities * np.log(clipped), axis=1, dtype=np.float32),
+        dtype=np.float32,
+    )
+    return validate_anomaly_map(scores)
 
 
 def max_logit_anomaly_score(

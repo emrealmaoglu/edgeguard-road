@@ -157,8 +157,10 @@ def _select_samples(
         raise ValueError("choose exactly one of subset size, subset manifest, or all")
     if subset_size is not None:
         selected = select_city_round_robin(all_samples, subset_size)
+        recorded_strategy = strategy
     elif select_all:
-        selected = list(all_samples)
+        selected = sorted(all_samples, key=lambda sample: sample.sample_id)
+        recorded_strategy = "all_sorted_v1"
     else:
         assert subset_manifest_path is not None
         try:
@@ -180,13 +182,24 @@ def _select_samples(
             selected = [by_id[sample_id] for sample_id in requested_ids]
         except KeyError as error:
             raise ValueError(f"subset manifest contains unknown sample: {error.args[0]}") from error
+        recorded_strategy = "subset_manifest_preserved_v1"
     return selected, _selection_payload(
         selected,
-        strategy=strategy,
+        strategy=recorded_strategy,
         config_sha256_value=config_sha256_value,
         checkpoint_sha256=checkpoint_sha256,
         dataset_manifest_sha256=dataset_manifest_sha256,
     )
+
+
+def _select_visual_sample_ids(selected: list[CityscapesValSample], visual_count: int) -> set[str]:
+    """Choose deterministic cross-city visuals without changing evaluation order."""
+    if visual_count < 0:
+        raise ValueError("visual count must be non-negative")
+    if visual_count == 0 or not selected:
+        return set()
+    count = min(visual_count, len(selected))
+    return {sample.sample_id for sample in select_city_round_robin(selected, count)}
 
 
 def _visualize_map(array: npt.NDArray[np.float32]) -> npt.NDArray[np.uint8]:
@@ -304,8 +317,9 @@ def run_cityscapes_evaluation(
     evaluation_started = time.perf_counter()
     visual_dir = output_dir / "visuals"
     visual_dir.mkdir()
+    visual_sample_ids = _select_visual_sample_ids(selected, config.visual_count)
 
-    for sample_index, sample in enumerate(selected):
+    for sample in selected:
         sample_started = time.perf_counter()
         try:
             image, target = load_cityscapes_val_sample(dataset_root, sample)
@@ -352,7 +366,7 @@ def run_cityscapes_evaluation(
                     "aligned_logits_shape": list(inference.aligned_logits.shape),
                     "aligned_logits_sha256": sha256_array(inference.aligned_logits),
                 }
-            if sample_index < config.visual_count:
+            if sample.sample_id in visual_sample_ids:
                 _write_visuals(
                     visual_dir,
                     sample,
