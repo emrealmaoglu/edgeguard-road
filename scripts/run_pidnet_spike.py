@@ -220,7 +220,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "run_id": str(uuid.uuid4()),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "hostname": socket.gethostname() or "unknown-host",
-        "command": list(sys.argv),
+        "command": ["python", "scripts/run_pidnet_spike.py"],
         "config_sha256": config_digest,
         "experiment_fingerprint": fingerprint,
         "git_commit": git.commit,

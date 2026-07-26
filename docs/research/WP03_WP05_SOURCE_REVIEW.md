@@ -19,11 +19,11 @@ All sources below were accessed on 2026-07-26. Status labels mean:
 
 | Topic | Finding | Status | Official source | Supported decision | Open risk |
 | --- | --- | --- | --- | --- | --- |
-| PIDNet paper and model family | PIDNet is a real-time semantic segmentation architecture published at CVPR 2023; the official repository presents PIDNet-S Cityscapes configurations and checkpoints. | VERIFIED FACT | [CVPR 2023 paper](https://openaccess.thecvf.com/content/CVPR2023/html/Xu_PIDNet_A_Real-Time_Semantic_Segmentation_Network_Inspired_by_PID_Controllers_CVPR_2023_paper.html); [official PIDNet repository](https://github.com/XuJiacong/PIDNet) | Use PIDNet-S as the proposed first spike model, without treating upstream metrics as EdgeGuard measurements. | Runtime and checkpoint compatibility remain unverified in the target Colab environment. |
+| PIDNet paper and model family | PIDNet is a real-time semantic segmentation architecture published at CVPR 2023; the official repository presents PIDNet-S Cityscapes configurations and checkpoints. | VERIFIED FACT | [CVPR 2023 paper](https://openaccess.thecvf.com/content/CVPR2023/html/Xu_PIDNet_A_Real-Time_Semantic_Segmentation_Network_Inspired_by_PID_Controllers_CVPR_2023_paper.html); [official PIDNet repository](https://github.com/XuJiacong/PIDNet) | Use PIDNet-S as the proposed first spike model, without treating upstream metrics as EdgeGuard measurements. | One T4 development run demonstrated compatibility, but a clean pinned rerun remains required. |
 | PIDNet source license | The official PIDNet source repository carries the MIT License. | VERIFIED FACT | [PIDNet LICENSE at the pinned commit](https://raw.githubusercontent.com/XuJiacong/PIDNet/4c158cf24ce432f0a8cb43364fae38d93cee0dc3/LICENSE) | Source vendoring may be evaluated only after a successful inference spike and human review. | The source license alone does not establish checkpoint usage rights. |
-| PIDNet checkpoint | The official README publishes Cityscapes checkpoint links and notes replacement links for previously broken links. No explicit checkpoint-specific license was identified in the reviewed official material. | OPEN QUESTION | [official PIDNet repository](https://github.com/XuJiacong/PIDNet) | The human owner approved only the officially referenced PIDNet-S Cityscapes checkpoint for non-commercial academic thesis research, with filename, source URL, access date, and SHA-256 recording and no redistribution. | The checkpoint-specific license remains unresolved; actual bytes and hash are unverified until the human-run Colab step. |
+| PIDNet checkpoint | The official README publishes Cityscapes checkpoint links and notes replacement links for previously broken links. No explicit checkpoint-specific license was identified in the reviewed official material. | OPEN QUESTION | [official PIDNet repository](https://github.com/XuJiacong/PIDNet) | The human owner approved only the officially referenced PIDNet-S Cityscapes checkpoint for non-commercial academic thesis research, with filename, source URL, access date, and SHA-256 recording and no redistribution. | The checkpoint-specific license remains unresolved; the human-verified hash identifies the development-run file but does not grant redistribution rights. |
 | PIDNet prediction output | With `augment=False`, the official model returns one semantic tensor; the augmented training/evaluation path returns auxiliary semantic and boundary outputs as well. | VERIFIED FACT | [PIDNet model implementation at the pinned commit](https://raw.githubusercontent.com/XuJiacong/PIDNet/4c158cf24ce432f0a8cb43364fae38d93cee0dc3/models/pidnet.py) | The isolated spike must use `augment=False` and inspect the actual returned object rather than guessing an output index. | A future upstream change or incompatible checkpoint may alter observed behavior. |
-| PIDNet raw logits | The official segmentation head returns its final convolution result without applying softmax. | VERIFIED FACT | [PIDNet model utilities at the pinned commit](https://raw.githubusercontent.com/XuJiacong/PIDNet/4c158cf24ce432f0a8cb43364fae38d93cee0dc3/models/model_utils.py) | Preserve the direct semantic head result as `native_logits`. | A real forward is still required to prove shape, dtype, finiteness, and class count for the pinned revision. |
+| PIDNet raw logits | The official segmentation head returns its final convolution result without applying softmax. | VERIFIED FACT | [PIDNet model utilities at the pinned commit](https://raw.githubusercontent.com/XuJiacong/PIDNet/4c158cf24ce432f0a8cb43364fae38d93cee0dc3/models/model_utils.py) | Preserve the direct semantic head result as `native_logits`. | The first T4 development forward produced the expected 19-class finite tensor; a clean pinned rerun remains required for final reproducibility evidence. |
 | PIDNet alignment and preprocessing | The official custom inference converts BGR to RGB, divides by 255, applies ImageNet mean/std normalization, uses NCHW input, and bilinearly resizes semantic output to the input grid. | VERIFIED FACT | [PIDNet custom inference at the pinned commit](https://raw.githubusercontent.com/XuJiacong/PIDNet/4c158cf24ce432f0a8cb43364fae38d93cee0dc3/tools/custom.py) | Test channel order and normalization; preserve the resized derivative separately as `aligned_logits` with recorded alignment settings. | The project must not mislabel aligned logits as the model's direct output. |
 | PIDNet PyTorch compatibility | The official repository does not define a currently verified PyTorch compatibility range for this project environment. | OPEN QUESTION | [official PIDNet repository](https://github.com/XuJiacong/PIDNet) | Validate import, strict checkpoint load, and real forward in the isolated Colab spike before any vendoring decision. | Modern PyTorch behavior may require a bounded compatibility correction. |
 | PIDNet ONNX support | No official, project-validated PIDNet ONNX export recipe was identified in the reviewed repository. | OPEN QUESTION | [official PIDNet repository](https://github.com/XuJiacong/PIDNet) | Treat ONNX as a later measurement pilot, not as a precondition for the PyTorch vertical slice. | Export may fail or require work outside the allowed pilot scope. |
@@ -122,7 +122,8 @@ Measured on 2026-07-26:
 - No alternative or generated direct URL was attempted.
 - The official replacement folder landing page returned HTTP 200, but its file
   contents and checkpoint bytes were not machine-verifiable in this environment.
-- No checkpoint file was created; byte size and SHA-256 therefore remain pending.
+- No checkpoint file was created during this access probe; byte size and SHA-256
+  were pending at that time.
 
 **Decision:** Use a human-controlled Colab upload from the official
 repository-directed replacement folder. The notebook accepts only the exact
@@ -142,7 +143,23 @@ identity for the spike:
 - **Source:** official XuJiacong/PIDNet README replacement Drive folder
 - **Checkpoint license:** **OPEN QUESTION**
 
-The local absolute storage path is intentionally not recorded. Codex did not open
-or load the reported file, and no byte size or real-forward result is inferred.
-The notebook now reads filename, source, and hash from the validated config and
-must reject a mismatch before `torch.load` can run.
+The local absolute storage path is intentionally not recorded. The notebook reads
+filename, source, and hash from the validated config and must reject a mismatch
+before `torch.load` can run.
+
+## First T4 development execution evidence
+
+The human-run Colab execution on 2026-07-26 succeeded as a development
+feasibility run using CUDA on a T4. The observed direct `native_logits` shape was
+`[1,19,64,128]`; the separately bilinear-aligned tensor shape was
+`[1,19,512,1024]`. Two consecutive forwards were byte-identical.
+
+The run used a temporary loader patch applied inside Colab, so the EdgeGuard
+checkout was Git-dirty. It is therefore feasibility evidence, not the final clean
+reproducibility artifact. A clean run pinned to a reviewed commit containing the
+hardened loader and notebook remains required before Stage 2 acceptance or an
+integration decision.
+
+MSP and predictive entropy outputs are uncertainty/anomaly scores, not anomaly
+probabilities. No OOD performance, benchmark, accuracy, or qualitative semantic
+correctness claim is made from this plumbing-only sample.

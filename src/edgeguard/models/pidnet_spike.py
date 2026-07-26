@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,6 +33,30 @@ class PIDNetForwardResult:
     repeated_aligned_logits: npt.NDArray[np.float32]
     device: str
     checkpoint_load_report: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class NormalizedStateDict:
+    """Strictly reviewed checkpoint transformation and its audit evidence."""
+
+    state_dict: dict[str, Any]
+    transformation_policy: str
+    raw_checkpoint_key_count: int
+    loaded_inference_key_count: int
+    excluded_auxiliary_key_count: int
+    excluded_auxiliary_group_counts: dict[str, int]
+    excluded_auxiliary_prefixes: tuple[str, ...]
+    ignored_training_root_keys: tuple[str, ...]
+
+
+_OFFICIAL_TRAINING_ROOT_SHAPES: dict[str, tuple[int, ...]] = {
+    "sem_loss.criterion.weight": (19,),
+    "sb_loss.criterion.weight": (19,),
+}
+_OFFICIAL_AUXILIARY_PREFIX_COUNTS: dict[str, int] = {
+    "seghead_p.": 13,
+    "seghead_d.": 13,
+}
 
 
 def _git(checkout: Path, *arguments: str) -> str:
@@ -137,45 +161,136 @@ def preprocess_pidnet_rgb(
 
 
 def normalize_state_dict_keys(
-    state_dict: Mapping[str, Any], model_keys: set[str]
-) -> tuple[dict[str, Any], str]:
-    """Accept only an exact key set or one exact, uniform known prefix removal."""
+    state_dict: Mapping[str, Any],
+    model_keys: set[str],
+    *,
+    is_tensor: Callable[[Any], bool],
+) -> NormalizedStateDict:
+    """Accept exact inference mappings or the one reviewed official train layout."""
     if not state_dict or not all(isinstance(key, str) for key in state_dict):
         raise PIDNetSpikeError("checkpoint state dict must have non-empty string keys")
 
     keys = set(state_dict)
     if keys == model_keys:
-        return dict(state_dict), "none"
+        _require_tensor_entries(state_dict, is_tensor=is_tensor)
+        return _normalized_state_dict(
+            state_dict,
+            transformation_policy="exact_inference_state_dict",
+            raw_checkpoint_key_count=len(state_dict),
+        )
 
     for prefix in ("model.", "module."):
         if all(key.startswith(prefix) for key in keys):
             stripped = {key[len(prefix) :]: value for key, value in state_dict.items()}
             if set(stripped) == model_keys:
-                return stripped, f"removed_uniform_prefix:{prefix}"
+                _require_tensor_entries(stripped, is_tensor=is_tensor)
+                return _normalized_state_dict(
+                    stripped,
+                    transformation_policy=f"removed_uniform_prefix:{prefix}",
+                    raw_checkpoint_key_count=len(state_dict),
+                )
 
-    missing = sorted(model_keys - keys)[:10]
-    unexpected = sorted(keys - model_keys)[:10]
-    raise PIDNetSpikeError(
-        "checkpoint key mismatch; refusing partial load: "
-        f"missing_sample={missing}, unexpected_sample={unexpected}, "
-        f"model_key_count={len(model_keys)}, checkpoint_key_count={len(keys)}"
+    return _normalize_official_training_state_dict(state_dict, model_keys, is_tensor=is_tensor)
+
+
+def _normalized_state_dict(
+    state_dict: Mapping[str, Any],
+    *,
+    transformation_policy: str,
+    raw_checkpoint_key_count: int,
+    excluded_auxiliary_group_counts: Mapping[str, int] | None = None,
+    ignored_training_root_keys: tuple[str, ...] = (),
+) -> NormalizedStateDict:
+    group_counts = dict(excluded_auxiliary_group_counts or {})
+    return NormalizedStateDict(
+        state_dict=dict(state_dict),
+        transformation_policy=transformation_policy,
+        raw_checkpoint_key_count=raw_checkpoint_key_count,
+        loaded_inference_key_count=len(state_dict),
+        excluded_auxiliary_key_count=sum(group_counts.values()),
+        excluded_auxiliary_group_counts=group_counts,
+        excluded_auxiliary_prefixes=tuple(sorted(group_counts)),
+        ignored_training_root_keys=ignored_training_root_keys,
+    )
+
+
+def _normalize_official_training_state_dict(
+    state_dict: Mapping[str, Any],
+    model_keys: set[str],
+    *,
+    is_tensor: Callable[[Any], bool],
+) -> NormalizedStateDict:
+    root_keys = {key for key in state_dict if not key.startswith("model.")}
+    expected_root_keys = set(_OFFICIAL_TRAINING_ROOT_SHAPES)
+    if root_keys != expected_root_keys:
+        missing = sorted(expected_root_keys - root_keys)
+        unexpected = sorted(root_keys - expected_root_keys)
+        raise PIDNetSpikeError(
+            "checkpoint key mismatch; refusing partial or unreviewed layout: "
+            f"official_training_roots_missing={missing}, "
+            f"official_training_roots_unexpected={unexpected}"
+        )
+
+    for key, expected_shape in _OFFICIAL_TRAINING_ROOT_SHAPES.items():
+        actual_shape = _tensor_shape(state_dict[key], key, is_tensor=is_tensor)
+        if actual_shape != expected_shape:
+            raise PIDNetSpikeError(
+                f"training-only root shape mismatch for {key}: "
+                f"expected {expected_shape}, got {actual_shape}"
+            )
+
+    stripped_entries = {
+        key[len("model.") :]: value for key, value in state_dict.items() if key.startswith("model.")
+    }
+    group_counts: dict[str, int] = {}
+    auxiliary_keys: set[str] = set()
+    for prefix, expected_count in _OFFICIAL_AUXILIARY_PREFIX_COUNTS.items():
+        grouped_keys = {key for key in stripped_entries if key.startswith(prefix)}
+        if len(grouped_keys) != expected_count:
+            raise PIDNetSpikeError(
+                f"official auxiliary group {prefix} has {len(grouped_keys)} keys; "
+                f"expected {expected_count}"
+            )
+        for key in grouped_keys:
+            _tensor_shape(stripped_entries[key], f"model.{key}", is_tensor=is_tensor)
+        group_counts[prefix] = len(grouped_keys)
+        auxiliary_keys.update(grouped_keys)
+
+    inference_entries = {
+        key: value for key, value in stripped_entries.items() if key not in auxiliary_keys
+    }
+    inference_keys = set(inference_entries)
+    if inference_keys != model_keys:
+        missing = sorted(model_keys - inference_keys)
+        unexpected = sorted(inference_keys - model_keys)
+        raise PIDNetSpikeError(
+            "official training checkpoint inference keys do not match model; "
+            f"missing_sample={missing[:10]}, unexpected_sample={unexpected[:10]}"
+        )
+    _require_tensor_entries(inference_entries, is_tensor=is_tensor)
+
+    return _normalized_state_dict(
+        inference_entries,
+        transformation_policy="reviewed_official_training_checkpoint",
+        raw_checkpoint_key_count=len(state_dict),
+        excluded_auxiliary_group_counts=group_counts,
+        ignored_training_root_keys=tuple(sorted(root_keys)),
     )
 
 
 def validate_state_dict_shapes(
-    state_dict: Mapping[str, Any], model_state_dict: Mapping[str, Any]
+    state_dict: Mapping[str, Any],
+    model_state_dict: Mapping[str, Any],
+    *,
+    is_tensor: Callable[[Any], bool],
 ) -> dict[str, list[int]]:
     """Require every checkpoint parameter shape to match its model parameter."""
     shape_manifest: dict[str, list[int]] = {}
     shape_mismatches: list[str] = []
     for key, expected_value in model_state_dict.items():
         checkpoint_value = state_dict[key]
-        expected_shape = tuple(int(dimension) for dimension in expected_value.shape)
-        actual_shape_value = getattr(checkpoint_value, "shape", None)
-        if actual_shape_value is None:
-            shape_mismatches.append(f"{key}: checkpoint value has no shape")
-            continue
-        actual_shape = tuple(int(dimension) for dimension in actual_shape_value)
+        expected_shape = _tensor_shape(expected_value, f"model:{key}", is_tensor=is_tensor)
+        actual_shape = _tensor_shape(checkpoint_value, key, is_tensor=is_tensor)
         if actual_shape != expected_shape:
             shape_mismatches.append(f"{key}: expected {expected_shape}, got {actual_shape}")
         shape_manifest[key] = [int(dimension) for dimension in actual_shape]
@@ -185,6 +300,48 @@ def validate_state_dict_shapes(
             + "; ".join(shape_mismatches[:10])
         )
     return shape_manifest
+
+
+def _require_tensor(value: Any, key: str, *, is_tensor: Callable[[Any], bool]) -> None:
+    try:
+        accepted = is_tensor(value)
+    except Exception as error:
+        raise PIDNetSpikeError(f"tensor predicate failed for checkpoint entry {key}") from error
+    if not accepted:
+        raise PIDNetSpikeError(f"checkpoint entry {key} is not a tensor")
+
+
+def _require_tensor_entries(
+    entries: Mapping[str, Any], *, is_tensor: Callable[[Any], bool]
+) -> None:
+    for key, value in entries.items():
+        _require_tensor(value, key, is_tensor=is_tensor)
+
+
+def _tensor_shape(value: Any, key: str, *, is_tensor: Callable[[Any], bool]) -> tuple[int, ...]:
+    _require_tensor(value, key, is_tensor=is_tensor)
+    shape = getattr(value, "shape", None)
+    if shape is None:
+        raise PIDNetSpikeError(f"checkpoint tensor entry {key} has no shape")
+    try:
+        return tuple(int(dimension) for dimension in shape)
+    except (TypeError, ValueError) as error:
+        raise PIDNetSpikeError(f"checkpoint entry {key} has an invalid tensor shape") from error
+
+
+def _load_state_dict_strict(model: Any, state_dict: Mapping[str, Any]) -> None:
+    try:
+        incompatible = model.load_state_dict(dict(state_dict), strict=True)
+    except Exception as error:
+        raise PIDNetSpikeError(
+            f"strict checkpoint load failed: {type(error).__name__}: {error}"
+        ) from error
+    if incompatible.missing_keys or incompatible.unexpected_keys:
+        raise PIDNetSpikeError(
+            "strict checkpoint load returned incompatible keys: "
+            f"missing={incompatible.missing_keys}, "
+            f"unexpected={incompatible.unexpected_keys}"
+        )
 
 
 def _extract_state_dict(payload: Any) -> tuple[Mapping[str, Any], str]:
@@ -260,21 +417,17 @@ def run_pidnet_forward(
 
     raw_state_dict, container = _extract_state_dict(payload)
     model_state_dict = model.state_dict()
-    state_dict, key_transform = normalize_state_dict_keys(
-        raw_state_dict, set(model_state_dict.keys())
+    normalized = normalize_state_dict_keys(
+        raw_state_dict,
+        set(model_state_dict.keys()),
+        is_tensor=torch.is_tensor,
     )
-    shape_manifest = validate_state_dict_shapes(state_dict, model_state_dict)
-    try:
-        incompatible = model.load_state_dict(state_dict, strict=True)
-    except Exception as error:
-        raise PIDNetSpikeError(
-            f"strict checkpoint load failed: {type(error).__name__}: {error}"
-        ) from error
-    if incompatible.missing_keys or incompatible.unexpected_keys:
-        raise PIDNetSpikeError(
-            "strict checkpoint load returned incompatible keys: "
-            f"missing={incompatible.missing_keys}, unexpected={incompatible.unexpected_keys}"
-        )
+    shape_manifest = validate_state_dict_shapes(
+        normalized.state_dict,
+        model_state_dict,
+        is_tensor=torch.is_tensor,
+    )
+    _load_state_dict_strict(model, normalized.state_dict)
 
     torch.manual_seed(config.seed)
     if torch.cuda.is_available():
@@ -323,11 +476,18 @@ def run_pidnet_forward(
     checkpoint_load_report = {
         **checkpoint_report,
         "payload_container": container,
-        "key_transform": key_transform,
+        "transformation_policy": normalized.transformation_policy,
+        "key_transform": normalized.transformation_policy,
+        "raw_checkpoint_key_count": normalized.raw_checkpoint_key_count,
+        "loaded_inference_key_count": normalized.loaded_inference_key_count,
+        "loaded_key_count": normalized.loaded_inference_key_count,
+        "excluded_auxiliary_key_count": normalized.excluded_auxiliary_key_count,
+        "excluded_auxiliary_group_counts": (normalized.excluded_auxiliary_group_counts),
+        "excluded_auxiliary_prefixes": list(normalized.excluded_auxiliary_prefixes),
+        "ignored_training_root_keys": list(normalized.ignored_training_root_keys),
         "strict": True,
         "shape_check": "exact",
         "parameter_shapes_sha256": sha256_payload(shape_manifest),
-        "loaded_key_count": len(state_dict),
         "missing_keys": [],
         "unexpected_keys": [],
         "weights_only": True,

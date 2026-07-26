@@ -11,14 +11,15 @@
 
 ## Ready
 
-- Human upload of the config-pinned `PIDNet_S_Cityscapes_val.pt` and Colab execution
-  of `notebooks/colab/01_pidnet_single_image_spike.ipynb`; filename and hash are
-  checked automatically before load.
+- Human review and explicit Commit A approval for the bounded Stage 2 closure diff.
+- After Commit A, begin manual local PyTorch inventory, real checkpoint verification,
+  and the `512×1024` CPU forward. PyTorch remains environment-only.
 
 ## In Progress
 
-- Stage 2 real-forward gate: upstream sample and checkpoint identity are pinned;
-  awaiting human Colab upload/execution and visual sanity review.
+- Stage 2 closure review: the first T4/CUDA development forward proved feasibility
+  but used a temporary Git-dirty loader patch. The bounded loader, notebook,
+  repository-origin, and path-sanitization diff is awaiting human review.
 
 ## Done
 
@@ -30,4 +31,9 @@
 - Stage 2 local preparation: legal-image loader/manifest, preprocessing, strict
   checkpoint guards, PIDNet runner, native/aligned output metadata, MSP/entropy,
   repeat diagnostics, Colab execution notebook, fixed-checkout primary/fallback
-  sample provenance, official checkpoint access probe, and 98 passing local tests.
+  sample provenance, official checkpoint access probe, and hardened loader/notebook
+  validation with 116 passing local tests.
+- Stage 2 development feasibility: T4/CUDA produced native logits
+  `[1,19,64,128]` and aligned logits `[1,19,512,1024]`; two consecutive forwards
+  were byte-identical. This is not a clean reproducibility artifact, an OOD
+  performance result, or evidence that MSP/entropy are anomaly probabilities.

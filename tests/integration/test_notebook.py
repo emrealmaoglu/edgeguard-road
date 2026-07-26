@@ -6,6 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NOTEBOOK = REPO_ROOT / "notebooks/colab/00_environment_and_smoke.ipynb"
 PIDNET_NOTEBOOK = REPO_ROOT / "notebooks/colab/01_pidnet_single_image_spike.ipynb"
+PIDNET_RUNNER = REPO_ROOT / "scripts/run_pidnet_spike.py"
 
 
 def test_notebook_is_valid_thin_wrapper_without_secret_markers() -> None:
@@ -43,6 +44,29 @@ def test_pidnet_notebook_is_valid_execution_only_wrapper() -> None:
     assert "--expected-checkpoint-sha256" not in source
     assert "--image-root" not in source
     assert "scripts/run_pidnet_spike.py" in source
+    assert (
+        'EDGEGUARD_REPOSITORY_URL = "https://github.com/emrealmaoglu/edgeguard-road.git"' in source
+    )
+    assert 'EDGEGUARD_BRANCH = "feat/first-vertical-slice"' in source
+    assert "edgeguard_commit != EDGEGUARD_EXPECTED_COMMIT" in source
+    assert 'os.environ["PYTHONDONTWRITEBYTECODE"] = "1"' in source
+    assert "sys.dont_write_bytecode = True" in source
+    assert '[sys.executable, "-m", "pip"' in source
+    assert '[sys.executable, "-m", "edgeguard"' in source
+    assert '[sys.executable, "-m", "pytest"' in source
+    assert "sys.path.insert(0, str(SOURCE_ROOT))" in source
+    assert "Path(edgeguard.__file__).resolve()" in source
+    assert "env=SUBPROCESS_ENV" in source
+    assert "capture_output=True" in source
+    assert "completed.stdout" in source
+    assert "completed.stderr" in source
+    assert '"python",' not in source
+    assert "rmtree(" not in source
+    assert ".unlink(" not in source
     lowered = source.lower()
     for prohibited in ("api_key", "password=", "token=", "credential="):
         assert prohibited not in lowered
+
+    runner_source = PIDNET_RUNNER.read_text(encoding="utf-8")
+    assert '"command": ["python", "scripts/run_pidnet_spike.py"]' in runner_source
+    assert "list(sys.argv)" not in runner_source
