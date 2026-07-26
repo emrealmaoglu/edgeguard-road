@@ -12,6 +12,7 @@ from edgeguard.models.pidnet_spike import (
     NormalizedStateDict,
     PIDNetSpikeError,
     _load_state_dict_strict,
+    _select_torch_device,
     difference_summary,
     preprocess_pidnet_rgb,
     verify_checkpoint_file,
@@ -371,3 +372,44 @@ def test_difference_summary_reports_exact_and_changed_arrays() -> None:
     assert exact["max_absolute_difference"] == 0.0
     assert changed["byte_equal"] is False
     assert changed["max_absolute_difference"] == 1.0
+
+
+@pytest.mark.parametrize(
+    ("cuda_available", "mps_available", "expected"),
+    [(True, True, "cuda"), (False, True, "mps"), (False, False, "cpu")],
+)
+def test_auto_device_selection_uses_available_backend_order(
+    cuda_available: bool, mps_available: bool, expected: str
+) -> None:
+    class Availability:
+        def __init__(self, available: bool) -> None:
+            self.available = available
+
+        def is_available(self) -> bool:
+            return self.available
+
+    class Backends:
+        mps = Availability(mps_available)
+
+    class Torch:
+        cuda = Availability(cuda_available)
+        backends = Backends()
+
+    assert _select_torch_device(Torch(), "auto") == expected
+
+
+def test_explicit_unavailable_device_is_rejected() -> None:
+    class Availability:
+        @staticmethod
+        def is_available() -> bool:
+            return False
+
+    class Backends:
+        mps = Availability()
+
+    class Torch:
+        cuda = Availability()
+        backends = Backends()
+
+    with pytest.raises(PIDNetSpikeError, match="MPS was requested but is not available"):
+        _select_torch_device(Torch(), "mps")

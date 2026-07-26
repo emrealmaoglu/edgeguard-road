@@ -2,24 +2,25 @@
 
 ## Backlog
 
-- Stage 3: only after a successful human-reviewed real forward and source-integration
-  decision, implement the chosen PIDNet path and minimum Cityscapes val adapter.
-- Stage 4: only after scoring works and license/access approval, implement the
-  Fishyscapes Lost & Found validation development adapter.
-- Stage 5: run a native-logit ONNX measurement pilot without pre-freezing numerical
-  gates.
+- P0 after Commit B: semantic metrics, MSP/entropy/MaxLogit/Energy, the minimal
+  path-free runner, deterministic 1/5/10-image local campaign, and thin full-resolution
+  Colab preparation.
+- P1 after the core runner: optional 20-image MPS run, minimal identity-protected
+  resume, boundary/interior analysis, correlations, and wider percentile reports.
+- P2 after the first full Colab campaign: ONNX/ORT and Fishyscapes development work.
 
 ## Ready
 
-- Human review and explicit Commit A approval for the bounded Stage 2 closure diff.
-- After Commit A, begin manual local PyTorch inventory, real checkpoint verification,
-  and the `512×1024` CPU forward. PyTorch remains environment-only.
+- Human review and explicit Commit B approval for the local checkpoint and
+  Cityscapes val foundation diff.
+- After Commit B, rerun a clean CPU single-image verification, then begin metrics,
+  four scores, and the minimal runner.
 
 ## In Progress
 
-- Stage 2 closure review: the first T4/CUDA development forward proved feasibility
-  but used a temporary Git-dirty loader patch. The bounded loader, notebook,
-  repository-origin, and path-sanitization diff is awaiting human review.
+- Commit B review: real checkpoint verification, local CPU/MPS forward, val-only
+  Cityscapes preparation, deterministic 500/500/3 manifest, adapter, and LUT are
+  complete and awaiting human review.
 
 ## Done
 
@@ -37,3 +38,11 @@
   `[1,19,64,128]` and aligned logits `[1,19,512,1024]`; two consecutive forwards
   were byte-identical. This is not a clean reproducibility artifact, an OOD
   performance result, or evidence that MSP/entropy are anomaly probabilities.
+- Commit A `9a734358332e8221af940d323e103b3adda376ad`: Stage 2 loader,
+  notebook reproducibility, path sanitization, and evidence closure.
+- Local environment/checkpoint foundation: Python 3.11.9 and environment-only
+  PyTorch 2.13.0; real 481-key checkpoint validated with strict load; CPU and MPS
+  forwards finite and repeatable within backend.
+- Cityscapes val foundation: approved archive hashes, safe val-only extraction,
+  500/500 pairs across 3 cities, deterministic manifest, explicit label LUT, and
+  real-root opt-in validation.

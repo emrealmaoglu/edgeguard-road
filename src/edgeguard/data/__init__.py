@@ -1,1 +1,1 @@
-"""Dataset adapters will be introduced in WP-04."""
+"""Narrow dataset adapters for approved development roles."""

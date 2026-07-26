@@ -8,8 +8,10 @@ import json
 import math
 import os
 import platform
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 OPTIONAL_PACKAGES: dict[str, tuple[str, ...]] = {
@@ -63,7 +65,14 @@ def _isolated_probe(
         "import importlib,json;"
         f"m=importlib.import_module({module_name!r});"
         "r={'module_version':str(getattr(m,'__version__','unknown'))};"
-        + ("r['cuda_available']=bool(m.cuda.is_available());" if include_cuda else "")
+        + (
+            "r['cuda_available']=bool(m.cuda.is_available());"
+            "r['mps_built']=bool(hasattr(m.backends,'mps') and m.backends.mps.is_built());"
+            "r['mps_available']=bool(hasattr(m.backends,'mps') and "
+            "m.backends.mps.is_available());"
+            if include_cuda
+            else ""
+        )
         + "print(json.dumps(r,sort_keys=True))"
     )
     try:
@@ -166,6 +175,7 @@ def doctor_report(
             "machine": platform.machine(),
             "processor": platform.processor() or None,
             "ram_bytes": _ram_bytes(),
+            "disk_free_bytes": shutil.disk_usage(Path.cwd()).free,
         },
         "packages": packages,
     }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import platform
 import socket
 import sys
 import uuid
@@ -48,6 +49,7 @@ def _parser() -> argparse.ArgumentParser:
         "--sample-access-date", required=True, help="checkout access date: YYYY-MM-DD"
     )
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/dev/pidnet_spike"))
+    parser.add_argument("--device", choices=("auto", "cpu", "mps", "cuda"), default="auto")
     return parser
 
 
@@ -189,6 +191,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         checkpoint_path=args.checkpoint,
         expected_checkpoint_sha256=config.checkpoint.sha256,
         config=config,
+        device=args.device,
     )
 
     mask = semantic_mask(forward.aligned_logits)
@@ -227,6 +230,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "git_state": git.state.value,
         "git_dirty": git.dirty,
         "device": forward.device,
+        "runtime": {
+            "python_version": platform.python_version(),
+            "torch_version": forward.torch_version,
+            "selected_device": forward.device,
+        },
         "image_manifest_sha256": image_manifest["manifest_sha256"],
         "sample_selection": sample_kind,
         "upstream": forward.checkpoint_load_report["upstream"],

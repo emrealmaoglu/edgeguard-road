@@ -8,7 +8,7 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -32,6 +32,7 @@ class PIDNetForwardResult:
     repeated_native_logits: npt.NDArray[np.float32]
     repeated_aligned_logits: npt.NDArray[np.float32]
     device: str
+    torch_version: str
     checkpoint_load_report: dict[str, Any]
 
 
@@ -47,6 +48,15 @@ class NormalizedStateDict:
     excluded_auxiliary_group_counts: dict[str, int]
     excluded_auxiliary_prefixes: tuple[str, ...]
     ignored_training_root_keys: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _VerifiedPIDNetCheckpoint:
+    """Runtime objects and path-free evidence from one strict checkpoint load."""
+
+    model: Any
+    torch: Any
+    report: dict[str, Any]
 
 
 _OFFICIAL_TRAINING_ROOT_SHAPES: dict[str, tuple[int, ...]] = {
@@ -358,12 +368,15 @@ def _extract_state_dict(payload: Any) -> tuple[Mapping[str, Any], str]:
 
 def _pidnet_module(checkout: Path) -> Any:
     checkout_string = str(checkout.resolve())
+    previous_dont_write_bytecode = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     sys.path.insert(0, checkout_string)
     try:
         importlib.invalidate_caches()
         module = importlib.import_module("models.pidnet")
     finally:
         sys.path.remove(checkout_string)
+        sys.dont_write_bytecode = previous_dont_write_bytecode
     module_file = getattr(module, "__file__", None)
     if not isinstance(module_file, str):
         raise PIDNetSpikeError("PIDNet module has no verifiable source file")
@@ -373,16 +386,13 @@ def _pidnet_module(checkout: Path) -> Any:
     return module
 
 
-def run_pidnet_forward(
-    model_input: npt.NDArray[np.float32],
+def _load_verified_pidnet_checkpoint(
     *,
     checkout: Path,
     checkpoint_path: Path,
     expected_checkpoint_sha256: str,
     config: PIDNetSpikeConfig,
-) -> PIDNetForwardResult:
-    """Load the fixed model strictly and run two native/aligned forward passes."""
-    validate_model_input(model_input)
+) -> _VerifiedPIDNetCheckpoint:
     upstream_report = verify_upstream_checkout(
         checkout,
         expected_repository_url=config.upstream.repository_url,
@@ -396,7 +406,6 @@ def run_pidnet_forward(
 
     try:
         torch = importlib.import_module("torch")
-        functional = importlib.import_module("torch.nn.functional")
     except (ImportError, OSError) as error:
         raise PIDNetSpikeError(
             f"PyTorch import failed in execution environment: {error}"
@@ -429,16 +438,92 @@ def run_pidnet_forward(
     )
     _load_state_dict_strict(model, normalized.state_dict)
 
+    report = {
+        **checkpoint_report,
+        "payload_container": container,
+        "transformation_policy": normalized.transformation_policy,
+        "key_transform": normalized.transformation_policy,
+        "raw_checkpoint_key_count": normalized.raw_checkpoint_key_count,
+        "loaded_inference_key_count": normalized.loaded_inference_key_count,
+        "loaded_key_count": normalized.loaded_inference_key_count,
+        "excluded_auxiliary_key_count": normalized.excluded_auxiliary_key_count,
+        "excluded_auxiliary_group_counts": normalized.excluded_auxiliary_group_counts,
+        "excluded_auxiliary_prefixes": list(normalized.excluded_auxiliary_prefixes),
+        "ignored_training_root_keys": list(normalized.ignored_training_root_keys),
+        "strict": True,
+        "shape_check": "exact",
+        "parameter_shapes_sha256": sha256_payload(shape_manifest),
+        "missing_keys": [],
+        "unexpected_keys": [],
+        "weights_only": True,
+        "torch_version": str(torch.__version__),
+        "upstream": upstream_report,
+    }
+    return _VerifiedPIDNetCheckpoint(model=model, torch=torch, report=report)
+
+
+def verify_pidnet_checkpoint_layout(
+    *,
+    checkout: Path,
+    checkpoint_path: Path,
+    expected_checkpoint_sha256: str,
+    config: PIDNetSpikeConfig,
+) -> dict[str, Any]:
+    """Strictly load the approved PIDNet-S checkpoint and return path-free evidence."""
+    return _load_verified_pidnet_checkpoint(
+        checkout=checkout,
+        checkpoint_path=checkpoint_path,
+        expected_checkpoint_sha256=expected_checkpoint_sha256,
+        config=config,
+    ).report
+
+
+def _select_torch_device(torch: Any, requested: Literal["auto", "cpu", "mps", "cuda"]) -> str:
+    """Resolve an explicit available device without hiding backend failures."""
+    mps_backend = getattr(torch.backends, "mps", None)
+    mps_available = bool(mps_backend is not None and mps_backend.is_available())
+    cuda_available = bool(torch.cuda.is_available())
+    if requested == "auto":
+        return "cuda" if cuda_available else "mps" if mps_available else "cpu"
+    if requested == "cuda" and not cuda_available:
+        raise PIDNetSpikeError("CUDA was requested but is not available")
+    if requested == "mps" and not mps_available:
+        raise PIDNetSpikeError("MPS was requested but is not available")
+    return requested
+
+
+def run_pidnet_forward(
+    model_input: npt.NDArray[np.float32],
+    *,
+    checkout: Path,
+    checkpoint_path: Path,
+    expected_checkpoint_sha256: str,
+    config: PIDNetSpikeConfig,
+    device: Literal["auto", "cpu", "mps", "cuda"] = "auto",
+) -> PIDNetForwardResult:
+    """Load the fixed model strictly and run two native/aligned forward passes."""
+    validate_model_input(model_input)
+    verified = _load_verified_pidnet_checkpoint(
+        checkout=checkout,
+        checkpoint_path=checkpoint_path,
+        expected_checkpoint_sha256=expected_checkpoint_sha256,
+        config=config,
+    )
+    torch = verified.torch
+    try:
+        functional = importlib.import_module("torch.nn.functional")
+    except (ImportError, OSError) as error:
+        raise PIDNetSpikeError(f"PyTorch functional import failed: {error}") from error
+    model = verified.model
+
     torch.manual_seed(config.seed)
-    if torch.cuda.is_available():
+    selected_device = _select_torch_device(torch, device)
+    if selected_device == "cuda":
         torch.cuda.manual_seed_all(config.seed)
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
-        device = "cuda"
-    else:
-        device = "cpu"
-    model.eval().to(device)
-    tensor = torch.from_numpy(model_input).to(device)
+    model.eval().to(selected_device)
+    tensor = torch.from_numpy(model_input).to(selected_device)
 
     native_results: list[npt.NDArray[np.float32]] = []
     aligned_results: list[npt.NDArray[np.float32]] = []
@@ -473,33 +558,14 @@ def run_pidnet_forward(
     if aligned_results[0].shape[2:] != (config.input.height, config.input.width):
         raise PIDNetSpikeError(f"aligned logits have unexpected grid: {aligned_results[0].shape}")
 
-    checkpoint_load_report = {
-        **checkpoint_report,
-        "payload_container": container,
-        "transformation_policy": normalized.transformation_policy,
-        "key_transform": normalized.transformation_policy,
-        "raw_checkpoint_key_count": normalized.raw_checkpoint_key_count,
-        "loaded_inference_key_count": normalized.loaded_inference_key_count,
-        "loaded_key_count": normalized.loaded_inference_key_count,
-        "excluded_auxiliary_key_count": normalized.excluded_auxiliary_key_count,
-        "excluded_auxiliary_group_counts": (normalized.excluded_auxiliary_group_counts),
-        "excluded_auxiliary_prefixes": list(normalized.excluded_auxiliary_prefixes),
-        "ignored_training_root_keys": list(normalized.ignored_training_root_keys),
-        "strict": True,
-        "shape_check": "exact",
-        "parameter_shapes_sha256": sha256_payload(shape_manifest),
-        "missing_keys": [],
-        "unexpected_keys": [],
-        "weights_only": True,
-        "upstream": upstream_report,
-    }
     return PIDNetForwardResult(
         native_logits=native_results[0],
         aligned_logits=aligned_results[0],
         repeated_native_logits=native_results[1],
         repeated_aligned_logits=aligned_results[1],
-        device=device,
-        checkpoint_load_report=checkpoint_load_report,
+        device=selected_device,
+        torch_version=str(torch.__version__),
+        checkpoint_load_report=verified.report,
     )
 
 
