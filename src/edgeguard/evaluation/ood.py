@@ -16,11 +16,13 @@ IGNORE_LABEL = 255
 class OODPixelMetricResult:
     """Threshold-free pixel OOD metrics and evaluated class counts."""
 
+    auroc: float | None
     average_precision: float | None
     fpr_at_95_tpr: float | None
     anomaly_pixel_count: int
     id_pixel_count: int
     ignored_pixel_count: int
+    score_direction: str = "higher_means_more_anomalous"
 
 
 def _validated_pixels(
@@ -71,7 +73,7 @@ def pixel_ood_metrics(
     positive_count = int(np.count_nonzero(positives))
     negative_count = int(positives.size - positive_count)
     if positive_count == 0:
-        return OODPixelMetricResult(None, None, 0, negative_count, ignored_count)
+        return OODPixelMetricResult(None, None, None, 0, negative_count, ignored_count)
 
     true_positives, false_positives = _ranking_curve(valid_scores, positives)
     precision = true_positives / (true_positives + false_positives)
@@ -80,13 +82,93 @@ def pixel_ood_metrics(
     average_precision = float(np.sum(recall_steps * precision))
 
     fpr_at_95_tpr: float | None = None
+    auroc: float | None = None
     if negative_count > 0:
         first_at_target = int(np.flatnonzero(recall >= 0.95)[0])
         fpr_at_95_tpr = float(false_positives[first_at_target] / negative_count)
+        tpr_curve = np.concatenate((np.array([0.0]), true_positives / positive_count))
+        fpr_curve = np.concatenate((np.array([0.0]), false_positives / negative_count))
+        auroc = float(np.trapezoid(tpr_curve, fpr_curve))
     return OODPixelMetricResult(
+        auroc=auroc,
         average_precision=average_precision,
         fpr_at_95_tpr=fpr_at_95_tpr,
         anomaly_pixel_count=positive_count,
         id_pixel_count=negative_count,
         ignored_pixel_count=ignored_count,
     )
+
+
+def select_anomaly_threshold(
+    scores: npt.NDArray[np.floating],
+    labels: npt.NDArray[np.integer],
+    *,
+    target_tpr: float,
+    ignore_index: int = IGNORE_LABEL,
+) -> dict[str, float | int | str]:
+    """Select the highest-score anomaly threshold meeting a declared development TPR."""
+    if not 0.0 < target_tpr <= 1.0:
+        raise ValueError("target_tpr must lie in (0, 1]")
+    valid_scores, positives, ignored_count = _validated_pixels(
+        scores, labels, ignore_index=ignore_index
+    )
+    positive_count = int(np.count_nonzero(positives))
+    if positive_count == 0:
+        raise ValueError("threshold selection requires anomaly pixels")
+    order = np.argsort(-valid_scores, kind="stable")
+    sorted_scores = valid_scores[order]
+    sorted_positives = positives[order]
+    cumulative = np.cumsum(sorted_positives, dtype=np.int64) / positive_count
+    index = int(np.flatnonzero(cumulative >= target_tpr)[0])
+    threshold = float(sorted_scores[index])
+    predicted = valid_scores >= threshold
+    true_positive_rate = float(np.count_nonzero(predicted & positives) / positive_count)
+    negatives = ~positives
+    false_positive_rate = (
+        float(np.count_nonzero(predicted & negatives) / np.count_nonzero(negatives))
+        if bool(negatives.any())
+        else 0.0
+    )
+    return {
+        "schema_version": "1.0",
+        "record_type": "ood_development_threshold",
+        "score_direction": "higher_means_more_anomalous",
+        "target_tpr": target_tpr,
+        "threshold": threshold,
+        "observed_tpr": true_positive_rate,
+        "observed_fpr": false_positive_rate,
+        "valid_pixel_count": int(valid_scores.size),
+        "ignored_pixel_count": ignored_count,
+    }
+
+
+def score_distribution(
+    scores: npt.NDArray[np.floating],
+    labels: npt.NDArray[np.integer],
+    *,
+    ignore_index: int = IGNORE_LABEL,
+) -> dict[str, object]:
+    """Return compact class-conditional development distributions without raw scores."""
+    valid_scores, positives, ignored_count = _validated_pixels(
+        scores, labels, ignore_index=ignore_index
+    )
+
+    def summary(values: npt.NDArray[np.float64]) -> dict[str, float | int | None]:
+        return {
+            "count": int(values.size),
+            "mean": float(np.mean(values)) if values.size else None,
+            "minimum": float(np.min(values)) if values.size else None,
+            "maximum": float(np.max(values)) if values.size else None,
+            "p50": float(np.percentile(values, 50)) if values.size else None,
+            "p95": float(np.percentile(values, 95)) if values.size else None,
+        }
+
+    return {
+        "schema_version": "1.0",
+        "record_type": "ood_score_distribution",
+        "score_direction": "higher_means_more_anomalous",
+        "id": summary(valid_scores[~positives]),
+        "anomaly": summary(valid_scores[positives]),
+        "ignored_pixel_count": ignored_count,
+        "scientific_evidence": False,
+    }
