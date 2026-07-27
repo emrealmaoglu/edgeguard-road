@@ -1,46 +1,45 @@
 # EdgeGuard-Road
 
-EdgeGuard-Road is an offline academic research prototype for studying road-obstacle
-anomaly signals derived from semantic-segmentation logits. It is designed for a
-Local → GitHub → Colab → Artifact → Jetson workflow with explicit human approval
-gates.
+EdgeGuard-Road is an offline academic research prototype for multi-model open-set
+road-safety perception over prerecorded video. The approved expanded direction
+combines known-object detection, semantic segmentation, uncertainty/OOD analysis,
+calibration, contextual and temporal risk reasoning, optional relative depth,
+Jetson deployment, and a Streamlit dashboard.
 
-It is **not** a safety-certified ADAS product, a braking controller, or a physical
-risk estimator.
+The expanded thesis title is proposed and still requires human/university approval;
+see `PROJECT_CHARTER.md`. The project is not a safety-certified ADAS product, vehicle
+controller, or physical-risk estimator.
 
-## WP-01 quick start
+## Current evidence boundary
 
-Python 3.10 or newer is required; Python 3.11 is used by CI.
+- Strict PIDNet-S checkpoint validation and CPU/MPS/T4 forwards exist.
+- A clean 500-image Cityscapes validation campaign completed with 500 successes and
+  zero failures. Its measured mIoU is `0.7875813077220126`; see
+  `docs/research/CITYSCAPES_FULL_VAL_EVIDENCE.md` for the full claim boundary.
+- MSP, predictive entropy, MaxLogit, and Energy score plumbing is implemented.
+- Fishyscapes manual-only adapter and AP/FPR95 metric foundations are implemented and
+  tested, but no real Fishyscapes inference has occurred.
+- No project model training, detector experiment, calibration experiment, Jetson
+  benchmark, or sealed SMIYC evaluation has started.
+
+## Local quick start
+
+Python 3.10 or newer is required; CI validates Python 3.10 and 3.11.
 
 ```bash
 python -m pip install -e '.[dev]'
-python -m edgeguard doctor
 python -m edgeguard doctor --json
-python -m edgeguard smoke --config configs/smoke.yaml
 python -m edgeguard smoke --config configs/smoke.yaml --deterministic
-```
-
-Run the local quality gate from the repository root:
-
-```bash
 ruff check .
 ruff format --check .
 mypy src/edgeguard
 pytest -q
 ```
 
-WP-01 uses synthetic CPU-only data. It does not download datasets or models and
-does not claim real accuracy, latency, energy, or safety performance.
+Training frameworks are deliberately absent from core dependencies. Datasets,
+checkpoints, optimizer state, logs, ONNX models, TensorRT engines, videos, logits,
+and generated media remain outside Git. Colab notebooks stay thin; Jetson is for
+deployment and benchmarking, not training.
 
-## Repository policy
-
-- Scientific decisions and access to sealed test data remain with the human project
-  owner.
-- Datasets, checkpoints, logits, ONNX files, TensorRT engines, generated videos, and
-  runtime artifacts stay outside Git.
-- Colab notebooks are thin execution wrappers; implementation belongs in the package.
-- TensorRT engines are eventually built on the target Jetson, after environment
-  inventory and explicit human approval.
-- No public software license has been granted yet. See `LICENSES.md`.
-
-Start with `PROJECT_CHARTER.md`, `AGENTS.md`, and `docs/PROJECT_STATE.md`.
+Start with `PROJECT_CHARTER.md`, `AGENTS.md`, `docs/PROJECT_STATE.md`, and
+`docs/MASTER_PLAN_V2.md`.

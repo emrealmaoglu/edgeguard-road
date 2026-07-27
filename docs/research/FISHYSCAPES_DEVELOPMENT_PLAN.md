@@ -2,14 +2,21 @@
 
 ## Scope and role record
 
-This foundation is restricted to public validation/development data. It does
-not access SMIYC, select thresholds, train or fine-tune PIDNet, perform
-calibration, or add context, morphology, or temporal processing.
+This document preserves the implemented manual-only Fishyscapes foundation and
+records the role migration approved in Master Plan V2. It does not access
+SMIYC, select thresholds, train or fine-tune a model, perform calibration, or
+add context, morphology, or temporal processing.
 
 | Dataset | Project role | Current state | Allowed use | Redistribution |
 | --- | --- | --- | --- | --- |
-| Fishyscapes Lost & Found validation | `ood_development` | Adapter and metrics ready for manually supplied data; real data not accessed | Pixel-level AP and FPR95 development evaluation with higher scores meaning more anomalous | Images and derived visuals remain external and are not redistributed |
-| Fishyscapes Static validation | `ood_development` | Generation preparation only; no generation performed | Future development evaluation generated from legally available Cityscapes inputs using a reviewed official generator pin | Generated images remain external and are not redistributed |
+| Fishyscapes Lost & Found validation | `ood_frozen_holdout` | Adapter and metrics ready for manually supplied data; real data not accessed | One full holdout evaluation only after model, config, calibration, and threshold decisions are frozen | Images and derived visuals remain external and are not redistributed |
+| Fishyscapes Static validation | `ood_development` | Generation preparation only; no generation performed | Development, model selection, and HPO using legally available Cityscapes inputs and a reviewed official generator pin | Generated images remain external and are not redistributed |
+
+The earlier vertical-slice plan classified Lost & Found validation as
+`ood_development`. Master Plan V2 supersedes that role for all future runs: FS
+Static is the development/HPO source, while the complete Lost & Found validation
+set is a one-time frozen holdout. It must not be split into routine tuning
+subsets.
 
 The official Fishyscapes page states that Lost & Found validation is public and
 that FS Static cannot be distributed as a ZIP because it depends on Cityscapes;
@@ -42,9 +49,13 @@ validation. The project contract is:
 - `1`: anomaly pixel
 - `255`: ignored/void pixel
 
-The deterministic root-free manifest records relative paths, SHA-256 values,
-shape, anomaly/ignore pixel counts, `dataset_role=ood_development`,
-`source_mode=manual_only`, and `higher_means_more_anomalous`.
+The implemented deterministic root-free manifest records relative paths,
+SHA-256 values, shape, anomaly/ignore pixel counts,
+`dataset_role=ood_development`, `source_mode=manual_only`, and
+`higher_means_more_anomalous`. That role value is historical implementation
+evidence, not authorization for a real run. Before Lost & Found is accessed, a
+bounded follow-up must change and test the emitted role as
+`ood_frozen_holdout`; this documentation migration does not alter code.
 
 Pixel AP and FPR95 are implemented with NumPy. They operate over all valid
 pixels and do not choose or persist a deployment threshold. Undefined cases are
@@ -69,10 +80,11 @@ No automatic download or restricted-data access is implemented.
 4. Human extracts both sources outside the repository into the layout above.
    No image, mask, generated visual, archive, or manifest containing absolute
    roots is added to Git.
-5. Before a real evaluation, run the adapter manifest builder against the
+5. Only after model, config, calibration, and threshold decisions are frozen,
+   update the adapter's legacy role label, run the manifest builder against the
    external root, confirm the expected 100 public-validation pairs, inspect any
    zero-anomaly sample explicitly, and have the human approve the resulting
-   manifest hash.
+   manifest hash and one-time holdout gate.
 
 ### FS Static validation
 
@@ -89,5 +101,5 @@ No automatic download or restricted-data access is implemented.
    generated manifest hash, and access/generation date before any evaluation.
 
 This task stops before steps requiring data acquisition or FS Static generation.
-A real Fishyscapes run remains blocked on those human actions and manifest
-approval.
+Any real Fishyscapes run remains blocked on those human actions, manifest
+approval, and the applicable development or frozen-holdout gate.

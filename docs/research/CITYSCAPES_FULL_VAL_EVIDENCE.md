@@ -12,6 +12,10 @@ latency and must not be converted into Jetson FPS.
 No OOD performance, threshold, calibration, or anomaly-probability claim is
 made from this Cityscapes ID-development run.
 
+This completed run remains valid historical baseline evidence. Under Master
+Plan V2, official Cityscapes val is reserved for frozen final semantic
+confirmation and must not be reused for per-trial tuning or HPO.
+
 ## External evidence identity
 
 - External location: `~/edgeguard-data/evidence/cityscapes/full-val/2026-07-26/edgeguard-cityscapes-eval.zip`

@@ -8,6 +8,13 @@ commit, and the frozen dataset roles. It does not approve a checkpoint license,
 download data or model artifacts, integrate upstream source, or close a
 scientific gate.
 
+The role matrix below is retained as historical evidence for that first vertical
+slice. Master Plan V2 supersedes future use as follows: official Cityscapes val
+is reserved for frozen final semantic confirmation; Fishyscapes Static is the
+OOD development/HPO source; the complete Fishyscapes Lost & Found validation set
+is a one-time frozen holdout. SMIYC remains sealed final. No historical measured
+result is changed by this migration.
+
 All sources below were accessed on 2026-07-26. Status labels mean:
 
 - **VERIFIED FACT:** directly supported by the linked official source.
@@ -47,10 +54,12 @@ All sources below were accessed on 2026-07-26. Status labels mean:
 The approved commit must remain immutable for the isolated spike. A later
 upstream `main` value must not silently replace it.
 
-## Dataset role matrix
+## Historical dataset role matrix
 
 **Status:** **HUMAN APPROVED on 2026-07-26.** The sealed SMIYC boundary is
-unchanged and mandatory.
+unchanged and mandatory. Roles in this table describe the completed narrow
+vertical slice; future experiment roles are governed by Master Plan V2 and the
+Data Catalog.
 
 | Dataset | Frozen role | Required in this slice | Access and license state | Allowed use | Boundary |
 | --- | --- | --- | --- | --- | --- |
