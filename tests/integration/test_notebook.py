@@ -10,6 +10,8 @@ PIDNET_NOTEBOOK = REPO_ROOT / "notebooks/colab/01_pidnet_single_image_spike.ipyn
 CITYSCAPES_NOTEBOOK = REPO_ROOT / "notebooks/colab/02_pidnet_cityscapes_val_eval.ipynb"
 CITYSCAPES_TRAIN_NOTEBOOK = REPO_ROOT / "notebooks/colab/03_prepare_cityscapes_fine_train.ipynb"
 SEMANTIC_STACK_NOTEBOOK = REPO_ROOT / "notebooks/colab/04_semantic_training_stack_probe.ipynb"
+SEMANTIC_SMOKE_NOTEBOOK = REPO_ROOT / "notebooks/colab/05_semantic_five_model_smoke.ipynb"
+ACQUISITION_NOTEBOOK = REPO_ROOT / "notebooks/colab/06_acquire_edgeguard_datasets.ipynb"
 PIDNET_RUNNER = REPO_ROOT / "scripts/run_pidnet_spike.py"
 
 
@@ -153,8 +155,45 @@ def test_semantic_stack_notebook_is_thin_exact_commit_gated_and_stops_before_dat
     assert "drive.mount" not in source
     assert "private_inputs" not in source
     assert "Cityscapes training" in source
-    assert "SMIYC" not in source
+    assert "RoadAnomaly21" not in source
+    assert "RoadObstacle21" not in source
     assert "/Users/" not in source
     lowered = source.lower()
     for prohibited in ("api_key", "password=", "token=", "credential="):
         assert prohibited not in lowered
+
+
+def test_semantic_smoke_notebook_is_thin_identity_gated_and_stops_before_screening() -> None:
+    payload = json.loads(SEMANTIC_SMOKE_NOTEBOOK.read_text(encoding="utf-8"))
+    source = "\n".join(line for cell in payload["cells"] for line in cell.get("source", []))
+
+    assert payload["nbformat"] == 4
+    assert all(not cell.get("outputs") for cell in payload["cells"])
+    assert "REPLACE_WITH_REVIEWED_EG_SEG_002_COMMIT_SHA" in source
+    assert "install_semantic_stack.py" in source
+    assert "rebuild_cityscapes_splits.py" in source
+    assert "stage_cityscapes_training.py" in source
+    assert "run_semantic_smoke.py" in source
+    assert "split-policy-v1" in source
+    assert "ready_for_common_screening" in source
+    assert "Do not start the common screening campaign" in source
+    assert "/Users/" not in source
+    for prohibited in ("api_key", "password=", "token=", "credential="):
+        assert prohibited not in source.lower()
+
+
+def test_dataset_acquisition_notebook_is_thin_and_runtime_secret_only() -> None:
+    payload = json.loads(ACQUISITION_NOTEBOOK.read_text(encoding="utf-8"))
+    source = "\n".join(line for cell in payload["cells"] for line in cell.get("source", []))
+
+    assert payload["nbformat"] == 4
+    assert all(not cell.get("outputs") for cell in payload["cells"])
+    assert "REPLACE_WITH_REVIEWED_EG_SEG_002_COMMIT_SHA" in source
+    assert "acquire_edgeguard_datasets.py" in source
+    assert "--list" in source
+    assert "RoadAnomaly21" not in source
+    assert "RoadObstacle21" not in source
+    assert "Lost & Found" in source
+    assert "/Users/" not in source
+    for prohibited in ("api_key", "password=", "token=", "credential="):
+        assert prohibited not in source.lower()

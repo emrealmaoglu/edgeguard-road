@@ -144,10 +144,13 @@ planning ranges until replaced by measurements.
 
 - **Objective:** Run bounded smoke experiments for Fast-SCNN, BiSeNetV2, PIDNet-S,
   DDRNet-23-Slim, and SegFormer-B0.
-- **Dependencies:** `EG-SEG-001`, frozen fit/select manifests.
-- **Human inputs:** Approved initialization/checkpoint terms for each model.
+- **Dependencies:** `EG-SEG-001`, cryptographically `policy_selected` fit/select
+  manifests, and a CUDA Colab runtime.
+- **Initialization:** The compatibility smoke uses fixed-seed random initialization;
+  it does not require or resolve production pretrained sources.
 - **Local work:** Config/adapter unit tests and tiny forward where feasible.
-- **Colab work:** 1–3 epochs or fixed small subset; verify loss, gradients,
+- **Colab work:** Fixed 100 optimizer steps per model plus bounded selection validation;
+  verify loss, gradients,
   checkpoint, exact resume, logits, evaluator, and failure recording.
 - **Jetson work:** None.
 - **Expected outputs:** Five smoke records/checkpoints/curves or explicit failures.
@@ -160,6 +163,9 @@ planning ranges until replaced by measurements.
 - **Fallback:** One bounded repair; then mark failed and seek human model substitution.
 - **Compute estimate:** Included in the 2–3 hour probe/smoke family.
 - **Storage estimate:** Under 5 GiB per active smoke; final small records in Drive.
+- **Implementation state:** OpenMIM-free compatibility cascade, staging, observability,
+  recovery, acquisition queue and thin notebooks are locally tested; real Colab smoke
+  remains pending.
 - **Commit boundary:** Smoke code/config/tests and external evidence references.
 - **Next task:** `EG-SEG-003`.
 

@@ -15,6 +15,13 @@ from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
+from edgeguard.telemetry.longrun import (
+    LongRunStatus,
+    append_jsonl,
+    ensure_disk_space,
+    require_finite,
+    utc_now,
+)
 from edgeguard.training.config import (
     load_semantic_common_config,
     load_semantic_framework_config,
@@ -31,6 +38,7 @@ from edgeguard.training.contracts import (
     ValidationIntervalRecord,
 )
 from edgeguard.training.data import load_policy_selected_cityscapes_split
+from edgeguard.training.fractions import build_train_fit_fraction
 from edgeguard.training.identity import build_experiment_contract, validate_resume_identity
 from edgeguard.training.logits import validate_native_logits_tensor
 from edgeguard.training.registry import append_registry
@@ -38,6 +46,16 @@ from edgeguard.training.registry import append_registry
 _RUNTIME_DATASET_ROOT: Path | None = None
 _RUNTIME_TRAINING_SAMPLES: tuple[Any, ...] = ()
 _RUNTIME_RECOVERY_SYNC_ROOT: Path | None = None
+_RUNTIME_STATUS: LongRunStatus | None = None
+
+
+def _distribution_version(*names: str) -> tuple[str, str]:
+    for name in names:
+        try:
+            return name, importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    raise RuntimeError(f"required distribution is unavailable: {', '.join(names)}")
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -91,6 +109,7 @@ def _environment(torch: Any) -> dict[str, Any]:
         raise RuntimeError("semantic stack probe requires CUDA")
     properties = torch.cuda.get_device_properties(0)
     capability = torch.cuda.get_device_capability(0)
+    mmcv_distribution, mmcv_version = _distribution_version("mmcv", "mmcv-lite")
     return {
         "schema_version": "1.0",
         "record_type": "semantic_stack_environment",
@@ -100,7 +119,8 @@ def _environment(torch: Any) -> dict[str, Any]:
         "torch_version": importlib.metadata.version("torch"),
         "mmsegmentation_version": importlib.metadata.version("mmsegmentation"),
         "mmengine_version": importlib.metadata.version("mmengine"),
-        "mmcv_version": importlib.metadata.version("mmcv"),
+        "mmcv_distribution": mmcv_distribution,
+        "mmcv_version": mmcv_version,
         "cuda_version": torch.version.cuda,
         "gpu_name": torch.cuda.get_device_name(0),
         "vram_bytes": int(properties.total_memory),
@@ -411,7 +431,9 @@ def _register_loss_val_loop(torch: Any) -> str:
     return EdgeGuardLossValLoop.__name__
 
 
-def _register_checkpoint_metadata_hook() -> str:
+def _register_checkpoint_metadata_hook(
+    *, model_name: str, total_steps: int, device_batch: int
+) -> str:
     """Persist identity-protected progress beside MMEngine recovery checkpoints."""
     from mmengine.hooks import Hook
     from mmengine.registry import HOOKS
@@ -421,6 +443,14 @@ def _register_checkpoint_metadata_hook() -> str:
         def __init__(self, metadata: dict[str, Any]) -> None:
             self.metadata = CheckpointMetadata.model_validate(metadata)
             self.train_losses: list[float] = []
+            self.iteration_started = time.perf_counter()
+            self.run_started = time.perf_counter()
+            self.last_sync = time.monotonic()
+            self.last_sync_utc: str | None = None
+
+        def before_train_iter(self, runner: Any, batch_idx: int, data_batch: Any = None) -> None:
+            del runner, batch_idx, data_batch
+            self.iteration_started = time.perf_counter()
 
         def after_train_iter(
             self,
@@ -429,13 +459,104 @@ def _register_checkpoint_metadata_hook() -> str:
             data_batch: Any = None,
             outputs: dict[str, Any] | None = None,
         ) -> None:
-            del runner, batch_idx, data_batch
+            del batch_idx, data_batch
             loss = (outputs or {}).get("loss")
             if loss is None:
                 raise ValueError("training iteration did not expose a loss")
             if hasattr(loss, "detach"):
                 loss = loss.detach().cpu()
-            self.train_losses.append(float(loss))
+            loss_value = require_finite(float(loss), "training loss")
+            self.train_losses.append(loss_value)
+            step = int(runner.iter + 1)
+            step_time = time.perf_counter() - self.iteration_started
+            if step_time > 300:
+                raise TimeoutError("training iteration exceeded the dataloader-stall limit")
+            gradient_norm: float | None = None
+            try:
+                gradient_scalar = runner.message_hub.get_scalar("train/grad_norm")
+                gradient_norm = require_finite(float(gradient_scalar.current()), "gradient norm")
+            except (KeyError, RuntimeError, ValueError):
+                gradient_norm = None
+            squared_norm = 0.0
+            gradient_seen = False
+            model = runner.model.module if hasattr(runner.model, "module") else runner.model
+            for parameter in model.parameters():
+                if parameter.grad is not None:
+                    value = float(parameter.grad.detach().float().norm().cpu())
+                    require_finite(value, "gradient norm component")
+                    squared_norm += value * value
+                    gradient_seen = True
+            if gradient_seen:
+                gradient_norm = require_finite(squared_norm**0.5, "gradient norm")
+            if step % 25 == 0 or step == 1 or step == total_steps:
+                ensure_disk_space(Path(runner.work_dir), 0, reserve_bytes=512 * 1024**2)
+                learning_rates = runner.optim_wrapper.get_lr()
+                flat_rates = [
+                    float(value) for values in learning_rates.values() for value in values
+                ]
+                elapsed = max(time.perf_counter() - self.run_started, 1e-9)
+                speed = step * device_batch / elapsed
+                torch_module = __import__("torch")
+                cuda_available = bool(torch_module.cuda.is_available())
+                data_time: float | None = None
+                try:
+                    data_time = require_finite(
+                        float(runner.message_hub.get_scalar("train/data_time").current()),
+                        "data time",
+                    )
+                except (KeyError, RuntimeError, ValueError):
+                    data_time = None
+                record = {
+                    "schema_version": "1.0",
+                    "record_type": "semantic_training_progress",
+                    "model": model_name,
+                    "epoch": int(runner.epoch + 1),
+                    "optimizer_step": step,
+                    "completed": step,
+                    "total": total_steps,
+                    "train_loss": loss_value,
+                    "learning_rate": flat_rates[0] if flat_rates else None,
+                    "data_time_seconds": data_time,
+                    "step_time_seconds": step_time,
+                    "images_per_second": device_batch / max(step_time, 1e-9),
+                    "eta_seconds": max(0, total_steps - step) / max(speed / device_batch, 1e-9),
+                    "gradient_norm": gradient_norm,
+                    "gpu_allocated_bytes": int(
+                        torch_module.cuda.memory_allocated() if cuda_available else 0
+                    ),
+                    "gpu_reserved_bytes": int(
+                        torch_module.cuda.memory_reserved() if cuda_available else 0
+                    ),
+                    "last_recovery_sync_utc": self.last_sync_utc,
+                }
+                append_jsonl(Path(runner.work_dir) / "metrics.jsonl", record)
+                print(canonical_json(record), flush=True)
+                if _RUNTIME_STATUS is not None:
+                    _RUNTIME_STATUS.update(
+                        phase=f"train-{model_name}",
+                        completed=step,
+                        total=total_steps,
+                        speed_per_second=speed / device_batch,
+                    )
+            sync_due = step % 500 == 0 or time.monotonic() - self.last_sync >= 600
+            if sync_due and _RUNTIME_RECOVERY_SYNC_ROOT is not None:
+                self._persist(runner)
+                filename = f"recovery_step_{step:07d}.pth"
+                runner.save_checkpoint(
+                    str(runner.work_dir),
+                    filename,
+                    save_optimizer=True,
+                    save_param_scheduler=True,
+                    meta={"edgeguard_optimizer_step": step},
+                )
+                (Path(runner.work_dir) / "last_checkpoint").write_text(
+                    filename + "\n", encoding="utf-8"
+                )
+                _atomic_sync_checkpoint(Path(runner.work_dir), _RUNTIME_RECOVERY_SYNC_ROOT)
+                self.last_sync = time.monotonic()
+                self.last_sync_utc = utc_now()
+                if _RUNTIME_STATUS is not None:
+                    _RUNTIME_STATUS.update(last_checkpoint=filename, force=True)
 
         def _persist(
             self,
@@ -489,10 +610,11 @@ def _register_checkpoint_metadata_hook() -> str:
                 metrics=metric_values,
                 learning_rate=flat_rates[0],
             )
-            with (Path(runner.work_dir) / "validation_intervals.jsonl").open(
-                "a", encoding="utf-8"
-            ) as stream:
-                stream.write(canonical_json(record.model_dump(mode="json")) + "\n")
+            append_jsonl(
+                Path(runner.work_dir) / "validation_intervals.jsonl",
+                record.model_dump(mode="json"),
+            )
+            print(canonical_json(record.model_dump(mode="json")), flush=True)
             self.train_losses.clear()
 
     return EdgeGuardCheckpointMetadataHook.__name__
@@ -537,6 +659,50 @@ def _atomic_sync_checkpoint(work_dir: Path, sync_dir: Path) -> dict[str, Any]:
     }
     _write_json(sync_dir / "recovery_sync_receipt.json", receipt)
     return receipt
+
+
+def _restore_recovery_checkpoint(
+    recovery_dir: Path, output_dir: Path, contract: SemanticExperimentContract
+) -> CheckpointMetadata:
+    """Restore one SHA-verified compatible Drive recovery into ephemeral storage."""
+    receipt_path = recovery_dir / "recovery_sync_receipt.json"
+    if not receipt_path.is_file():
+        raise ValueError("recovery directory has no sync receipt")
+    import json
+
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    files = receipt.get("files")
+    if not isinstance(files, list) or len(files) != 2:
+        raise ValueError("recovery sync receipt is malformed")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_name: str | None = None
+    for record in files:
+        name = record.get("filename") if isinstance(record, dict) else None
+        expected_sha = record.get("sha256") if isinstance(record, dict) else None
+        if (
+            not isinstance(name, str)
+            or Path(name).name != name
+            or not isinstance(expected_sha, str)
+        ):
+            raise ValueError("recovery sync receipt contains an unsafe file identity")
+        source = recovery_dir / name
+        if not source.is_file() or sha256_file(source) != expected_sha:
+            raise ValueError("recovery file is missing or corrupt")
+        destination = output_dir / name
+        shutil.copy2(source, destination)
+        if sha256_file(destination) != expected_sha:
+            raise RuntimeError("restored recovery file failed SHA-256 verification")
+        if name.endswith(".pth"):
+            checkpoint_name = name
+    if checkpoint_name is None:
+        raise ValueError("recovery receipt does not identify a checkpoint")
+    metadata_path = output_dir / "checkpoint_metadata.json"
+    if not metadata_path.is_file():
+        raise ValueError("recovery receipt does not include checkpoint metadata")
+    metadata = CheckpointMetadata.model_validate_json(metadata_path.read_text(encoding="utf-8"))
+    validate_resume_identity(contract, metadata)
+    (output_dir / "last_checkpoint").write_text(checkpoint_name + "\n", encoding="utf-8")
+    return metadata
 
 
 def _training_pipelines(
@@ -585,6 +751,7 @@ def _resolved_runner_config(
     precision: str,
     initialization_checkpoint: Path | None,
     checkpoint_metadata: CheckpointMetadata,
+    max_optimizer_steps: int | None = None,
 ) -> Any:
     from mmengine.config import Config
 
@@ -642,26 +809,40 @@ def _resolved_runner_config(
         "type": wrapper_type,
         "optimizer": optimizer,
         "accumulative_counts": common.gradient_accumulation,
+        "clip_grad": {
+            "max_norm": float("inf"),
+            "norm_type": 2.0,
+            "error_if_nonfinite": True,
+        },
     }
     if precision == "bf16":
         config.optim_wrapper["dtype"] = "bfloat16"
     elif precision == "fp16":
         config.optim_wrapper["loss_scale"] = "dynamic"
+    scheduler_end = max_optimizer_steps or common.training_epochs
     config.param_scheduler = [
         {
             "type": "PolyLR",
             "eta_min": 0.0,
             "power": common.scheduler.power,
             "begin": 0,
-            "end": common.training_epochs,
-            "by_epoch": True,
+            "end": scheduler_end,
+            "by_epoch": max_optimizer_steps is None,
         }
     ]
-    config.train_cfg = {
-        "type": "EpochBasedTrainLoop",
-        "max_epochs": common.training_epochs,
-        "val_interval": common.checkpoint.validation_interval_epochs,
-    }
+    config.train_cfg = (
+        {
+            "type": "IterBasedTrainLoop",
+            "max_iters": max_optimizer_steps,
+            "val_interval": max_optimizer_steps,
+        }
+        if max_optimizer_steps is not None
+        else {
+            "type": "EpochBasedTrainLoop",
+            "max_epochs": common.training_epochs,
+            "val_interval": common.checkpoint.validation_interval_epochs,
+        }
+    )
     val_loop_type = _register_loss_val_loop(torch)
     selection_metric_type = _register_selection_metric()
     config.val_cfg = {"type": val_loop_type}
@@ -670,8 +851,8 @@ def _resolved_runner_config(
     config.test_evaluator = config.val_evaluator
     config.default_hooks["checkpoint"] = {
         "type": "CheckpointHook",
-        "by_epoch": True,
-        "interval": 1,
+        "by_epoch": max_optimizer_steps is None,
+        "interval": min(500, max_optimizer_steps) if max_optimizer_steps else 1,
         "save_last": True,
         "save_best": "mIoU",
         "rule": "greater",
@@ -680,7 +861,17 @@ def _resolved_runner_config(
     config.randomness = {"seed": common.seed, "deterministic": False}
     config.work_dir = str(output_dir)
     config.launcher = "none"
-    hook_type = _register_checkpoint_metadata_hook()
+    config.default_hooks["logger"] = {"type": "LoggerHook", "interval": 25}
+    config.visualizer = {
+        "type": "SegLocalVisualizer",
+        "vis_backends": [{"type": "LocalVisBackend"}, {"type": "TensorboardVisBackend"}],
+        "name": "visualizer",
+    }
+    hook_type = _register_checkpoint_metadata_hook(
+        model_name=model_spec.model_family.value,
+        total_steps=max_optimizer_steps or common.planned_optimizer_steps,
+        device_batch=common.device_batch,
+    )
     config.custom_hooks = [
         {
             "type": hook_type,
@@ -706,9 +897,16 @@ def run_real_training(
     initialization_checkpoint: Path | None,
     resume: bool,
     recovery_sync_dir: Path | None,
+    max_optimizer_steps: int | None = None,
+    validation_subset_size: int | None = None,
+    device_batch: int | None = None,
+    gradient_accumulation: int | None = None,
+    train_fit_fraction: float = 1.0,
+    smoke_random_initialization: bool = False,
 ) -> dict[str, Any]:
     """Run one policy-selected split through MMEngine's interruption-safe runner."""
-    global _RUNTIME_DATASET_ROOT, _RUNTIME_RECOVERY_SYNC_ROOT, _RUNTIME_TRAINING_SAMPLES
+    global _RUNTIME_DATASET_ROOT, _RUNTIME_RECOVERY_SYNC_ROOT, _RUNTIME_STATUS
+    global _RUNTIME_TRAINING_SAMPLES
 
     _verify_clean_checkout(project_root, project_commit)
     if not dataset_root.is_dir():
@@ -719,6 +917,53 @@ def run_real_training(
     framework = load_semantic_framework_config(config_root / "framework_mmseg.yaml")
     common = load_semantic_common_config(config_root / "common_cityscapes.yaml")
     model_spec = load_semantic_model_config(model_config_path)
+    selected_batch = device_batch or common.device_batch
+    selected_accumulation = gradient_accumulation or common.gradient_accumulation
+    common = common.model_copy(
+        update={
+            "device_batch": selected_batch,
+            "gradient_accumulation": selected_accumulation,
+            "effective_global_batch": selected_batch * selected_accumulation,
+            "planned_optimizer_steps": max_optimizer_steps or common.planned_optimizer_steps,
+        }
+    )
+    if smoke_random_initialization:
+        model_payload = model_spec.model_dump(mode="json")
+        model_payload["initialization"] = {
+            "stack_probe": "random",
+            "project_training": "random",
+            "source": {"status": "not_applicable"},
+            "notes": "Random initialization for the bounded EG-SEG-002 training-path smoke.",
+        }
+        model_spec = SemanticModelConfig.model_validate(model_payload)
+        initialization_checkpoint = None
+    fraction_manifest = build_train_fit_fraction(
+        samples,
+        train_fit_fraction,
+        seed=common.seed,
+        split_manifest_sha256=identity.split_manifest_sha256 or "",
+    )
+    selected_ids = set(fraction_manifest["selected_sample_ids"])
+    train_fit = tuple(
+        sample
+        for sample in samples
+        if sample.role != "train_fit" or sample.sample_id in selected_ids
+    )
+    if validation_subset_size is not None:
+        if validation_subset_size <= 0:
+            raise ValueError("validation subset size must be positive")
+        select_ids = {
+            sample.sample_id
+            for sample in sorted(
+                (item for item in train_fit if item.role == "train_select"),
+                key=lambda item: item.sample_id,
+            )[:validation_subset_size]
+        }
+        train_fit = tuple(
+            sample
+            for sample in train_fit
+            if sample.role != "train_select" or sample.sample_id in select_ids
+        )
     if _git(mmseg_checkout, "rev-parse", "HEAD") != framework.commit:
         raise ValueError("MMSegmentation checkout commit mismatch")
     import torch
@@ -746,7 +991,10 @@ def run_real_training(
     )
     metadata_path = output_dir / "checkpoint_metadata.json"
     resume_metadata: CheckpointMetadata | None = None
-    if resume:
+    if not output_dir.exists() and recovery_sync_dir is not None and recovery_sync_dir.exists():
+        resume_metadata = _restore_recovery_checkpoint(recovery_sync_dir, output_dir, contract)
+        resume = True
+    elif resume:
         if not metadata_path.is_file():
             raise ValueError("resume requires existing checkpoint metadata")
         resume_metadata = CheckpointMetadata.model_validate_json(
@@ -758,8 +1006,16 @@ def run_real_training(
     else:
         output_dir.mkdir(parents=True, exist_ok=True)
     _RUNTIME_DATASET_ROOT = dataset_root
-    _RUNTIME_TRAINING_SAMPLES = samples
+    _RUNTIME_TRAINING_SAMPLES = train_fit
     _RUNTIME_RECOVERY_SYNC_ROOT = recovery_sync_dir
+    _RUNTIME_STATUS = LongRunStatus(output_dir / "run_status.json")
+    _RUNTIME_STATUS.update(
+        status="running",
+        phase=f"train-{model_spec.model_family.value}",
+        completed=resume_metadata.optimizer_step if resume_metadata else 0,
+        total=max_optimizer_steps or common.planned_optimizer_steps,
+        force=True,
+    )
     register_all_modules(init_default_scope=True)
     initial_metadata = resume_metadata or CheckpointMetadata(
         experiment_id=contract.experiment_id,
@@ -790,18 +1046,24 @@ def run_real_training(
         precision=precision,
         initialization_checkpoint=initialization_checkpoint,
         checkpoint_metadata=initial_metadata,
+        max_optimizer_steps=max_optimizer_steps,
     )
     runner_config.resume = resume
     _write_json(output_dir / "experiment_contract.json", contract.model_dump(mode="json"))
+    _write_json(output_dir / "train_fit_fraction.json", fraction_manifest)
     if not resume:
         _write_json(metadata_path, initial_metadata.model_dump(mode="json"))
     runner = Runner.from_cfg(runner_config)
-    runner.train()
+    try:
+        runner.train()
+    except BaseException as error:
+        _RUNTIME_STATUS.fail(error)
+        raise
     result = {
         "schema_version": "1.0",
         "record_type": "semantic_training_completion",
         "experiment_id": contract.experiment_id,
-        "status": "colab_measured",
+        "status": "passed_smoke" if max_optimizer_steps is not None else "colab_measured",
         "config_sha256": contract.config_sha256,
         "experiment_fingerprint": contract.experiment_fingerprint,
         "dataset_manifest_sha256": identity.dataset_manifest_sha256,
@@ -812,6 +1074,11 @@ def run_real_training(
         "scientific_interpretation": "pending_human_review",
     }
     _write_json(output_dir / "completion.json", result)
+    if recovery_sync_dir is not None:
+        _atomic_sync_checkpoint(output_dir, recovery_sync_dir)
+    _RUNTIME_STATUS.complete(
+        last_checkpoint=(output_dir / "last_checkpoint").read_text(encoding="utf-8").strip()
+    )
     return result
 
 
@@ -952,6 +1219,12 @@ def _parser() -> argparse.ArgumentParser:
     train.add_argument("--initialization-checkpoint", type=Path)
     train.add_argument("--recovery-sync-dir", type=Path)
     train.add_argument("--resume", action="store_true")
+    train.add_argument("--max-optimizer-steps", type=int)
+    train.add_argument("--validation-subset-size", type=int)
+    train.add_argument("--device-batch", type=int)
+    train.add_argument("--gradient-accumulation", type=int)
+    train.add_argument("--train-fit-fraction", type=float, default=1.0)
+    train.add_argument("--smoke-random-initialization", action="store_true")
     return parser
 
 
@@ -982,6 +1255,12 @@ def main() -> int:
             initialization_checkpoint=args.initialization_checkpoint,
             resume=args.resume,
             recovery_sync_dir=args.recovery_sync_dir,
+            max_optimizer_steps=args.max_optimizer_steps,
+            validation_subset_size=args.validation_subset_size,
+            device_batch=args.device_batch,
+            gradient_accumulation=args.gradient_accumulation,
+            train_fit_fraction=args.train_fit_fraction,
+            smoke_random_initialization=args.smoke_random_initialization,
         )
     print(canonical_json(result))
     return 0

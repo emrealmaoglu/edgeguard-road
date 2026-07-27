@@ -1,0 +1,68 @@
+schema_version: "1.0"
+record_type: edgeguard_dataset_acquisition_queue
+drive_layout:
+  partial: downloads/partial
+  archives: archives
+  manifests: manifests
+  datasets: datasets
+sealed_exclusions:
+  - SMIYC RoadAnomaly21
+  - SMIYC RoadObstacle21
+  - Fishyscapes Lost & Found full validation
+entries:
+  - dataset_id: bdd100k_detection
+    priority: core
+    role: known_object_detection
+    default_mode: persistent
+    source_reference: https://bdd-data.berkeley.edu/
+    terms_status: human_login_and_terms_required
+    url_env: EDGEGUARD_BDD100K_SIGNED_URL
+    filename_env: EDGEGUARD_BDD100K_FILENAME
+    sha256_env: EDGEGUARD_BDD100K_SHA256
+    size_env: EDGEGUARD_BDD100K_BYTE_SIZE
+    human_action: Sign in to the official BDD100K provider and supply one runtime-only signed URL plus verified filename, size, and SHA-256.
+  - dataset_id: fishyscapes_static
+    priority: core
+    role: ood_development
+    default_mode: persistent
+    source_reference: https://fishyscapes.com/dataset
+    terms_status: generator_and_cityscapes_inputs_require_approval
+    url_env: EDGEGUARD_FISHYSCAPES_STATIC_URL
+    filename_env: EDGEGUARD_FISHYSCAPES_STATIC_FILENAME
+    sha256_env: EDGEGUARD_FISHYSCAPES_STATIC_SHA256
+    size_env: EDGEGUARD_FISHYSCAPES_STATIC_BYTE_SIZE
+    human_action: Approve the exact official generator or package identity and supply runtime-only acquisition metadata; do not substitute Lost & Found.
+  - dataset_id: cityscapes_coarse_trainextra
+    priority: aggressive_conditional
+    role: id_train_extra
+    default_mode: persistent
+    source_reference: https://www.cityscapes-dataset.com/downloads/
+    terms_status: separate_cityscapes_access_decision_required
+    url_env: EDGEGUARD_CITYSCAPES_COARSE_SIGNED_URL
+    filename_env: EDGEGUARD_CITYSCAPES_COARSE_FILENAME
+    sha256_env: EDGEGUARD_CITYSCAPES_COARSE_SHA256
+    size_env: EDGEGUARD_CITYSCAPES_COARSE_BYTE_SIZE
+    human_action: Approve coarse-to-fine use and supply the exact official trainextra package identity and runtime-only authenticated URL.
+  - dataset_id: temporal_selected
+    acquisition_status: blocked_until_dataset_choice
+    priority: blocked_choice
+    role: temporal_unseen
+    default_mode: persistent
+    source_reference: pending_project_dataset_choice
+    terms_status: blocked_until_dataset_choice
+    url_env: EDGEGUARD_TEMPORAL_SIGNED_URL
+    filename_env: EDGEGUARD_TEMPORAL_FILENAME
+    sha256_env: EDGEGUARD_TEMPORAL_SHA256
+    size_env: EDGEGUARD_TEMPORAL_BYTE_SIZE
+    human_action: Select and approve the temporal dataset before providing any acquisition input.
+  - dataset_id: demo_videos
+    priority: optional
+    role: demo_only
+    default_mode: fast
+    source_reference: runtime_approved_asset
+    terms_status: per_asset_rights_review_required
+    url_env: EDGEGUARD_DEMO_VIDEO_URL
+    filename_env: EDGEGUARD_DEMO_VIDEO_FILENAME
+    sha256_env: EDGEGUARD_DEMO_VIDEO_SHA256
+    size_env: EDGEGUARD_DEMO_VIDEO_BYTE_SIZE
+    human_action: Provide one user-owned or rights-approved video URL, filename, size, and SHA-256 at runtime.

@@ -49,14 +49,20 @@ class SemanticFrameworkConfig(StrictConfigModel):
     commit: str = Field(pattern=COMMIT_PATTERN)
     mmengine_version: str = Field(pattern=r"^0\.[0-9]+\.[0-9]+$")
     mmcv_version: str = Field(pattern=r"^2\.[0-9]+\.[0-9]+$")
-    openmim_version: str = Field(pattern=r"^0\.[0-9]+\.[0-9]+$")
+    preferred_mmcv_distribution: Literal["mmcv-lite"]
+    fallback_python_version: Literal["3.11"]
+    fallback_numpy_version: Literal["1.26.4"]
+    fallback_torch_version: Literal["2.1.1"]
+    fallback_torchvision_version: Literal["0.16.1"]
+    fallback_torchaudio_version: Literal["2.1.1"]
+    fallback_cuda_wheel: Literal["cu121"]
     supported_mmengine: Literal[">=0.5.0,<1.0.0"]
     supported_mmcv: Literal[">=2.0.0rc4,<2.2.0"]
-    torch_resolution: Literal["colab_runtime_compatible"]
-    cuda_wheel_policy: Literal["runtime_resolved_no_hardcoded_wheel"]
+    torch_resolution: Literal["hosted_preserved_then_isolated_fallback"]
+    cuda_wheel_policy: Literal["hosted_unchanged_or_official_cu121_fallback"]
     install_scope: Literal["isolated_colab_runtime_only"]
     source_license: Literal["Apache-2.0"]
-    status: Literal["proposal_pending_colab_probe"]
+    status: Literal["compatibility_cascade_pending_colab_probe"]
 
 
 class DatasetRoleContract(StrictConfigModel):

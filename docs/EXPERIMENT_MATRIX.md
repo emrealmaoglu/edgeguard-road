@@ -25,7 +25,7 @@ calibration, training, detector, or deployment claim exists.
 
 | Experiment family | Models/data | Initialization and resolution | Budget/promotion | Metrics and expected artifacts | Dependency | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `EGX-SEG-SMOKE-{FASTSCNN,BISEV2,PIDNETS,DDRNET23S,SEGFORMERB0}` | Five models, tiny deterministic `train_fit` subset | Declared init; `512×1024` | 1–3 epochs or bounded samples; no claim | Loss/gradient, checkpoint/resume, logits, tiny semantic report | EG-SEG-001, frozen split | `planned` |
+| `EGX-SEG-SMOKE-{FASTSCNN,BISEV2,PIDNETS,DDRNET23S,SEGFORMERB0}` | Five models, real policy-selected `train_fit` plus bounded `train_select` | Fixed-seed random init; `512×1024` | 100 optimizer steps/model; batch 2 then one OOM adaptation; no ranking claim | Loss/gradient, checkpoint/exact resume, validation loss/mIoU/19 IoUs, telemetry | EG-SEG-001, policy-selected split, Colab CUDA | `implemented_locally; Colab measurement pending` |
 | `EGX-SEG-SCREEN-{FASTSCNN,BISEV2,PIDNETS,DDRNET23S,SEGFORMERB0}` | Same five, common train/select data | Same policy; `512×1024` | Common short budget; promote top three | mIoU/class IoU, stability, throughput, memory, curves | All smokes and `EG-COMPUTE-001` | `planned` |
 | `EGX-EXPORT-SCREEN-{FASTSCNN,BISEV2,PIDNETS,DDRNET23S,SEGFORMERB0}` | Screened checkpoints, fixed fixture | Native-logit static export | Pass/conditional/fail evidence; informs promotion | ONNX/operator/runtime/numerical report | Screening | `planned` |
 | `EGX-SEG-MEDIUM-{01..03}` | Promoted top three | Approved init; `512×1024` | Equal medium budget; promote top two | Project checkpoint, curves, select metrics, compute record | Early export gate | `planned` |

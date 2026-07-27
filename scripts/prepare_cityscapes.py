@@ -29,6 +29,7 @@ from edgeguard.data.cityscapes_train import (
 )
 from edgeguard.data.ontology import load_project_ontology
 from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
+from edgeguard.telemetry.longrun import LongRunStatus
 
 LEFT_ARCHIVE_NAME = "leftImg8bit_trainvaltest.zip"
 LEFT_ARCHIVE_SHA256 = "3ccff9ac1fa1d80a6a064407e589d747ed0657aac7dc495a4403ae1235a37525"
@@ -52,6 +53,7 @@ def _parser() -> argparse.ArgumentParser:
         default=Path("configs/dataset/ontology_v1.yaml"),
     )
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--status-directory", type=Path)
     return parser
 
 
@@ -626,10 +628,18 @@ def prepare_cityscapes_train(
     ontology_config: Path,
     verify_only: bool = False,
     now: datetime | None = None,
+    status_directory: Path | None = None,
 ) -> dict[str, Any]:
     """Prepare or idempotently verify Cityscapes Fine train and split candidates."""
     started = time.perf_counter()
     commit = _validate_git_commit(preparation_git_commit)
+    status = None
+    if not verify_only:
+        status = LongRunStatus(
+            (status_directory or work_directory) / "run_status.json",
+            heartbeat_seconds=30.0,
+        )
+        status.update(phase="hashing", phase_index=1, phase_total=7, force=True)
     archive_identities = [
         _verify_archive(left_archive_path, LEFT_ARCHIVE_NAME, LEFT_ARCHIVE_SHA256),
         _verify_archive(label_archive_path, LABEL_ARCHIVE_NAME, LABEL_ARCHIVE_SHA256),
@@ -644,6 +654,7 @@ def prepare_cityscapes_train(
             ontology_version=ontology.ontology_version,
             ontology_sha256=ontology_sha256,
         )
+    assert status is not None
     if destination.exists():
         raise ValueError(
             "dataset destination already exists; use --verify-only for exact validation"
@@ -663,6 +674,7 @@ def prepare_cityscapes_train(
         ZipFile(left_archive_path) as left_archive,
         ZipFile(label_archive_path) as label_archive,
     ):
+        status.update(phase="archive-validation", phase_index=2, phase_total=7, force=True)
         left_infos = _validated_infos(left_archive)
         label_infos = _validated_infos(label_archive)
         selected_left = _selected_train_images(left_infos)
@@ -683,16 +695,20 @@ def prepare_cityscapes_train(
             )
         staging.mkdir(parents=True)
         manifest_staging.mkdir(parents=True)
+        status.update(phase="extraction", phase_index=3, phase_total=7, force=True)
         _extract_selected(left_archive, selected_left, staging)
         _extract_selected(label_archive, selected_labels, staging)
 
+    status.update(phase="mask-generation", phase_index=4, phase_total=7, force=True)
     samples = generate_train_id_masks(staging)
     if len(samples) != len(selected_left):
         raise ValueError(
             "Cityscapes Fine train extracted pairing mismatch: "
             f"archive={len(selected_left)}, prepared={len(samples)}"
         )
+    status.update(phase="analysis", phase_index=5, phase_total=7, force=True)
     analysis = analyze_prepared_train(staging)
+    status.update(phase="split-generation", phase_index=6, phase_total=7, force=True)
     candidate_set = build_split_candidates(analysis)
     comparison = build_split_comparison(candidate_set)
     timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
@@ -798,6 +814,7 @@ def prepare_cityscapes_train(
         "environment.json",
         "failures.jsonl",
     ]
+    status.update(phase="evidence-packaging", phase_index=7, phase_total=7, force=True)
     evidence_receipt = _write_evidence_package(manifest_staging, evidence_names)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -815,6 +832,7 @@ def prepare_cityscapes_train(
     manifests_incoming.rename(manifests_destination)
     verification["evidence_package_filename"] = evidence_receipt["filename"]
     verification["evidence_package_sha256"] = evidence_receipt["sha256"]
+    status.complete(last_checkpoint=evidence_receipt["filename"])
     return verification
 
 
@@ -841,6 +859,7 @@ def main() -> int:
                 preparation_git_commit=args.preparation_git_commit,
                 ontology_config=args.ontology_config,
                 verify_only=args.verify_only,
+                status_directory=args.status_directory,
             )
         else:
             result = prepare_cityscapes_val(

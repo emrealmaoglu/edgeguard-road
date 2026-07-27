@@ -31,7 +31,7 @@ from edgeguard.training.data import (
 from edgeguard.training.identity import build_experiment_contract, validate_resume_identity
 from edgeguard.training.logits import validate_native_logits_tensor
 from edgeguard.training.registry import append_registry, load_registry
-from scripts.train.install_semantic_stack import build_install_commands
+from scripts.train.install_semantic_stack import build_path_a_commands, build_path_b_commands
 from scripts.train.train_semantic import (
     _atomic_sync_checkpoint,
     _validation_interval_record,
@@ -232,16 +232,35 @@ def test_native_logits_requires_predicate_approved_19_class_tensor() -> None:
         validate_native_logits_tensor(TensorLike(), is_tensor=lambda _value: False)
 
 
-def test_install_plan_is_exact_and_has_no_hardcoded_cuda_wheel(tmp_path: Path) -> None:
+def test_install_cascade_is_openmim_free_and_has_auditable_cuda_fallback(
+    tmp_path: Path,
+) -> None:
     framework = load_semantic_framework_config(CONFIG_ROOT / "framework_mmseg.yaml")
-    commands = build_install_commands(framework, tmp_path / "mmseg")
-    serialized = "\n".join(" ".join(command) for command in commands)
+    path_a = build_path_a_commands(
+        framework,
+        tmp_path / "mmseg-a",
+        project_root=REPO_ROOT,
+        runtime_root=tmp_path / "runtime-a",
+    )
+    path_b = build_path_b_commands(
+        framework,
+        tmp_path / "mmseg-b",
+        project_root=REPO_ROOT,
+        runtime_root=tmp_path / "runtime-b",
+        uv_root=tmp_path / "uv",
+    )
+    hosted = "\n".join(" ".join(command) for command in path_a)
+    fallback = "\n".join(" ".join(command) for command in path_b)
 
-    assert "openmim==0.3.9" in serialized
-    assert "mmengine==0.10.7" in serialized
-    assert "mmcv==2.1.0" in serialized
-    assert framework.commit in serialized
-    assert "download.openmmlab.com/mmcv" not in serialized
+    assert "openmim" not in (hosted + fallback).lower()
+    assert "mmengine==0.10.7" in hosted
+    assert "mmcv-lite==2.1.0" in hosted
+    assert "torch==2.1.1" not in hosted
+    assert "numpy==1.26.4" in fallback
+    assert "torch==2.1.1" in fallback
+    assert "download.openmmlab.com/mmcv/dist/cu121/torch2.1" in fallback
+    assert "--only-binary=:all:" in fallback
+    assert framework.commit in hosted and framework.commit in fallback
 
 
 def test_policy_selected_handoff_preserves_roles_and_excludes_calibration_from_selection(

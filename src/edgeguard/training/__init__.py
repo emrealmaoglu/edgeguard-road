@@ -18,6 +18,7 @@ from edgeguard.training.data import (
     load_policy_selected_cityscapes_split,
     samples_for_training_role,
 )
+from edgeguard.training.fractions import build_train_fit_fraction
 
 __all__ = [
     "CheckpointMetadata",
@@ -31,5 +32,6 @@ __all__ = [
     "load_semantic_model_config",
     "load_semantic_model_suite",
     "load_policy_selected_cityscapes_split",
+    "build_train_fit_fraction",
     "samples_for_training_role",
 ]
