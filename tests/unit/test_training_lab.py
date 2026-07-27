@@ -31,7 +31,13 @@ from edgeguard.training.data import (
 from edgeguard.training.identity import build_experiment_contract, validate_resume_identity
 from edgeguard.training.logits import validate_native_logits_tensor
 from edgeguard.training.registry import append_registry, load_registry
-from scripts.train.install_semantic_stack import build_path_a_commands, build_path_b_commands
+from scripts.train.install_semantic_stack import (
+    _preflight_path_a,
+    _resolve_uv_executable,
+    build_path_a_commands,
+    build_path_b_commands,
+    repair_owned_path,
+)
 from scripts.train.train_semantic import (
     _atomic_sync_checkpoint,
     _validation_interval_record,
@@ -239,20 +245,25 @@ def test_install_cascade_is_openmim_free_and_has_auditable_cuda_fallback(
     path_a = build_path_a_commands(
         framework,
         tmp_path / "mmseg-a",
+        uv_executable=tmp_path / "resolved-tools/uv",
         project_root=REPO_ROOT,
         runtime_root=tmp_path / "runtime-a",
     )
     path_b = build_path_b_commands(
         framework,
         tmp_path / "mmseg-b",
+        uv_executable=tmp_path / "resolved-tools/uv",
         project_root=REPO_ROOT,
         runtime_root=tmp_path / "runtime-b",
-        uv_root=tmp_path / "uv",
     )
     hosted = "\n".join(" ".join(command) for command in path_a)
     fallback = "\n".join(" ".join(command) for command in path_b)
 
     assert "openmim" not in (hosted + fallback).lower()
+    assert f"{tmp_path}/resolved-tools/uv venv --system-site-packages" in hosted
+    assert f"{tmp_path}/resolved-tools/uv python install 3.11" in fallback
+    assert "python -m venv" not in hosted
+    assert "/content/edgeguard-uv/bin/uv" not in hosted + fallback
     assert "mmengine==0.10.7" in hosted
     assert "mmcv-lite==2.1.0" in hosted
     assert "torch==2.1.1" not in hosted
@@ -261,6 +272,84 @@ def test_install_cascade_is_openmim_free_and_has_auditable_cuda_fallback(
     assert "download.openmmlab.com/mmcv/dist/cu121/torch2.1" in fallback
     assert "--only-binary=:all:" in fallback
     assert framework.commit in hosted and framework.commit in fallback
+
+
+def test_uv_resolution_uses_the_hosted_path_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "hosted-bin" / "uv"
+    executable.parent.mkdir()
+    executable.write_text("#!/bin/sh\nprintf 'uv 0.8.8\\n'\n", encoding="utf-8")
+    executable.chmod(0o755)
+    monkeypatch.setattr("shutil.which", lambda name: str(executable) if name == "uv" else None)
+
+    class NoBootstrapRunner:
+        def run(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("an existing hosted uv executable must not be bootstrapped again")
+
+    resolved, version, receipts = _resolve_uv_executable(  # type: ignore[arg-type]
+        NoBootstrapRunner()
+    )
+
+    assert resolved == executable.resolve()
+    assert version == "0.8.8"
+    assert receipts == []
+
+
+def test_path_a_wheel_preflight_retains_binary_only_mmcv_lite(tmp_path: Path) -> None:
+    framework = load_semantic_framework_config(CONFIG_ROOT / "framework_mmseg.yaml")
+
+    class RecordingRunner:
+        command: tuple[str, ...] | None = None
+
+        def run(self, _stage: str, command: tuple[str, ...], **_kwargs: object) -> None:
+            self.command = command
+
+    runner = RecordingRunner()
+    _preflight_path_a(framework, runner, tmp_path / "wheels")  # type: ignore[arg-type]
+    assert runner.command is not None
+    serialized = " ".join(runner.command)
+    assert "download --only-binary=:all: --no-deps" in serialized
+    assert "mmengine==0.10.7" in serialized
+    assert "mmcv-lite==2.1.0" in serialized
+
+
+def test_bounded_runtime_repair_removes_only_recognizable_owned_targets(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "edgeguard-runtime-current"
+    runtime.mkdir()
+    (runtime / "pyvenv.cfg").write_text("incomplete", encoding="utf-8")
+    checkout = tmp_path / "mmseg-path-a"
+    checkout.mkdir()
+    probe = tmp_path / "hosted_current-five-model-probe"
+    probe.mkdir()
+
+    actions = repair_owned_path(
+        runtime_root=runtime,
+        checkout=checkout,
+        probe=probe,
+        expected_commit="a" * 40,
+    )
+
+    assert {action["action"] for action in actions} == {
+        "removed_incomplete_environment",
+        "removed_incomplete_checkout",
+        "removed_incomplete_probe",
+    }
+    assert not runtime.exists() and not checkout.exists() and not probe.exists()
+
+    unrelated = tmp_path / "edgeguard-runtime-current"
+    unrelated.mkdir()
+    (unrelated / "user-data.txt").write_text("keep", encoding="utf-8")
+    with pytest.raises(ValueError, match="unrecognized"):
+        repair_owned_path(
+            runtime_root=unrelated,
+            checkout=tmp_path / "mmseg-path-a",
+            probe=tmp_path / "hosted_current-five-model-probe",
+            expected_commit="a" * 40,
+        )
+    assert (unrelated / "user-data.txt").is_file()
 
 
 def test_policy_selected_handoff_preserves_roles_and_excludes_calibration_from_selection(

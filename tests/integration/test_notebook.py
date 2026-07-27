@@ -176,6 +176,12 @@ def test_semantic_smoke_notebook_is_thin_identity_gated_and_stops_before_screeni
     assert "run_semantic_smoke.py" in source
     assert "split-policy-v1" in source
     assert "ready_for_common_screening" in source
+    assert "compatibility_failures.json" in source
+    assert "run_status.json" in source
+    assert "*.stderr.log" in source
+    assert "lines[-120:]" in source
+    assert "shutil.disk_usage" in source
+    assert "torch.cuda.get_device_name" in source
     assert "Do not start the common screening campaign" in source
     assert "/Users/" not in source
     for prohibited in ("api_key", "password=", "token=", "credential="):
@@ -191,6 +197,9 @@ def test_dataset_acquisition_notebook_is_thin_and_runtime_secret_only() -> None:
     assert "REPLACE_WITH_REVIEWED_EG_SEG_002_COMMIT_SHA" in source
     assert "acquire_edgeguard_datasets.py" in source
     assert "--list" in source
+    assert "required artifacts or pinned generator identity" in source
+    assert "artifact completion and dataset readiness remain separate" in source
+    assert '"--dataset-id"' not in source
     assert "RoadAnomaly21" not in source
     assert "RoadObstacle21" not in source
     assert "Lost & Found" in source

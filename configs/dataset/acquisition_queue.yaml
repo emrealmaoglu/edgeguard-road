@@ -1,4 +1,4 @@
-schema_version: "1.0"
+schema_version: "2.0"
 record_type: edgeguard_dataset_acquisition_queue
 drive_layout:
   partial: downloads/partial
@@ -11,58 +11,75 @@ sealed_exclusions:
   - Fishyscapes Lost & Found full validation
 entries:
   - dataset_id: bdd100k_detection
+    acquisition_kind: required_artifacts
     priority: core
     role: known_object_detection
-    default_mode: persistent
-    source_reference: https://bdd-data.berkeley.edu/
     terms_status: human_login_and_terms_required
-    url_env: EDGEGUARD_BDD100K_SIGNED_URL
-    filename_env: EDGEGUARD_BDD100K_FILENAME
-    sha256_env: EDGEGUARD_BDD100K_SHA256
-    size_env: EDGEGUARD_BDD100K_BYTE_SIZE
-    human_action: Sign in to the official BDD100K provider and supply one runtime-only signed URL plus verified filename, size, and SHA-256.
+    human_action: Sign in to the official BDD100K provider and supply runtime-only signed metadata for both required artifacts.
+    required_artifacts:
+      - artifact_id: bdd100k_100k_images
+        source_reference: https://bdd-data.berkeley.edu/
+        default_mode: persistent
+        url_env: EDGEGUARD_BDD100K_IMAGES_SIGNED_URL
+        filename_env: EDGEGUARD_BDD100K_IMAGES_FILENAME
+        sha256_env: EDGEGUARD_BDD100K_IMAGES_SHA256
+        size_env: EDGEGUARD_BDD100K_IMAGES_BYTE_SIZE
+      - artifact_id: bdd100k_detection_2020_labels
+        source_reference: https://bdd-data.berkeley.edu/
+        default_mode: persistent
+        url_env: EDGEGUARD_BDD100K_DETECTION_LABELS_SIGNED_URL
+        filename_env: EDGEGUARD_BDD100K_DETECTION_LABELS_FILENAME
+        sha256_env: EDGEGUARD_BDD100K_DETECTION_LABELS_SHA256
+        size_env: EDGEGUARD_BDD100K_DETECTION_LABELS_BYTE_SIZE
   - dataset_id: fishyscapes_static
+    acquisition_kind: pinned_generator
     priority: core
     role: ood_development
-    default_mode: persistent
-    source_reference: https://fishyscapes.com/dataset
-    terms_status: generator_and_cityscapes_inputs_require_approval
-    url_env: EDGEGUARD_FISHYSCAPES_STATIC_URL
-    filename_env: EDGEGUARD_FISHYSCAPES_STATIC_FILENAME
-    sha256_env: EDGEGUARD_FISHYSCAPES_STATIC_SHA256
-    size_env: EDGEGUARD_FISHYSCAPES_STATIC_BYTE_SIZE
-    human_action: Approve the exact official generator or package identity and supply runtime-only acquisition metadata; do not substitute Lost & Found.
+    terms_status: cityscapes_inputs_and_generator_review_required
+    human_action: Approve the pinned official BDL-Benchmark workflow and supply the Cityscapes manifest and generator config identities; do not substitute a ZIP or Lost & Found.
+    generator:
+      source_repository: https://github.com/hermannsblum/bdl-benchmark.git
+      immutable_revision: 03773d621374ed10122866e64943df77ff8fbf50
+      official_reference: https://fishyscapes.com/dataset
+      framework_identity: bdl-benchmark-fishyscapes-static
+      cityscapes_input_manifest_sha256_env: EDGEGUARD_FISHYSCAPES_STATIC_CITYSCAPES_MANIFEST_SHA256
+      generator_config_sha256_env: EDGEGUARD_FISHYSCAPES_STATIC_GENERATOR_CONFIG_SHA256
+      output_manifest_sha256_env: EDGEGUARD_FISHYSCAPES_STATIC_OUTPUT_MANIFEST_SHA256
+      progress_resume_required: true
+      deterministic_output_manifest_required: true
+      generated_data_receipt_required: true
   - dataset_id: cityscapes_coarse_trainextra
+    acquisition_kind: required_artifacts
     priority: aggressive_conditional
     role: id_train_extra
-    default_mode: persistent
-    source_reference: https://www.cityscapes-dataset.com/downloads/
     terms_status: separate_cityscapes_access_decision_required
-    url_env: EDGEGUARD_CITYSCAPES_COARSE_SIGNED_URL
-    filename_env: EDGEGUARD_CITYSCAPES_COARSE_FILENAME
-    sha256_env: EDGEGUARD_CITYSCAPES_COARSE_SHA256
-    size_env: EDGEGUARD_CITYSCAPES_COARSE_BYTE_SIZE
-    human_action: Approve coarse-to-fine use and supply the exact official trainextra package identity and runtime-only authenticated URL.
+    human_action: Approve coarse-to-fine use and supply the official trainextra package identity and runtime-only authenticated URL.
+    required_artifacts:
+      - artifact_id: cityscapes_coarse_trainextra
+        source_reference: https://www.cityscapes-dataset.com/downloads/
+        default_mode: persistent
+        url_env: EDGEGUARD_CITYSCAPES_COARSE_SIGNED_URL
+        filename_env: EDGEGUARD_CITYSCAPES_COARSE_FILENAME
+        sha256_env: EDGEGUARD_CITYSCAPES_COARSE_SHA256
+        size_env: EDGEGUARD_CITYSCAPES_COARSE_BYTE_SIZE
   - dataset_id: temporal_selected
+    acquisition_kind: blocked
     acquisition_status: blocked_until_dataset_choice
     priority: blocked_choice
     role: temporal_unseen
-    default_mode: persistent
-    source_reference: pending_project_dataset_choice
     terms_status: blocked_until_dataset_choice
-    url_env: EDGEGUARD_TEMPORAL_SIGNED_URL
-    filename_env: EDGEGUARD_TEMPORAL_FILENAME
-    sha256_env: EDGEGUARD_TEMPORAL_SHA256
-    size_env: EDGEGUARD_TEMPORAL_BYTE_SIZE
-    human_action: Select and approve the temporal dataset before providing any acquisition input.
+    human_action: Select and approve the temporal dataset before adding acquisition artifacts.
   - dataset_id: demo_videos
+    acquisition_kind: required_artifacts
     priority: optional
     role: demo_only
-    default_mode: fast
-    source_reference: runtime_approved_asset
     terms_status: per_asset_rights_review_required
-    url_env: EDGEGUARD_DEMO_VIDEO_URL
-    filename_env: EDGEGUARD_DEMO_VIDEO_FILENAME
-    sha256_env: EDGEGUARD_DEMO_VIDEO_SHA256
-    size_env: EDGEGUARD_DEMO_VIDEO_BYTE_SIZE
     human_action: Provide one user-owned or rights-approved video URL, filename, size, and SHA-256 at runtime.
+    required_artifacts:
+      - artifact_id: demo_video
+        source_reference: runtime_approved_asset
+        default_mode: fast
+        url_env: EDGEGUARD_DEMO_VIDEO_URL
+        filename_env: EDGEGUARD_DEMO_VIDEO_FILENAME
+        sha256_env: EDGEGUARD_DEMO_VIDEO_SHA256
+        size_env: EDGEGUARD_DEMO_VIDEO_BYTE_SIZE

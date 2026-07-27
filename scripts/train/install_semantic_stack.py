@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
+import os
 import platform
+import shutil
 import subprocess
 import sys
 import time
@@ -37,31 +39,148 @@ UV_VERSION = "0.8.8"
 PATH_A_ROOT = Path("/content/edgeguard-runtime-current")
 PATH_B_ROOT = Path("/content/edgeguard-runtime-py311")
 DEFAULT_LOG_ROOT = Path("/content/edgeguard-logs")
+OWNED_RUNTIME_NAMES = {"edgeguard-runtime-current", "edgeguard-runtime-py311"}
+OWNED_CHECKOUT_NAMES = {"mmseg-path-a", "mmseg-path-b"}
 
 
 def _python(root: Path) -> Path:
     return root / "bin" / "python"
 
 
-def _pip(interpreter: Path, *arguments: str) -> tuple[str, ...]:
-    return (str(interpreter), "-m", "pip", *arguments)
+def _resolve_uv_executable(runner: LiveCommandRunner) -> tuple[Path, str, list[dict[str, Any]]]:
+    """Bootstrap bounded uv once and resolve its actual executable from PATH."""
+    receipts: list[dict[str, Any]] = []
+    resolved = shutil.which("uv")
+    if resolved is None:
+        receipts.append(
+            runner.run(
+                "bootstrap-uv",
+                (sys.executable, "-m", "pip", "install", f"uv=={UV_VERSION}"),
+                stage_index=1,
+                stage_total=1,
+            )
+        )
+        resolved = shutil.which("uv")
+    if resolved is None:
+        raise RuntimeError("uv bootstrap completed but no executable was found on PATH")
+    executable = Path(resolved).resolve()
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise RuntimeError("resolved uv path is not an executable regular file")
+    version_output = subprocess.run(
+        [str(executable), "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if version_output != f"uv {UV_VERSION}":
+        raise RuntimeError(f"unexpected uv version: {version_output}")
+    return executable, UV_VERSION, receipts
+
+
+def _checkout_head(checkout: Path) -> str | None:
+    if not (checkout / ".git").exists():
+        return None
+    completed = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _repair_runtime_target(runtime_root: Path) -> dict[str, str] | None:
+    """Preserve resumable owned venvs and remove only recognizable incomplete ones."""
+    if not runtime_root.exists():
+        return None
+    if runtime_root.is_symlink() or not runtime_root.is_dir():
+        raise ValueError("owned runtime target is not a regular directory")
+    if runtime_root.name not in OWNED_RUNTIME_NAMES:
+        raise ValueError("refusing repair outside the bounded EdgeGuard runtime names")
+    interpreter = _python(runtime_root)
+    if interpreter.is_file() and os.access(interpreter, os.X_OK):
+        return {"target": runtime_root.name, "action": "reuse_resumable_environment"}
+    recognizable = not any(runtime_root.iterdir()) or (runtime_root / "pyvenv.cfg").exists()
+    if not recognizable:
+        raise ValueError("refusing to remove an unrecognized existing runtime directory")
+    shutil.rmtree(runtime_root)
+    return {"target": runtime_root.name, "action": "removed_incomplete_environment"}
+
+
+def _repair_checkout_target(checkout: Path, expected_commit: str) -> dict[str, str] | None:
+    """Reuse the exact checkout or remove only an incomplete owned clone."""
+    if not checkout.exists():
+        return None
+    if checkout.is_symlink() or not checkout.is_dir() or checkout.name not in OWNED_CHECKOUT_NAMES:
+        raise ValueError("refusing repair outside the bounded EdgeGuard checkout names")
+    if _checkout_head(checkout) == expected_commit:
+        return {"target": checkout.name, "action": "reuse_exact_checkout"}
+    if (checkout / ".git").exists() or not any(checkout.iterdir()):
+        shutil.rmtree(checkout)
+        return {"target": checkout.name, "action": "removed_incomplete_checkout"}
+    raise ValueError("refusing to remove an unrecognized existing checkout directory")
+
+
+def _repair_probe_target(probe: Path) -> dict[str, str] | None:
+    if not probe.exists() or (probe / "completion.json").is_file():
+        return None
+    if probe.is_symlink() or not probe.is_dir() or not probe.name.endswith("-five-model-probe"):
+        raise ValueError("refusing to remove an unrecognized probe target")
+    shutil.rmtree(probe)
+    return {"target": probe.name, "action": "removed_incomplete_probe"}
+
+
+def repair_owned_path(
+    *,
+    runtime_root: Path,
+    checkout: Path,
+    probe: Path,
+    expected_commit: str,
+) -> list[dict[str, str]]:
+    """Apply the bounded, testable repair policy for one compatibility path."""
+    actions = (
+        _repair_runtime_target(runtime_root),
+        _repair_checkout_target(checkout, expected_commit),
+        _repair_probe_target(probe),
+    )
+    return [action for action in actions if action is not None]
 
 
 def build_path_a_commands(
     config: SemanticFrameworkConfig,
     checkout: Path,
     *,
+    uv_executable: Path,
     project_root: Path,
     runtime_root: Path = PATH_A_ROOT,
 ) -> tuple[tuple[str, ...], ...]:
     """Build a hosted-stack-preserving Python-3.12-compatible command sequence."""
     interpreter = _python(runtime_root)
+    uv = str(uv_executable)
     return (
-        (sys.executable, "-m", "venv", "--system-site-packages", str(runtime_root)),
-        _pip(interpreter, "install", "--upgrade-strategy", "only-if-needed", *PURE_RUNTIME_PINS),
-        _pip(
-            interpreter,
+        (
+            uv,
+            "venv",
+            "--system-site-packages",
+            "--python",
+            sys.executable,
+            str(runtime_root),
+        ),
+        (
+            uv,
+            "pip",
             "install",
+            "--python",
+            str(interpreter),
+            "--upgrade-strategy",
+            "only-if-needed",
+            *PURE_RUNTIME_PINS,
+        ),
+        (
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(interpreter),
             "--no-deps",
             f"mmengine=={config.mmengine_version}",
             f"{config.preferred_mmcv_distribution}=={config.mmcv_version}",
@@ -75,8 +194,17 @@ def build_path_a_commands(
             str(checkout),
         ),
         ("git", "-C", str(checkout), "checkout", "--detach", config.commit),
-        _pip(interpreter, "install", "--no-deps", "-e", str(checkout)),
-        _pip(interpreter, "install", "--no-deps", "-e", str(project_root)),
+        (uv, "pip", "install", "--python", str(interpreter), "--no-deps", "-e", str(checkout)),
+        (
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(interpreter),
+            "--no-deps",
+            "-e",
+            str(project_root),
+        ),
     )
 
 
@@ -84,28 +212,20 @@ def build_path_b_commands(
     config: SemanticFrameworkConfig,
     checkout: Path,
     *,
+    uv_executable: Path,
     project_root: Path,
     runtime_root: Path = PATH_B_ROOT,
-    uv_root: Path = Path("/content/edgeguard-uv"),
 ) -> tuple[tuple[str, ...], ...]:
     """Build the isolated Python 3.11/CUDA 12.1 fallback sequence."""
-    uv = uv_root / "bin" / "uv"
+    uv = str(uv_executable)
     interpreter = _python(runtime_root)
     torch_index = "https://download.pytorch.org/whl/cu121"
     mmcv_index = "https://download.openmmlab.com/mmcv/dist/cu121/torch2.1/index.html"
     return (
+        (uv, "python", "install", config.fallback_python_version),
+        (uv, "venv", "--python", config.fallback_python_version, str(runtime_root)),
         (
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--prefix",
-            str(uv_root),
-            f"uv=={UV_VERSION}",
-        ),
-        (str(uv), "venv", "--python", config.fallback_python_version, str(runtime_root)),
-        (
-            str(uv),
+            uv,
             "pip",
             "install",
             "--python",
@@ -114,7 +234,7 @@ def build_path_b_commands(
             *PURE_RUNTIME_PINS,
         ),
         (
-            str(uv),
+            uv,
             "pip",
             "install",
             "--python",
@@ -126,7 +246,7 @@ def build_path_b_commands(
             f"torchaudio=={config.fallback_torchaudio_version}",
         ),
         (
-            str(uv),
+            uv,
             "pip",
             "install",
             "--python",
@@ -146,9 +266,9 @@ def build_path_b_commands(
             str(checkout),
         ),
         ("git", "-C", str(checkout), "checkout", "--detach", config.commit),
-        (str(uv), "pip", "install", "--python", str(interpreter), "--no-deps", "-e", str(checkout)),
+        (uv, "pip", "install", "--python", str(interpreter), "--no-deps", "-e", str(checkout)),
         (
-            str(uv),
+            uv,
             "pip",
             "install",
             "--python",
@@ -245,8 +365,10 @@ def _preflight_path_a(
     config: SemanticFrameworkConfig, runner: LiveCommandRunner, directory: Path
 ) -> None:
     directory.mkdir(parents=True, exist_ok=True)
-    command = _pip(
-        Path(sys.executable),
+    command = (
+        sys.executable,
+        "-m",
+        "pip",
         "download",
         "--only-binary=:all:",
         "--no-deps",
@@ -310,9 +432,7 @@ def _execute_path(
                 == config.commit
             ):
                 continue
-        if command[0] == sys.executable and "venv" in command and interpreter.is_file():
-            continue
-        if command[0].endswith("/uv") and "venv" in command and interpreter.is_file():
+        if len(command) > 1 and command[1] == "venv" and interpreter.is_file():
             continue
         command_receipts.append(
             runner.run(
@@ -381,6 +501,36 @@ def _evidence_zip(evidence_root: Path, receipt: dict[str, Any]) -> Path:
     return package
 
 
+def _reuse_completed_environment(
+    evidence_root: Path,
+    checkout_root: Path,
+    config: SemanticFrameworkConfig,
+    project_commit: str,
+) -> dict[str, Any] | None:
+    """Return an already completed compatible receipt or reject corrupt completion."""
+    receipt_path = evidence_root / "compatibility_receipt.json"
+    if not receipt_path.is_file():
+        return None
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    selected = receipt.get("selected_path")
+    if selected not in {"hosted_current", "isolated_py311"}:
+        raise ValueError("completed compatibility receipt has an invalid selected path")
+    interpreter_value = receipt.get("interpreter")
+    if not isinstance(interpreter_value, str):
+        raise ValueError("completed compatibility receipt has no interpreter identity")
+    interpreter = Path(interpreter_value)
+    checkout_name = "mmseg-path-a" if selected == "hosted_current" else "mmseg-path-b"
+    checkout = checkout_root / checkout_name
+    identity = _environment_probe(interpreter, checkout)
+    _validate_identity(identity, config, path_name=selected)
+    probe = receipt.get("five_model_probe")
+    if not isinstance(probe, dict) or probe.get("project_commit") != project_commit:
+        raise ValueError("completed compatibility receipt belongs to another project commit")
+    if probe.get("model_count") != 5 or probe.get("checkpoint_resume_verified") is not True:
+        raise ValueError("completed compatibility receipt lacks the five-model acceptance")
+    return {**receipt, "reused_completed_environment": True}
+
+
 def install_compatibility_cascade(
     config_path: Path,
     *,
@@ -397,16 +547,60 @@ def install_compatibility_cascade(
     if hosted["cuda_available"] is not True:
         raise RuntimeError("compatibility cascade requires a CUDA Colab runtime")
     evidence_root.mkdir(parents=True, exist_ok=True)
+    cleanup_actions: list[dict[str, str]] = []
+    try:
+        completed = _reuse_completed_environment(
+            evidence_root, checkout_root, config, project_commit
+        )
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError):
+        if evidence_root.name != "edgeguard-compatibility":
+            raise
+        (evidence_root / "compatibility_receipt.json").unlink(missing_ok=True)
+        (evidence_root / "semantic-compatibility-evidence.zip").unlink(missing_ok=True)
+        cleanup_actions.append(
+            {
+                "target": evidence_root.name,
+                "action": "removed_invalid_completion_receipt",
+            }
+        )
+        completed = None
+    if completed is not None:
+        return completed
+    stale_failure = evidence_root / "compatibility_failures.json"
+    if stale_failure.is_file():
+        if evidence_root.name != "edgeguard-compatibility":
+            raise ValueError("refusing to remove failure evidence outside the owned root")
+        stale_failure.unlink()
+        cleanup_actions.append(
+            {
+                "target": stale_failure.name,
+                "action": "removed_stale_failure_receipt_before_retry",
+            }
+        )
     status = LongRunStatus(evidence_root / "run_status.json")
     runner = LiveCommandRunner(log_root, status)
     failures: list[dict[str, str]] = []
+    uv_executable, uv_version, bootstrap_receipts = _resolve_uv_executable(runner)
 
     path_a_checkout = checkout_root / "mmseg-path-a"
+    cleanup_actions.extend(
+        repair_owned_path(
+            runtime_root=PATH_A_ROOT,
+            checkout=path_a_checkout,
+            probe=evidence_root / "hosted_current-five-model-probe",
+            expected_commit=config.commit,
+        )
+    )
     try:
         _preflight_path_a(config, runner, evidence_root / "path-a-wheel-preflight")
         receipt = _execute_path(
             "hosted_current",
-            build_path_a_commands(config, path_a_checkout, project_root=project_root),
+            build_path_a_commands(
+                config,
+                path_a_checkout,
+                uv_executable=uv_executable,
+                project_root=project_root,
+            ),
             interpreter=_python(PATH_A_ROOT),
             checkout=path_a_checkout,
             config=config,
@@ -416,13 +610,30 @@ def install_compatibility_cascade(
             evidence_root=evidence_root,
             runner=runner,
         )
+        if receipt["environment"].get("torch_version") != hosted["torch_version"]:
+            raise ValueError("hosted Path A did not preserve the hosted Torch version")
+        if receipt["environment"].get("torchvision_version") != hosted["torchvision_version"]:
+            raise ValueError("hosted Path A did not preserve the hosted TorchVision version")
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         failures.append({"path": "hosted_current", "error": str(error)[:1000]})
         path_b_checkout = checkout_root / "mmseg-path-b"
+        cleanup_actions.extend(
+            repair_owned_path(
+                runtime_root=PATH_B_ROOT,
+                checkout=path_b_checkout,
+                probe=evidence_root / "isolated_py311-five-model-probe",
+                expected_commit=config.commit,
+            )
+        )
         try:
             receipt = _execute_path(
                 "isolated_py311",
-                build_path_b_commands(config, path_b_checkout, project_root=project_root),
+                build_path_b_commands(
+                    config,
+                    path_b_checkout,
+                    uv_executable=uv_executable,
+                    project_root=project_root,
+                ),
                 interpreter=_python(PATH_B_ROOT),
                 checkout=path_b_checkout,
                 config=config,
@@ -435,7 +646,14 @@ def install_compatibility_cascade(
         except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as fallback_error:
             failures.append({"path": "isolated_py311", "error": str(fallback_error)[:1000]})
             status.fail("both compatibility paths failed")
-            atomic_write_json(evidence_root / "compatibility_failures.json", {"failures": failures})
+            atomic_write_json(
+                evidence_root / "compatibility_failures.json",
+                {
+                    "failures": failures,
+                    "cleanup_actions": cleanup_actions,
+                    "uv": {"version": uv_version, "executable_basename": uv_executable.name},
+                },
+            )
             raise RuntimeError(f"both compatibility paths failed: {failures}") from fallback_error
     receipt.update(
         {
@@ -443,6 +661,13 @@ def install_compatibility_cascade(
             "record_type": "semantic_compatibility_cascade_receipt",
             "hosted_runtime_before_install": hosted,
             "failed_paths": failures,
+            "cleanup_actions": cleanup_actions,
+            "uv": {
+                "version": uv_version,
+                "executable_basename": uv_executable.name,
+                "bootstrap_commands": bootstrap_receipts,
+            },
+            "project_commit": project_commit,
         }
     )
     package = _evidence_zip(evidence_root, receipt)
@@ -487,13 +712,19 @@ def main() -> int:
             "path_a": [
                 list(command)
                 for command in build_path_a_commands(
-                    config, args.checkout_root / "mmseg-path-a", project_root=args.project_root
+                    config,
+                    args.checkout_root / "mmseg-path-a",
+                    uv_executable=Path("<resolved-uv>"),
+                    project_root=args.project_root,
                 )
             ],
             "path_b": [
                 list(command)
                 for command in build_path_b_commands(
-                    config, args.checkout_root / "mmseg-path-b", project_root=args.project_root
+                    config,
+                    args.checkout_root / "mmseg-path-b",
+                    uv_executable=Path("<resolved-uv>"),
+                    project_root=args.project_root,
                 )
             ],
             "executes": False,
