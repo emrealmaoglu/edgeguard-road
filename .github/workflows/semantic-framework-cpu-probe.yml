@@ -61,6 +61,11 @@ jobs:
             --repository-root . \
             --output-root .local/linux-cpu-closure \
             --mmseg-checkout /tmp/mmsegmentation
+      - name: Classify PIDNet and RT-DETR ONNX equivalence
+        run: |
+          python scripts/dev/run_onnx_equivalence.py \
+            --mmseg-checkout /tmp/mmsegmentation \
+            --output-root .local/linux-onnx-equivalence
       - name: Upload readiness evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -70,5 +75,6 @@ jobs:
             .local/linux-cpu-readiness/evidence/
             .local/linux-cpu-closure/campaign_summary.json
             .local/linux-cpu-closure/reporting/*.zip
+            .local/linux-onnx-equivalence/report.json
           if-no-files-found: error
           retention-days: 14
