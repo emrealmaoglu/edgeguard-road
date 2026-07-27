@@ -1,0 +1,31 @@
+schema_version: "1.0"
+record_type: semantic_model_config
+experiment_id: EGX-SEG-STACK-FASTSCNN
+model_family: fast_scnn
+architecture: EncoderDecoder
+backbone: FastSCNN
+decode_head: DepthwiseSeparableFCNHead
+auxiliary_heads: [DepthwiseSeparableFCNHead, FCNHead]
+mmseg_config_relative_path: configs/fastscnn/fast_scnn_8xb4-160k_cityscapes-512x1024.py
+num_classes: 19
+ignore_index: 255
+normalization: ImageNet RGB mean/std
+baseline_crop: [512, 1024]
+initialization:
+  stack_probe: random
+  project_training: random
+  source:
+    status: not_applicable
+  notes: Random initialization is required for this project-owned baseline.
+logits:
+  output_kind: native_logits
+  direct_pre_softmax: true
+  layout: NCHW
+  dtype: float32
+  class_count: 19
+  native_resolution: model_defined_record_at_runtime
+  alignment_mode: bilinear
+  alignment_target: edgeguard_common_grid
+  align_corners: false
+export_risk_notes: Depthwise operations require early ONNX operator verification.
+expected_training_memory_notes: Lightweight candidate; actual memory is measured in Colab.

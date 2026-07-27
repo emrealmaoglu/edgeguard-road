@@ -234,7 +234,11 @@ not change dataset roles or promotion order.
 ## Task graph
 
 ```text
-EG-THESIS-001 → EG-DATA-001 → EG-DATA-002 → EG-SEG-001 → EG-SEG-002
+EG-THESIS-001 → EG-DATA-001 → EG-DATA-002 repository implementation
+                                      ├─→ EG-DATA-002 real preparation/split acceptance ─┐
+                                      └─→ EG-SEG-001 repository laboratory/stack probe ──┤
+                                                                                          ↓
+                                                                                   EG-SEG-002
                                                            ↓
 EG-DATA-001 → EG-DET-001 ───────────────────────→ EG-COMPUTE-001
                                                            ↓
@@ -270,8 +274,10 @@ EG-FUSION-001 + EG-JETSON-001 → EG-DEMO-001 → EG-THESIS-002
 
 ## Immediate next actions
 
-1. Human reviews the locally implemented EG-DATA-001 storage and ontology contract.
-2. After a separate commit decision and applicable access approval, execute
-   `EG-DATA-002 — Cityscapes Fine train preparation`.
-3. Do not download/extract train data, install a training framework, start training,
-   or create the proposed Drive hierarchy until the applicable human gates close.
+1. Complete and verify the real EG-DATA-002 Colab preparation, then accept or reject
+   one measured group-atomic split.
+2. Review and commit the dependency-light EG-SEG-001 repository laboratory, then run
+   its exact-commit synthetic CUDA stack probe in Colab.
+3. Do not begin EG-SEG-002 until both paths succeed and the framework/source gates are
+   human-approved. Repository implementation may proceed in parallel; real training
+   may not.

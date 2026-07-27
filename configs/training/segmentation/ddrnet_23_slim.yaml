@@ -1,0 +1,31 @@
+schema_version: "1.0"
+record_type: semantic_model_config
+experiment_id: EGX-SEG-STACK-DDRNET23S
+model_family: ddrnet_23_slim
+architecture: EncoderDecoder
+backbone: DDRNet-23-Slim
+decode_head: DDRHead
+auxiliary_heads: [DDRHead auxiliary branch]
+mmseg_config_relative_path: configs/ddrnet/ddrnet_23-slim_in1k-pre_2xb6-120k_cityscapes-1024x1024.py
+num_classes: 19
+ignore_index: 255
+normalization: ImageNet RGB mean/std
+baseline_crop: [512, 1024]
+initialization:
+  stack_probe: random
+  project_training: pretrained
+  source:
+    status: unresolved_human_input
+  notes: Resolve the exact approved ImageNet initialization; random smoke remains available.
+logits:
+  output_kind: native_logits
+  direct_pre_softmax: true
+  layout: NCHW
+  dtype: float32
+  class_count: 19
+  native_resolution: model_defined_record_at_runtime
+  alignment_mode: bilinear
+  alignment_target: edgeguard_common_grid
+  align_corners: false
+export_risk_notes: Dual-resolution fusion and interpolation require early export probing.
+expected_training_memory_notes: Medium candidate; high-resolution branch cost must be measured.

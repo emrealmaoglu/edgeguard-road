@@ -9,6 +9,7 @@ NOTEBOOK = REPO_ROOT / "notebooks/colab/00_environment_and_smoke.ipynb"
 PIDNET_NOTEBOOK = REPO_ROOT / "notebooks/colab/01_pidnet_single_image_spike.ipynb"
 CITYSCAPES_NOTEBOOK = REPO_ROOT / "notebooks/colab/02_pidnet_cityscapes_val_eval.ipynb"
 CITYSCAPES_TRAIN_NOTEBOOK = REPO_ROOT / "notebooks/colab/03_prepare_cityscapes_fine_train.ipynb"
+SEMANTIC_STACK_NOTEBOOK = REPO_ROOT / "notebooks/colab/04_semantic_training_stack_probe.ipynb"
 PIDNET_RUNNER = REPO_ROOT / "scripts/run_pidnet_spike.py"
 
 
@@ -127,6 +128,32 @@ def test_cityscapes_train_notebook_is_thin_and_stops_before_training() -> None:
     assert "run_cityscapes_eval.py" not in source
     assert "scripts/train.py" not in source
     assert "SMIYC" in source
+    assert "/Users/" not in source
+    lowered = source.lower()
+    for prohibited in ("api_key", "password=", "token=", "credential="):
+        assert prohibited not in lowered
+
+
+def test_semantic_stack_notebook_is_thin_exact_commit_gated_and_stops_before_data() -> None:
+    payload = json.loads(SEMANTIC_STACK_NOTEBOOK.read_text(encoding="utf-8"))
+
+    assert payload["nbformat"] == 4
+    assert payload["nbformat_minor"] >= 5
+    assert all(not cell.get("outputs") for cell in payload["cells"])
+    source = "\n".join(line for cell in payload["cells"] for line in cell.get("source", []))
+    assert "REPLACE_WITH_REVIEWED_EG_SEG_001_COMMIT_SHA" in source
+    assert 're.fullmatch(r"[0-9a-f]{40}"' in source
+    assert 'checkout", "--detach", EDGEGUARD_EXPECTED_COMMIT' in source
+    assert 'status", "--porcelain=v1' in source
+    assert "install_semantic_stack.py" in source
+    assert "validate-configs" in source
+    assert "stack-probe" in source
+    assert "verify_semantic_training_artifact.py" in source
+    assert "files.download" in source
+    assert "drive.mount" not in source
+    assert "private_inputs" not in source
+    assert "Cityscapes training" in source
+    assert "SMIYC" not in source
     assert "/Users/" not in source
     lowered = source.lower()
     for prohibited in ("api_key", "password=", "token=", "credential="):

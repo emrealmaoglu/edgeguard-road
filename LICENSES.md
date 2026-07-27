@@ -18,6 +18,19 @@ A separate `LICENSE` decision is deferred to the human project owner.
 | mypy | Static type checking | MIT | Development-only; verify installed release metadata |
 | types-Pillow | Pillow type information | Apache-2.0 | Development-only; verify installed release metadata |
 
+## Proposed isolated training-runtime dependencies
+
+These packages are not core dependencies and were not installed by EG-SEG-001 local
+implementation. Exact installed metadata remains pending the Colab stack probe.
+
+| Component | Proposed identity | License | Boundary |
+| --- | --- | --- | --- |
+| MMSegmentation | `v1.2.2`, commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` | Apache-2.0 | External Colab checkout; proposal pending compatibility evidence |
+| MMEngine | `0.10.7` | Apache-2.0 | Isolated Colab runtime only; verify resolved package metadata |
+| MMCV | `2.1.0` | Apache-2.0 | Runtime-compatible OpenMIM installation; no hard-coded CUDA wheel |
+| OpenMIM | `0.3.9` | Apache-2.0 | Bootstrap tool in isolated Colab runtime only |
+| PyTorch/CUDA | Runtime-resolved | Verify exact runtime metadata | Never added to the lightweight core dependency set |
+
 Dataset, model, source-repository, and deployment-library licenses will be recorded
 before those resources are downloaded or integrated. This table is an inventory, not
 legal advice and not a license grant for EdgeGuard-Road.

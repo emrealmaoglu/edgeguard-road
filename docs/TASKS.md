@@ -11,10 +11,14 @@
 - `EG-DATA-001 — Storage, access and ontology gate`: **completed and remotely
   verified** at `0114d4e4778c1d6e53b6359e0a11f71eb15d2fb4`.
 - `EG-DATA-002 — Cityscapes Fine train preparation`: **implemented and locally
-  tested with synthetic ZIP fixtures; real private-Drive preparation and human split
-  selection pending**.
-- No dataset acquisition, framework installation, training, Jetson mutation, or
-  sealed-data access is in progress.
+  tested, committed, pushed, and remotely verified at
+  `9d269c35f0adc08be193ec3ee50b7c505c485fae`; measured A/B/C candidates are rejected
+  and the real diversity-policy D/E split-only rebuild is pending**.
+- `EG-SEG-001 — Pinned semantic training laboratory`: **repository implementation
+  and local dependency-free validation complete; Colab framework probe and human
+  framework acceptance pending**.
+- No real dataset processing, training-framework installation, scientific model
+  training, Jetson mutation, or sealed-data access is in progress.
 
 Each task below is a commit-sized human-gated unit. Compute and storage values are
 planning ranges until replaced by measurements.
@@ -53,10 +57,10 @@ planning ranges until replaced by measurements.
 ### EG-DATA-002 — Cityscapes Fine train preparation
 
 - **Objective:** Verify approved Fine train archives, inventory city/sequence/class
-  distributions, and propose three deterministic group-atomic splits. Human
-  selection/freeze remains a separate gate.
+  distributions, and produce a deterministic diversity-constrained D/E policy split
+  from the prepared manifest evidence.
 - **Dependencies:** `EG-DATA-001` and approved Cityscapes Fine train access.
-- **Human inputs:** Official archives, hashes/source/terms, split-candidate selection.
+- **Human inputs:** Official archives, hashes/source/terms, and measured evidence review.
 - **Local work:** Implement project-specific verification, manifest and distribution
   reports using tiny fixtures; do not expand the full dataset on the Mac.
 - **Colab work:** Copy archives to ephemeral storage, verify/extract once, compute
@@ -66,8 +70,9 @@ planning ranges until replaced by measurements.
   reports, root-free manifests, mapping evidence, and a small evidence package.
 - **Tests:** Hash, unsafe archive member, duplicate/missing pair, geometry, mapping,
   group leakage, determinism, root-independence.
-- **Acceptance:** Human selects a candidate; no group overlap; distribution and rare
-  class diagnostics are complete; official val is absent from trial roles.
+- **Acceptance:** The lowest-objective D/E candidate passing every hard constraint is
+  cryptographically recorded as `policy_selected`; official val is absent from trial
+  roles.
 - **Stop conditions:** Hash/terms mismatch, insufficient ephemeral disk, mapping
   ambiguity, or group leakage.
 - **Fallback:** Produce inventory/candidate report only and leave split gate open.
@@ -75,7 +80,8 @@ planning ranges until replaced by measurements.
 - **Storage estimate:** Drive reserve up to 25 GiB; Colab active footprint measured;
   local fixtures only.
 - **Commit boundary:** Preparation code, tests, sanitized manifests/summaries; no data.
-- **Next task:** `EG-SEG-001` after human split freeze.
+- **Next task:** Real split-only D/E rebuild from the existing prepared manifests; the
+  EG-SEG-001 stack probe may proceed independently at its exact clean commit.
 
 ### EG-COMPUTE-001 — Accelerator and I/O throughput probe
 
@@ -105,19 +111,26 @@ planning ranges until replaced by measurements.
 
 - **Objective:** Select and pin the smallest training framework that supports most of
   the five models while defining checkpoint-to-EdgeGuard handoff contracts.
-- **Dependencies:** `EG-DATA-002` split freeze.
-- **Human inputs:** Framework/license approval and accepted model source pins.
+- **Dependencies:** Repository implementation starts from remotely verified
+  EG-DATA-002 code. Colab stack execution needs a reviewed EG-SEG-001 commit; real
+  semantic training still requires completed EG-DATA-002 preparation and split
+  acceptance.
+- **Human inputs:** Framework/license approval, accepted model source pins, and later
+  the accepted EG-DATA-002 split identity.
 - **Local work:** Reproducible install guidance, shared config contract, checkpoint
   identity/resume logic, conversion adapter fixtures, and CPU unit tests.
 - **Colab work:** One-batch import/forward/backward/checkpoint/resume compatibility
   probes; no broad training.
 - **Jetson work:** None.
-- **Expected outputs:** Pinned lab decision, environment record, shared training
-  contract, and five smoke-ready configs.
+- **Expected outputs:** Exact MMSeg source proposal, runtime-resolved CUDA install
+  path, environment record, shared training/data/resume/registry contracts, five
+  smoke-ready configs, native-logit probe, and small stack evidence package.
 - **Tests:** Config validation, label/shape/loss contracts, checkpoint overwrite and
   incompatible-resume refusal, deterministic experiment IDs.
-- **Acceptance:** Human approves framework pins and handoff; at least the smoke path
-  for all five models is explainable.
+- **Acceptance:** All five models construct and pass synthetic forward/backward and
+  raw-logit checks on CUDA; one checkpoint exact-resume succeeds; human approves the
+  resolved framework versions, license inventory, and handoff. Synthetic results
+  carry no semantic-accuracy claim.
 - **Stop conditions:** License conflict, more than one uncontrolled framework, or
   checkpoint/export contract cannot be stated.
 - **Fallback:** Replace only the unsupported candidate through a separate approved

@@ -64,3 +64,24 @@ results and transient implementation notes do not become ADRs.
   an approval or freeze.
 - The local runtime cannot access the approved private Drive mount. No real archive,
   dataset, class frequency, group count, or split result exists yet.
+
+## EG-SEG-001 framework proposal pending Colab evidence
+
+- The narrow proposal is MMSegmentation `v1.2.2` at exact source commit
+  `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`, with MMEngine `0.10.7`, MMCV `2.1.0`,
+  and OpenMIM `0.3.9`. The upstream-declared compatible ranges are preserved.
+- The repository does not add Torch, CUDA, MMSegmentation, MMEngine, MMCV, or OpenMIM
+  to core dependencies. Colab's installed Torch/CUDA identity is inspected first;
+  OpenMIM selects a compatible runtime build without a hard-coded CUDA wheel URL.
+- This is an implementation proposal, not an accepted framework decision. The pin
+  remains `proposal_pending_colab_probe` until all five models pass construction,
+  synthetic forward/backward, native-logit validation, and checkpoint resume on the
+  exact reviewed project commit.
+- Configs are independent YAML documents. No inheritance, registry platform,
+  database tracker, or general framework abstraction is introduced.
+- Fast-SCNN and BiSeNetV2 declare random project-training baselines. PIDNet-S,
+  DDRNet-23-Slim, and SegFormer-B0 pretrained sources remain explicit unresolved
+  human inputs. The historical PIDNet Cityscapes checkpoint is not a project-training
+  initialization.
+- EG-DATA-002 outputs remain immutable. A separate human acceptance record binds one
+  candidate and its dataset/split hashes before any real training can start.

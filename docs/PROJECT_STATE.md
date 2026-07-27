@@ -1,59 +1,59 @@
 # Project State
 
-- **Branch:** `feat/first-vertical-slice`
+- **Repository/branch:** `.` on `feat/first-vertical-slice`
 - **Current committed revision:**
-  `0114d4e4778c1d6e53b6359e0a11f71eb15d2fb4`
-- **Starting state for EG-DATA-002:** Clean and synchronized with
-  `origin/feat/first-vertical-slice`
-- **EG-OOD-001:** Complete and remotely verified at Commit D
-  `345d9fd1dcff0a7aa9c54c6f3929c2c751c24c7c`
-- **EG-THESIS-001:** Complete and remotely verified at
-  `ee4460bda9b518a4e784cd43ad23d043ad15cd7b`
-- **EG-DATA-001:** Complete and remotely verified at
-  `0114d4e4778c1d6e53b6359e0a11f71eb15d2fb4`; Python 3.10 and 3.11 CI passed
-- **EG-DATA-002:** Cityscapes Fine train archive validation, train-only staging,
-  deterministic train-ID generation, streaming class/group analysis, three
-  group-atomic split candidates, idempotent verification, evidence packaging, and a
-  thin Colab wrapper are implemented and locally tested with synthetic ZIP fixtures
-- **EG-DATA-002 real-data state:** The local runtime has no access to the approved
-  private Drive mount. Neither approved archive was opened; no dataset or Drive
-  directory was created, no real count/frequency/candidate was produced, and no
-  evidence package was promoted
-- **Approved runtime storage:** `EDGEGUARD_EXTERNAL_ROOT` resolves to the private
-  `EdgeGuard/` root. Existing archives remain immutable under relative
-  `private_inputs/`; prepared data and manifests target
-  `datasets/cityscapes/fine/v1/` and `manifests/cityscapes/fine/v1/`
-- **Archive identities awaiting real verification:**
-  `leftImg8bit_trainvaltest.zip` →
-  `3ccff9ac1fa1d80a6a064407e589d747ed0657aac7dc495a4403ae1235a37525`;
-  `gtFine_trainvaltest.zip` →
-  `40461a50097844f400fef147ecaf58b18fd99e14e4917fb7c3bf9c0d87d95884`
-- **Ontology:** `edgeguard-ontology-v1` remains provisional with canonical SHA-256
-  `24fd17b54a4aa461e004eaf8c5feebe7b3115c0906559ff24f3bd7f2e1510a10`;
-  local validation does not freeze it
-- **Split status:** `CSF-SPLIT-A/B/C` are implemented candidate definitions only.
-  A real run must produce measured manifests and a
-  `recommended_pending_human_approval` comparison; no candidate is selected or
-  frozen
-- **Official val:** `official_val_common_eval`; excluded from `train_select`, routine
-  HPO, and temperature fitting; not sealed or previously unseen
-- **Protected boundaries:** Cityscapes test labels and SMIYC remain unaccessed. No
-  BDD100K, Mapillary, SOS, or Fishyscapes data was accessed. No training framework,
-  model training, Colab campaign, or Jetson action occurred
-- **Validation:** Ruff check passed; Ruff format check passed for 103 files; mypy
-  passed for 29 source files; pytest passed 201 with 2 expected opt-in skips;
-  `git diff --check` passed. Synthetic preparation tests cover unsafe/absolute/
-  symlink/duplicate archive members, train-only selection, pairs, geometry, corrupt
-  PNG, unknown IDs, deterministic masks/manifests/candidates, leakage, partial output,
-  exact verification, and destination collision
-- **Exact next action:** Human reviews this unstaged diff and authorizes a commit.
-  After that exact commit is pushed, the human runs
-  `notebooks/colab/03_prepare_cityscapes_fine_train.ipynb`, verifies the real evidence
-  package, and selects or rejects one measured split candidate
-- **Training gate:** `EG-SEG-001` remains blocked until the real preparation passes
-  and the human explicitly freezes a split
-- **Git action:** All EG-DATA-002 changes remain unstaged; no commit or push is
-  authorized
+  `9d269c35f0adc08be193ec3ee50b7c505c485fae`, synchronized with
+  `origin/feat/first-vertical-slice` at task start
+- **EG-OOD-001, EG-THESIS-001, EG-DATA-001:** Completed and remotely verified
+- **EG-DATA-002 repository implementation:** Committed, pushed, and remotely verified
+  at the current revision; Python 3.10 and 3.11 CI passed
+- **EG-DATA-002 measured split evidence:** Human-supplied preparation evidence records
+  2,975 samples, 18 cities, and 1,885 city+sequence groups. A/B/C are rejected:
+  measured candidate B placed 196 Hanover samples from one group in calibration and
+  248 of 438 selection samples in Hamburg
+- **Diversity split correction:** The split-only D/E policy implementation is locally
+  tested. It consumes the existing dataset manifest and group summary without image
+  extraction or mask regeneration, enforces the recorded diversity constraints, and
+  emits one cryptographically identified `policy_selected` result. The real manifest
+  rebuild has not run in this action, so its selected candidate/hash remain pending
+- **EG-SEG-001 repository implementation:** Pinned framework/common/five-model
+  configs, dependency-light experiment/data/checkpoint/registry/logit contracts,
+  runtime install/probe/verifier commands, and thin Colab notebook are implemented;
+  dependency-free local validation passed
+- **Framework proposal:** MMSegmentation `v1.2.2` at
+  `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`, MMEngine `0.10.7`, MMCV `2.1.0`,
+  and OpenMIM `0.3.9`. Status remains `proposal_pending_colab_probe`; no training
+  framework was installed locally
+- **Five model specs:** Fast-SCNN, BiSeNetV2, PIDNet-S, DDRNet-23-Slim, and
+  SegFormer-B0 each declare 19 classes, ignore 255, baseline `512×1024`, random
+  no-download stack-probe initialization, and a direct native-logit contract.
+  Fast-SCNN and BiSeNetV2 use random project-training baselines. Other pretrained
+  source identities remain unresolved human inputs
+- **Dataset handoff:** Real training requires the EG-DATA-002 dataset manifest and a
+  `policy_selected` D/E manifest binding policy version/config hash, candidate hash,
+  dataset-manifest hash, ontology hash, and all sample roles. No separate
+  human-selected flag is required. Only `train_fit` updates gradients and
+  `train_select` selects models;
+  `train_calibration` and `official_val_common_eval` are excluded from routine model
+  selection
+- **Ontology:** `edgeguard-ontology-v1` remains provisional with SHA-256
+  `24fd17b54a4aa461e004eaf8c5feebe7b3115c0906559ff24f3bd7f2e1510a10`
+- **Protected boundaries:** No private Drive access, real Cityscapes processing,
+  official-val model selection, Fishyscapes/SMIYC access, scientific training, GPU
+  probe, framework installation, Jetson action, stage, commit, or push occurred
+- **Local validation:** Ruff check passed; Ruff format check passed for 120 files;
+  mypy passed for 37 source files; pytest passed 227 with 2 expected opt-in skips;
+  `git diff --check` passed. The Cityscapes-split/training-focused subset passed 39
+  tests, and a synthetic 1,890-group rebuild completed in 15.298 seconds
+- **Validation-interval evidence:** The real runner requires and records train loss,
+  `train_select` loss, `train_select` mIoU, all 19 per-class IoUs, learning rate, and
+  explicit generalization-gap inputs at every validation interval
+- **EG-SEG-002 gate:** Blocked on the real D/E policy rebuild, successful exact-commit
+  five-model Colab stack probe, and human framework/pretrained-source approval
+- **Exact next action:** After this milestone is committed and remotely verified, run
+  `notebooks/colab/04_semantic_training_stack_probe.ipynb` at the exact clean commit;
+  no real semantic training starts in that notebook
 
-Planned, implemented, locally tested, acquired, prepared, Colab measured, human
-accepted, and remotely verified remain distinct states.
+Planned, implemented, locally tested, Colab measured, human accepted, and remotely
+verified remain distinct states. Synthetic stack results can never support semantic
+accuracy or scientific throughput claims.

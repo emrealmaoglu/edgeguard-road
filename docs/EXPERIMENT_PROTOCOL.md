@@ -39,6 +39,16 @@ sample-by-sample from mounted Drive.
 - Screening, HPO, final confirmation, export, and Jetson results remain separate.
 - Resolution is a separate controlled ablation (`512×1024`, `768×1536`, optional
   `1024×2048` evaluation), not an initial HPO dimension.
+- EG-SEG-001 uses MMSegmentation `v1.2.2` source commit
+  `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` as a proposal pending a real Colab
+  compatibility probe. MMEngine/MMCV are isolated runtime pins; Torch/CUDA remain
+  runtime-resolved and outside core dependencies.
+- `EGX-SEG-STACK-*` always uses synthetic inputs and random initialization with no
+  checkpoint download. It may prove construction, backward, checkpoint/resume, and
+  direct 19-class logits only; it is not semantic accuracy or throughput evidence.
+- A real training handoff requires a separate human acceptance record binding the
+  immutable dataset manifest, candidate manifest file, and candidate SHA. The
+  original EG-DATA-002 candidate remains unmodified.
 
 ## Scores, calibration, and claims
 
