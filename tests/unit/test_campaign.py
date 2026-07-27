@@ -186,3 +186,20 @@ def test_one_semantic_model_failure_does_not_corrupt_others(
         "ddrnet_23_slim",
         "segformer_b0",
     }
+
+
+def test_selective_invalidation_preserves_unrelated_completed_stage(tmp_path: Path) -> None:
+    pytest.importorskip("torch")
+    campaign = Campaign(tmp_path / "campaign", PROJECT_ROOT)
+    campaign.initialize(campaign_id="eg-invalidation", profile="local-mini")
+    result = run_campaign(campaign, stop_after="detection_smoke")
+    assert result["state"]["stages"]["detection_smoke"]["status"] == "completed"
+    invalidated = campaign.invalidate_stage(
+        "zero_shot_ood", reason="bounded artifact/config identity change"
+    )
+    state = campaign.load_state()
+    assert "temperature_calibration" in invalidated
+    assert "final_evaluation" in invalidated
+    assert "detection_smoke" not in invalidated
+    assert state["stages"]["detection_smoke"]["status"] == "completed"
+    assert state["stages"]["zero_shot_ood"]["status"] == "ready"

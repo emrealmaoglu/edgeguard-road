@@ -172,3 +172,117 @@ def score_distribution(
         "ignored_pixel_count": ignored_count,
         "scientific_evidence": False,
     }
+
+
+def threshold_policies(
+    scores: npt.NDArray[np.floating],
+    labels: npt.NDArray[np.integer],
+    *,
+    fixed_threshold: float,
+    risk_budget_fpr: float,
+    ignore_index: int = IGNORE_LABEL,
+) -> dict[str, object]:
+    """Evaluate three explicit development-only threshold policies."""
+    if not np.isfinite(fixed_threshold) or not 0 <= risk_budget_fpr <= 1:
+        raise ValueError("fixed threshold and risk budget must be finite/valid")
+    valid_scores, positives, ignored = _validated_pixels(scores, labels, ignore_index=ignore_index)
+    if not positives.any() or bool(positives.all()):
+        raise ValueError("threshold policies require both ID and anomaly pixels")
+    candidates = np.concatenate(
+        (
+            np.unique(valid_scores),
+            np.asarray([np.nextafter(valid_scores.max(), np.inf)], dtype=np.float64),
+        )
+    )
+
+    def rates(threshold: float) -> dict[str, float]:
+        prediction = valid_scores >= threshold
+        true_positive = np.count_nonzero(prediction & positives)
+        false_positive = np.count_nonzero(prediction & ~positives)
+        false_negative = np.count_nonzero(~prediction & positives)
+        tpr = true_positive / np.count_nonzero(positives)
+        fpr = false_positive / np.count_nonzero(~positives)
+        f1_denominator = 2 * true_positive + false_positive + false_negative
+        return {
+            "threshold": float(threshold),
+            "tpr": float(tpr),
+            "fpr": float(fpr),
+            "f1": float(2 * true_positive / f1_denominator) if f1_denominator else 0.0,
+        }
+
+    evaluated = [rates(float(value)) for value in candidates]
+    development = max(evaluated, key=lambda row: (row["f1"], -row["fpr"], row["threshold"]))
+    within_budget = [row for row in evaluated if row["fpr"] <= risk_budget_fpr]
+    risk_budget = max(
+        within_budget,
+        key=lambda row: (row["tpr"], -row["fpr"], row["threshold"]),
+    )
+    return {
+        "development_optimal_f1": development,
+        "fixed_operating_point": rates(fixed_threshold),
+        "risk_budget_operating_point": {**risk_budget, "maximum_fpr": risk_budget_fpr},
+        "ignored_pixel_count": ignored,
+        "scope": "development_only",
+        "holdout_or_sealed_tuning_permitted": False,
+    }
+
+
+def per_source_ood_metrics(
+    scores: npt.NDArray[np.floating],
+    labels: npt.NDArray[np.integer],
+    sources: npt.NDArray[np.str_],
+    *,
+    ignore_index: int = IGNORE_LABEL,
+) -> dict[str, dict[str, object]]:
+    """Compute OOD metrics independently for each explicit source identity."""
+    if sources.shape != labels.shape:
+        raise ValueError("OOD source identities must match label geometry")
+    result: dict[str, dict[str, object]] = {}
+    for source in sorted(str(value) for value in np.unique(sources)):
+        selected = sources == source
+        source_scores = np.asarray(scores[selected], dtype=np.float32)
+        source_labels = np.asarray(labels[selected], dtype=np.int64)
+        metrics = pixel_ood_metrics(source_scores, source_labels, ignore_index=ignore_index)
+        result[source] = metrics.__dict__
+    return result
+
+
+def bootstrap_ood_metrics(
+    scores: npt.NDArray[np.floating],
+    labels: npt.NDArray[np.integer],
+    *,
+    resamples: int = 200,
+    seed: int = 20260727,
+    ignore_index: int = IGNORE_LABEL,
+) -> dict[str, object]:
+    """Bootstrap pixel OOD metrics deterministically without a significance claim."""
+    valid_scores, positives, ignored = _validated_pixels(scores, labels, ignore_index=ignore_index)
+    if valid_scores.size < 2 or not positives.any() or bool(positives.all()) or resamples < 100:
+        raise ValueError("OOD bootstrap requires two classes and at least 100 resamples")
+    generator = np.random.default_rng(seed)
+    rows: dict[str, list[float]] = {"auroc": [], "average_precision": [], "fpr_at_95_tpr": []}
+    attempts = 0
+    while len(rows["auroc"]) < resamples and attempts < resamples * 10:
+        attempts += 1
+        indices = generator.integers(0, valid_scores.size, size=valid_scores.size)
+        sampled_positive = positives[indices]
+        if not sampled_positive.any() or bool(sampled_positive.all()):
+            continue
+        sampled = pixel_ood_metrics(
+            valid_scores[indices], sampled_positive.astype(np.uint8), ignore_index=ignore_index
+        )
+        for name in rows:
+            value = getattr(sampled, name)
+            if value is None:
+                raise RuntimeError("valid OOD bootstrap unexpectedly produced a null metric")
+            rows[name].append(value)
+    if len(rows["auroc"]) != resamples:
+        raise RuntimeError("OOD bootstrap could not draw enough two-class samples")
+    return {
+        name: {
+            "mean": float(np.mean(values)),
+            "lower_95": float(np.quantile(values, 0.025)),
+            "upper_95": float(np.quantile(values, 0.975)),
+        }
+        for name, values in rows.items()
+    } | {"resamples": resamples, "seed": seed, "ignored_pixel_count": ignored}

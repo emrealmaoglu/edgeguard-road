@@ -140,3 +140,50 @@ class TemporalPersistence:
                 for track in sorted(self._tracks.values(), key=lambda item: item.track_id)
             ],
         }
+
+    def restore(self, snapshot: dict[str, Any]) -> None:
+        """Restore an exact validated snapshot after an interrupted sequence."""
+        sequence_id = snapshot.get("sequence_id")
+        frame_index = snapshot.get("frame_index")
+        next_track_id = snapshot.get("next_track_id")
+        rows = snapshot.get("tracks")
+        if (
+            not isinstance(sequence_id, str)
+            or not sequence_id
+            or not isinstance(frame_index, int)
+            or frame_index < 0
+            or not isinstance(next_track_id, int)
+            or next_track_id < 1
+            or not isinstance(rows, list)
+        ):
+            raise ValueError("temporal recovery snapshot is malformed")
+        tracks: dict[int, _Track] = {}
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("component"), dict):
+                raise ValueError("temporal recovery track is malformed")
+            component_payload = row["component"]
+            component = ComponentRecord(
+                component_id=int(component_payload["component_id"]),
+                area=int(component_payload["area"]),
+                bbox_xyxy=tuple(component_payload["bbox_xyxy"]),
+                centroid_xy=tuple(component_payload["centroid_xy"]),
+                mean_score=float(component_payload["mean_score"]),
+                max_score=float(component_payload["max_score"]),
+                road_overlap=float(component_payload["road_overlap"]),
+            )
+            track_id = int(row["track_id"])
+            if track_id in tracks:
+                raise ValueError("temporal recovery contains duplicate track IDs")
+            tracks[track_id] = _Track(
+                track_id=track_id,
+                component=component,
+                persistence=int(row["persistence"]),
+                smoothed_score=float(row["smoothed_score"]),
+                missed_frames=int(row["missed_frames"]),
+            )
+        if any(track_id >= next_track_id for track_id in tracks):
+            raise ValueError("temporal recovery next-track identity is inconsistent")
+        self._sequence_id = sequence_id
+        self._frame_index = frame_index
+        self._next_track_id = next_track_id
+        self._tracks = tracks

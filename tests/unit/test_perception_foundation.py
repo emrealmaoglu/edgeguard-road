@@ -131,3 +131,19 @@ def test_temporal_split_merge_is_deterministic() -> None:
     tracker.update("split", 0, (_component(1, 10),))
     split = tracker.update("split", 1, (_component(1, 9), _component(2, 12)))
     assert [record["event"] for record in split] == ["matched", "appeared"]
+
+
+def test_temporal_snapshot_restore_continues_exact_track() -> None:
+    tracker = TemporalPersistence(missed_frame_tolerance=1)
+    component = _component(1, 4)
+    tracker.update("sequence", 0, (component,))
+    restored = TemporalPersistence(missed_frame_tolerance=1)
+    restored.restore(tracker.snapshot())
+    record = restored.update("sequence", 1, (component,))[0]
+    assert record["track_id"] == 1
+    assert record["persistence_count"] == 2
+
+
+def test_temporal_restore_rejects_corrupt_state() -> None:
+    with pytest.raises(ValueError, match="malformed"):
+        TemporalPersistence().restore({"sequence_id": "sequence"})

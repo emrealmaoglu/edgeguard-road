@@ -3,7 +3,37 @@
 import numpy as np
 import pytest
 
-from edgeguard.evaluation.ood import pixel_ood_metrics
+from edgeguard.evaluation.ood import (
+    bootstrap_ood_metrics,
+    per_source_ood_metrics,
+    pixel_ood_metrics,
+    score_distribution,
+    threshold_policies,
+)
+
+
+def test_ood_completion_records_are_deterministic_and_development_only() -> None:
+    scores = np.asarray([0.05, 0.2, 0.7, 0.95, 0.8, 0.1], dtype=np.float32)
+    labels = np.asarray([0, 0, 1, 1, 1, 255], dtype=np.uint8)
+    policies = threshold_policies(scores, labels, fixed_threshold=0.5, risk_budget_fpr=0.0)
+    assert policies["scope"] == "development_only"
+    assert policies["holdout_or_sealed_tuning_permitted"] is False
+    assert policies["risk_budget_operating_point"]["fpr"] == 0.0
+    distribution = score_distribution(scores, labels)
+    assert distribution["scientific_evidence"] is False
+    first = bootstrap_ood_metrics(scores, labels, resamples=100, seed=8)
+    second = bootstrap_ood_metrics(scores, labels, resamples=100, seed=8)
+    assert first == second
+    assert first["auroc"]["lower_95"] <= first["auroc"]["upper_95"]
+
+
+def test_ood_per_source_metrics_preserve_source_identity() -> None:
+    scores = np.asarray([0.1, 0.9, 0.2, 0.8], dtype=np.float32)
+    labels = np.asarray([0, 1, 0, 1], dtype=np.uint8)
+    sources = np.asarray(["static", "static", "synthetic", "synthetic"])
+    result = per_source_ood_metrics(scores, labels, sources)
+    assert list(result) == ["static", "synthetic"]
+    assert all(row["score_direction"] == "higher_means_more_anomalous" for row in result.values())
 
 
 def test_pixel_ood_metrics_perfect_ranking() -> None:

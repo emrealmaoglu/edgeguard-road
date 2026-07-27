@@ -144,6 +144,7 @@ class Campaign:
             "input_artifact_hashes": [],
             "output_artifact_hashes": [],
             "environment_identity": None,
+            "maturity": "contract_only",
             "started_at": None,
             "ended_at": None,
             "progress": {"completed": 0, "total": 1, "percent": 0.0},
@@ -239,12 +240,34 @@ class Campaign:
     ) -> dict[str, Any]:
         record = state["stages"][stage_id]
         digest = sha256_file(receipt_path)
+        receipt = self._read_json(receipt_path, "stage receipt")
+        dependencies = STAGE_DEPENDENCIES[stage_id]
+        input_hashes = sorted(
+            digest
+            for dependency in dependencies
+            for digest in state["stages"][dependency]["output_artifact_hashes"]
+        )
+        default_maturity = (
+            "surrogate_validated"
+            if self.load_manifest()["profile"] in {"local-mini", "linux-cpu"}
+            else "contract_only"
+        )
         record.update(
             {
                 "status": "completed",
                 "ended_at": _utc_now(),
                 "progress": {"completed": 1, "total": 1, "percent": 100.0},
                 "output_artifact_hashes": [digest],
+                "input_artifact_hashes": input_hashes,
+                "config_hashes": [
+                    sha256_payload(
+                        {
+                            "profile": record["profile"],
+                            "stage_id": stage_id,
+                        }
+                    )
+                ],
+                "maturity": receipt.get("maturity", default_maturity),
                 "recovery_identity": None,
             }
         )
@@ -252,6 +275,42 @@ class Campaign:
         self.refresh_readiness(state)
         self.save_state(state)
         return record
+
+    def invalidate_stage(self, stage_id: str, *, reason: str) -> list[str]:
+        """Invalidate one changed stage and only its transitive consumers."""
+        if stage_id not in STAGE_DEPENDENCIES or not reason:
+            raise ValueError("stage invalidation requires a known stage and reason")
+        state = self.load_state()
+        invalidated = {stage_id}
+        changed = True
+        while changed:
+            changed = False
+            for candidate, dependencies in STAGE_DEPENDENCIES.items():
+                if candidate not in invalidated and any(
+                    dependency in invalidated for dependency in dependencies
+                ):
+                    invalidated.add(candidate)
+                    changed = True
+        for candidate in invalidated:
+            record = state["stages"][candidate]
+            record.update(
+                {
+                    "status": "pending",
+                    "input_artifact_hashes": [],
+                    "output_artifact_hashes": [],
+                    "recovery_identity": None,
+                    "failure_classification": "upstream_invalidation",
+                    "last_error": reason[:1000],
+                }
+            )
+        index = self._read_json(self.artifact_index_path, "artifact index")
+        index["artifacts"] = [
+            item for item in index["artifacts"] if item["stage_id"] not in invalidated
+        ]
+        atomic_write_json(self.artifact_index_path, index)
+        self.refresh_readiness(state)
+        self.save_state(state)
+        return [stage for stage in topological_stages() if stage in invalidated]
 
     def fail_stage(
         self,
