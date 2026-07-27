@@ -1,47 +1,52 @@
 # Agent Handoff
 
-- **Task:** Local OOD uncertainty scoring and semantic calibration foundation
-- **Branch/base:** `feat/first-vertical-slice` after operational CI commit
-  `ee2a292e00d0d14711163ba037b4a35dacd1f0d1`
-- **Repository result:** Bounded CPU-only implementation and local validation complete;
-  scientific commit and remote verification pending
-- **No scientific result claimed:** Only synthetic, random-weight compatibility probes
-  ran. No Drive data, real Cityscapes sample, pretrained weight, training campaign or
-  accelerator performance measurement was used.
+- **Task:** Autonomous local-first campaign, cross-notebook handoff, review reporting,
+  and deterministic thesis-figure generation.
+- **Branch:** `feat/first-vertical-slice`.
+- **Executable evidence commit:** `add61f7703110e3a901976ceda8a89139cafa7bb`.
+- **Classification:** All new campaign measurements are
+  `NON-SCIENTIFIC PIPELINE VALIDATION`.
 
-## Colab execution
+## Completed local gates
 
-The operational workflow activation passed normal Python 3.10/3.11 CI and Linux x86
-Python 3.12 five-model CPU run `30275255124`. Do not open or use Colab in this task.
-The future compatibility-only notebook remains separate from the Drive-backed smoke
-notebook, and the latter still requires a successful same-runtime receipt.
+- Clean local-mini campaign: 19/19 stages completed.
+- Idempotent rerun: 19 reused, 0 executed.
+- Interruption recovery: `semantic_smoke` failed by bounded injection, then completed
+  on attempt 2 with the compatible recovery identity.
+- Notebook handoff: all five thin wrappers executed over one campaign state.
+- Mac five-model probe: 5/5 random-weight MMSeg CPU forward/backward and exact
+  checkpoint-resume paths passed; no ranking is permitted.
+- Local ONNX/ORT surrogate probe: 5/5 passed checker and numerical comparison. The
+  surrogate result does not establish production-architecture exportability.
+- Assistant pack:
+  `.local/edgeguard-campaign-final-add61f7/reports/edgeguard-review-eg-local-mini-add61f7-report_generation.zip`.
+- Thesis figures:
+  `.local/edgeguard-campaign-final-add61f7/reports/edgeguard-thesis-figures-eg-local-mini-add61f7.zip`.
+- Local cache growth: 30680 KiB.
 
-Persistent outputs are external to Git:
+## Cross-platform continuation
 
-- recovery: `checkpoints/segmentation/<model>/recovery/attempt-*/`
-- small smoke evidence: `experiments/segmentation/EG-SEG-002/`
-- split policy: `manifests/cityscapes/fine/v1/split-policy-v1/`
-- reusable bundle: `datasets/cityscapes/fine/bundles/`
+The notebook sequence is:
 
-`notebooks/colab/06_acquire_edgeguard_datasets.ipynb` lists and processes the approved
-queue. BDD100K, Fishyscapes Static, conditional Cityscapes coarse/trainextra and most
-external assets still require an official login, terms decision, signed URL or exact
-runtime filename/size/SHA-256. The temporal source remains blocked until selected.
+1. `notebooks/colab/00_campaign_control.ipynb`
+2. `notebooks/colab/10_semantic_campaign.ipynb`
+3. `notebooks/colab/20_ood_calibration_risk.ipynb`
+4. `notebooks/colab/30_detection_temporal_fusion.ipynb`
+5. `notebooks/colab/40_export_and_reporting.ipynb`
 
-## Evidence contract
+Every wrapper requires an exact 40-character project commit, verifies prior artifacts,
+displays the plan, resumes only compatible state, and emits an assistant review pack.
+No scientific implementation exists only in notebook cells.
 
-The local command runs 11 visible phases and emits an atomic status plus a small,
-path-sanitized evidence ZIP. The real Mac CPU probe constructed all five pinned MMSeg
-models and verified finite forward/backward plus model/optimizer/scheduler resume for
-each. The storage inventory is read-only; the empty local check predicted zero
-Cityscapes download bytes and correctly blocked on missing verified private assets.
+## Remaining platform-only checks
 
-The new OOD/calibration command uses six deterministic synthetic fixture masks and
-produces only four small JSON records plus a deterministic ZIP. Temperature fitting is
-bounded in log space, preserves input logits, fails on an empty valid region, and
-records before/after NLL. Calibration outputs describe semantic class confidence;
-MSP, entropy, MaxLogit and Energy remain uncertainty/OOD scores, not anomaly
-probabilities.
+- Run the real Colab campaign only after approved dataset/checkpoint identities and an
+  exact clean commit are supplied.
+- Replace local surrogate export evidence with per-production-model ONNX numerical
+  evidence; preserve any failed export as results-only evidence.
+- Build TensorRT engines only on the approved Jetson and run sustained numerical,
+  latency, memory, power, and thermal checks under separate authorization.
+- Do not open full Lost & Found or SMIYC without their existing human gates.
 
-Do not access official Cityscapes val, full Fishyscapes Lost & Found or either SMIYC
-set in this milestone. Do not infer training quality from compatibility smoke results.
+No real data, weight, Drive, Colab, Jetson, or sealed-set operation occurred in this
+campaign. Synthetic metrics must not enter thesis performance tables.

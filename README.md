@@ -30,6 +30,11 @@ Python 3.10 or newer is required; CI validates Python 3.10 and 3.11.
 python -m pip install -e '.[dev]'
 python -m edgeguard doctor --json
 python -m edgeguard smoke --config configs/smoke.yaml --deterministic
+python -m edgeguard.campaign init --campaign-root /tmp/edgeguard-mini \
+  --campaign-id eg-local-mini --profile local-mini
+python -m edgeguard.campaign run --campaign-root /tmp/edgeguard-mini
+python -m edgeguard.campaign report --campaign-root /tmp/edgeguard-mini \
+  --audience assistant
 ruff check .
 ruff format --check .
 mypy src/edgeguard
@@ -40,6 +45,10 @@ Training frameworks are deliberately absent from core dependencies. Datasets,
 checkpoints, optimizer state, logs, ONNX models, TensorRT engines, videos, logits,
 and generated media remain outside Git. Colab notebooks stay thin; Jetson is for
 deployment and benchmarking, not training.
+
+The `local-mini` campaign uses only project-owned synthetic fixtures and random
+initialization. Its metrics and figures validate plumbing and are not scientific
+performance evidence.
 
 Start with `PROJECT_CHARTER.md`, `AGENTS.md`, `docs/PROJECT_STATE.md`, and
 `docs/MASTER_PLAN_V2.md`.
