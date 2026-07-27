@@ -1,0 +1,11 @@
+schema_version: "1.0"
+record_type: risk_temporal_export_contract
+context_weights_status: config_driven_not_scientifically_tuned
+temporal_association: iou_or_centroid
+missed_frame_tolerance_recorded: true
+export:
+  output: native_logits
+  fixed_shape_first: true
+  local_tensorrt: false
+  jetson_engine_built_on_target: true
+  numerical_validation_required: true

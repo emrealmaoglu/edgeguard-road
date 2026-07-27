@@ -1,0 +1,12 @@
+schema_version: "1.0"
+record_type: edgeguard_campaign_profile
+profile: jetson
+synthetic: false
+scientific_execution: true
+device: jetson
+image_shape: [512, 1024]
+optimizer_steps: 0
+artifact_budget_bytes: 0
+stage_graph: edgeguard-bounded-v1
+engine_policy: build_on_target_only
+sustained_benchmark_required: true
