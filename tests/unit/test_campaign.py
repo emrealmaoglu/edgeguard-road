@@ -109,6 +109,7 @@ def test_decisions_are_append_only_jsonl(tmp_path: Path) -> None:
 
 
 def test_partial_campaign_report_is_small_complete_and_deterministic(tmp_path: Path) -> None:
+    pytest.importorskip("torch")
     campaign = Campaign(tmp_path / "campaign", PROJECT_ROOT)
     campaign.initialize(campaign_id="eg-report", profile="local-mini")
     run_campaign(campaign, stop_after="temperature_calibration")
@@ -169,6 +170,7 @@ def test_profile_identity_mismatch_is_rejected(tmp_path: Path) -> None:
 def test_one_semantic_model_failure_does_not_corrupt_others(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    pytest.importorskip("torch")
     campaign = Campaign(tmp_path / "campaign", PROJECT_ROOT)
     campaign.initialize(campaign_id="eg-model-failure", profile="local-mini")
     monkeypatch.setenv("EDGEGUARD_FAIL_MODEL", "pidnet_s")

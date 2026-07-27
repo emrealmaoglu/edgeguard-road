@@ -203,8 +203,10 @@ def _tiny_semantic_model(torch: Any, model_index: int) -> Any:
 
 
 def _semantic_smoke(context: StageContext) -> dict[str, Any]:
-    import torch
-    from torch.utils.data import DataLoader, TensorDataset
+    torch = __import__("torch")
+    torch_data = __import__("torch.utils.data", fromlist=["DataLoader", "TensorDataset"])
+    DataLoader = torch_data.DataLoader
+    TensorDataset = torch_data.TensorDataset
 
     source = np.load(context.campaign_root / "recovery" / "synthetic-data" / "mini_cityscapes.npz")
     images = np.asarray(source["images"], dtype=np.float32) / 255.0
@@ -543,8 +545,7 @@ def _export_probe(context: StageContext) -> dict[str, Any]:
         }
         if onnx_available:
             try:
-                import torch
-
+                torch = __import__("torch")
                 onnx = __import__("onnx")
                 torch.manual_seed(20260727 + model_index)
                 model = _tiny_semantic_model(torch, model_index).eval()
