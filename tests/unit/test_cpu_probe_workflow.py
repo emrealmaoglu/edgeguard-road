@@ -10,7 +10,18 @@ def test_linux_cpu_probe_is_manual_bounded_and_mmcv_lite_only() -> None:
     )
 
     assert "workflow_dispatch:" in source
-    assert "push:" not in source
+    assert "push:" in source
+    assert "branches:" in source
+    assert "feat/first-vertical-slice" in source
+    for restricted_path in (
+        ".github/workflows/semantic-framework-cpu-probe.yml",
+        "scripts/dev/**",
+        "scripts/train/**",
+        "src/edgeguard/**",
+        "configs/training/segmentation/**",
+        "tests/**",
+    ):
+        assert restricted_path in source
     assert "pull_request:" not in source
     assert "timeout-minutes: 35" in source
     assert 'python-version: "3.12"' in source

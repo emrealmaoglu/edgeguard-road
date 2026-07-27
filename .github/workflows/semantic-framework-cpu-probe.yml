@@ -2,6 +2,16 @@ name: Semantic framework CPU probe
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/first-vertical-slice
+    paths:
+      - .github/workflows/semantic-framework-cpu-probe.yml
+      - scripts/dev/**
+      - scripts/train/**
+      - src/edgeguard/**
+      - configs/training/segmentation/**
+      - tests/**
 
 permissions:
   contents: read
