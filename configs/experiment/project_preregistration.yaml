@@ -1,0 +1,60 @@
+schema_version: "1.0"
+status: executable_protocol_pending_real_data
+research_questions:
+  - semantic_accuracy_efficiency
+  - zero_shot_ood_comparison
+  - calibration_effect
+  - trainable_anomaly_head_effect
+  - road_context_contribution
+  - temporal_persistence_contribution
+  - detector_fusion_contribution
+  - jetson_accuracy_latency_memory_tradeoff
+dataset_roles:
+  cityscapes_train: [train_fit, train_select, train_calibration]
+  cityscapes_official_val: official_val_common_eval
+  fishyscapes_static: ood_development
+  fishyscapes_lost_and_found: frozen_holdout
+  smiyc: sealed_final
+allowed_holdout_inspections: 1
+semantic_sequence:
+  - five_architecture_smoke
+  - five_short_screening
+  - top_three_medium
+  - top_two_limited_hpo
+  - three_project_owned_final_runs
+  - ood_calibration_development
+  - context_temporal_ablations
+  - frozen_holdout
+  - sealed_final
+  - export
+  - jetson
+final_run_requirements:
+  count: 3
+  minimum_random_initialization_runs: 1
+primary_metrics:
+  semantic: mIoU
+  ood: [AUROC, average_precision, FPR95]
+  calibration: [NLL, ECE, Brier]
+  detection: [mAP, AP50, AP75]
+secondary_metrics:
+  - rare_class_mean_iou
+  - generalization_gap
+  - component_detection_rate
+  - false_positive_components_per_image
+  - throughput
+  - latency
+  - peak_memory
+seeds:
+  screening: [20260727]
+  final: [20260727, 20260728, 20260729]
+failure_policy:
+  non_finite: fail_run
+  missing_metric: refuse_promotion
+  failed_export: preserve_scientific_result_and_block_deployment
+  missing_run: report_incomplete
+  oom: reduce_device_batch_preserve_effective_batch_then_retry_once
+ablation_matrix:
+  core: [zero_shot_scores, calibration, anomaly_head, context, temporal, detector_fusion]
+  separate_resolution: [[512, 1024], [768, 1536]]
+  intentionally_deferred: [depth, int8, advanced_tracking]
+scientific_decisions_automated: false

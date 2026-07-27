@@ -1,0 +1,68 @@
+schema_version: "1.0"
+record_type: edgeguard_colab_resource_profiles
+profiles:
+  t4_compatibility:
+    preferred_accelerator: T4
+    precision: fp16_after_fp32_correctness
+    crop: [512, 1024]
+    device_batch: 2
+    gradient_accumulation: 4
+    effective_batch: 8
+    workers: 2
+    prefetch: 2
+    validation_interval_optimizer_steps: 500
+    checkpoint_interval_optimizer_steps: 500
+    recovery_sync_interval_minutes: 10
+    disk_requirement: measure_from_selected_shard_plus_5_gib_reserve
+    sample_step_budget: compatibility_or_short_screening_only
+    oom_adaptation: halve_device_batch_and_increase_accumulation_to_preserve_effective_batch
+  l4_balanced:
+    preferred_accelerator: L4
+    precision: fp16_after_fp32_correctness
+    crop: [512, 1024]
+    device_batch: 4
+    gradient_accumulation: 2
+    effective_batch: 8
+    workers: 4
+    prefetch: 2
+    validation_interval_optimizer_steps: 500
+    checkpoint_interval_optimizer_steps: 500
+    recovery_sync_interval_minutes: 10
+    disk_requirement: measure_from_selected_shard_plus_5_gib_reserve
+    sample_step_budget: screening_or_medium_training
+    oom_adaptation: halve_device_batch_and_increase_accumulation_to_preserve_effective_batch
+  a100_training:
+    preferred_accelerator: A100
+    precision: bf16_if_finite_else_fp16_after_fp32_correctness
+    crop: [512, 1024]
+    device_batch: 8
+    gradient_accumulation: 1
+    effective_batch: 8
+    workers: 4
+    prefetch: 2
+    validation_interval_optimizer_steps: 500
+    checkpoint_interval_optimizer_steps: 500
+    recovery_sync_interval_minutes: 10
+    disk_requirement: measure_from_selected_shard_plus_5_gib_reserve
+    sample_step_budget: full_training_or_bounded_hpo
+    oom_adaptation: halve_device_batch_and_increase_accumulation_to_preserve_effective_batch
+  h100_optional:
+    preferred_accelerator: H100_if_measured_end_to_end_benefit
+    precision: bf16_if_finite_else_fp16_after_fp32_correctness
+    crop: [512, 1024]
+    device_batch: 8
+    gradient_accumulation: 1
+    effective_batch: 8
+    workers: 4
+    prefetch: 2
+    validation_interval_optimizer_steps: 500
+    checkpoint_interval_optimizer_steps: 500
+    recovery_sync_interval_minutes: 10
+    disk_requirement: measure_from_selected_shard_plus_5_gib_reserve
+    sample_step_budget: only_measured_compute_bound_promotion_or_final_work
+    oom_adaptation: fall_back_to_a100_or_l4_profile_without_changing_effective_batch
+assumption_policy:
+  fabricated_runtime_estimates: false
+  first_real_run_replaces_estimates: true
+  mounted_drive_sample_by_sample_training: false
+  active_workspace: /content/edgeguard-work/<run_id>
