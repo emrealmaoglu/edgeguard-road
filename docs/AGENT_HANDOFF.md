@@ -1,23 +1,22 @@
 # Agent Handoff
 
-- **Task:** `EG-SEG-002 — Current-Colab compatibility, persistent acquisition and
-  five-model Cityscapes smoke`
-- **Branch/base:** `feat/first-vertical-slice` at
-  `8343ed582c03be69a1fd753617a1a3c2566ab20b`
-- **Repository result:** Implemented and locally tested; real Colab measurement pending
-- **No scientific result claimed:** No framework path was selected locally, no Drive
-  manifest was rebuilt, no Cityscapes training sample was read, and no smoke model was
-  trained.
+- **Task:** Local-first Colab readiness gate
+- **Branch/base:** `feat/first-vertical-slice` at task-start commit
+  `f9b489338517e32dcabe0110614993f046af43ed`
+- **Repository result:** Implemented and locally tested; remote CI and manual Linux CPU
+  verification pending
+- **No scientific result claimed:** Only synthetic, random-weight compatibility probes
+  ran. No Drive data, real Cityscapes sample, pretrained weight, training campaign or
+  accelerator performance measurement was used.
 
 ## Colab execution
 
-Use `notebooks/colab/05_semantic_five_model_smoke.ipynb` at the exact pushed commit.
-It verifies a clean checkout, mounts the private `EdgeGuard/` root, selects the first
-five-model-compatible OpenMIM-free runtime, rebuilds `split-policy-v1` from existing
-manifests, stages an identity-bound Cityscapes bundle to `/content`, then runs the five
-random-initialized 100-step smoke jobs. Batch 2 with accumulation 2 adapts once on CUDA
-OOM to batch 1 with accumulation 4. At least four passes make the milestone ready for
-common screening; the notebook does not start screening.
+Do not open Colab yet. First push the single local-first commit, pass normal Python
+3.10/3.11 CI, and manually pass `.github/workflows/semantic-framework-cpu-probe.yml`.
+After those gates, `notebooks/colab/04_colab_semantic_compatibility_probe.ipynb` runs
+only the clean compatibility install and five synthetic CUDA probes. It does not mount
+Drive. `notebooks/colab/05_semantic_five_model_smoke.ipynb` accepts only a successful
+same-runtime compatibility receipt before it may mount Drive or stage data.
 
 Persistent outputs are external to Git:
 
@@ -33,11 +32,11 @@ runtime filename/size/SHA-256. The temporal source remains blocked until selecte
 
 ## Evidence contract
 
-The runner records progress every 25 optimizer steps, validation loss/mIoU and all 19
-class IoUs, config/data/split/framework identities, finite loss/gradient checks,
-checkpoint hashes and exact resume. Active work is under `/content`; mounted Drive is
-used for bounded recovery sync and verified final evidence, not sample-by-sample
-training.
+The local command runs 11 visible phases and emits an atomic status plus a small,
+path-sanitized evidence ZIP. The real Mac CPU probe constructed all five pinned MMSeg
+models and verified finite forward/backward plus model/optimizer/scheduler resume for
+each. The storage inventory is read-only; the empty local check predicted zero
+Cityscapes download bytes and correctly blocked on missing verified private assets.
 
 Do not access official Cityscapes val, full Fishyscapes Lost & Found or either SMIYC
 set in this milestone. Do not infer training quality from compatibility smoke results.

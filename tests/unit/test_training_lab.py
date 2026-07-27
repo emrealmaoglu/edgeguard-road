@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +12,9 @@ import pytest
 from pydantic import ValidationError
 
 from edgeguard.data.cityscapes_split_policy import POLICY_CONFIG, POLICY_VERSION
+from edgeguard.runtime import RuntimePathContract
 from edgeguard.serialization import sha256_payload
+from edgeguard.telemetry.longrun import LongRunStatus
 from edgeguard.training.config import (
     load_semantic_common_config,
     load_semantic_framework_config,
@@ -32,7 +36,9 @@ from edgeguard.training.identity import build_experiment_contract, validate_resu
 from edgeguard.training.logits import validate_native_logits_tensor
 from edgeguard.training.registry import append_registry, load_registry
 from scripts.train.install_semantic_stack import (
+    BootstrapError,
     _preflight_path_a,
+    _record_bootstrap_failure,
     _resolve_uv_executable,
     build_path_a_commands,
     build_path_b_commands,
@@ -246,6 +252,7 @@ def test_install_cascade_is_openmim_free_and_has_auditable_cuda_fallback(
         framework,
         tmp_path / "mmseg-a",
         uv_executable=tmp_path / "resolved-tools/uv",
+        hosted_python=Path(sys.executable),
         project_root=REPO_ROOT,
         runtime_root=tmp_path / "runtime-a",
     )
@@ -288,12 +295,102 @@ def test_uv_resolution_uses_the_hosted_path_executable(
             raise AssertionError("an existing hosted uv executable must not be bootstrapped again")
 
     resolved, version, receipts = _resolve_uv_executable(  # type: ignore[arg-type]
-        NoBootstrapRunner()
+        NoBootstrapRunner(),
+        which=lambda name: str(executable) if name == "uv" else None,
     )
 
     assert resolved == executable.resolve()
     assert version == "0.8.8"
     assert receipts == []
+
+
+def test_uv_absent_is_resolved_from_interpreter_scripts_after_install(tmp_path: Path) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+
+    class InstallRunner:
+        def run(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            executable = scripts / "uv"
+            executable.write_text("placeholder", encoding="utf-8")
+            executable.chmod(0o755)
+            return {"stage": "bootstrap-uv", "return_code": 0}
+
+    resolved, version, receipts = _resolve_uv_executable(  # type: ignore[arg-type]
+        InstallRunner(),
+        which=lambda _name: None,
+        scripts_directory=scripts,
+        version_probe=lambda _path: "uv 0.8.8",
+    )
+
+    assert resolved == (scripts / "uv").resolve()
+    assert version == "0.8.8"
+    assert receipts == [{"stage": "bootstrap-uv", "return_code": 0}]
+
+
+def test_uv_install_failure_is_classified(tmp_path: Path) -> None:
+    class FailingRunner:
+        def run(self, *_args: object, **_kwargs: object) -> None:
+            raise subprocess.CalledProcessError(1, ["pip", "install", "uv"])
+
+    with pytest.raises(BootstrapError, match="installation command failed") as captured:
+        _resolve_uv_executable(  # type: ignore[arg-type]
+            FailingRunner(), which=lambda _name: None, scripts_directory=tmp_path
+        )
+    assert captured.value.stage == "uv_install"
+    assert captured.value.classification == "uv_install_failed"
+
+
+def test_uv_install_without_resolvable_executable_is_rejected(tmp_path: Path) -> None:
+    class SuccessfulRunner:
+        def run(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"return_code": 0}
+
+    with pytest.raises(BootstrapError, match="no uv executable") as captured:
+        _resolve_uv_executable(  # type: ignore[arg-type]
+            SuccessfulRunner(), which=lambda _name: None, scripts_directory=tmp_path
+        )
+    assert captured.value.classification == "uv_executable_not_found"
+
+
+def test_uv_unexpected_version_and_non_executable_are_rejected(tmp_path: Path) -> None:
+    executable = tmp_path / "uv"
+    executable.write_text("placeholder", encoding="utf-8")
+    executable.chmod(0o755)
+
+    class NoBootstrapRunner:
+        pass
+
+    with pytest.raises(BootstrapError, match="unexpected uv version") as version_error:
+        _resolve_uv_executable(  # type: ignore[arg-type]
+            NoBootstrapRunner(),
+            which=lambda _name: str(executable),
+            version_probe=lambda _path: "uv 9.9.9",
+        )
+    assert version_error.value.classification == "uv_version_mismatch"
+
+    executable.chmod(0o644)
+    with pytest.raises(BootstrapError, match="not an executable") as executable_error:
+        _resolve_uv_executable(  # type: ignore[arg-type]
+            NoBootstrapRunner(), which=lambda _name: str(executable)
+        )
+    assert executable_error.value.classification == "uv_executable_invalid"
+
+
+def test_bootstrap_failure_writes_terminal_receipt_and_logs(tmp_path: Path) -> None:
+    paths = RuntimePathContract.from_workspace(tmp_path / "workspace")
+    status = LongRunStatus(paths.evidence_root / "run_status.json")
+    error = BootstrapError("uv_resolution", "uv_executable_not_found", "missing uv")
+
+    _record_bootstrap_failure(error, paths=paths, status=status)
+
+    persisted = json.loads((paths.evidence_root / "run_status.json").read_text())
+    failure = json.loads((paths.evidence_root / "bootstrap_failure.json").read_text())
+    assert persisted["status"] == "failed"
+    assert persisted["phase"] == "uv_resolution"
+    assert failure["failure_classification"] == "uv_executable_not_found"
+    assert failure["failed_stage"] == "uv_resolution"
+    assert (paths.log_root / "00-uv-bootstrap.stdout.log").is_file()
+    assert (paths.log_root / "00-uv-bootstrap.stderr.log").is_file()
 
 
 def test_path_a_wheel_preflight_retains_binary_only_mmcv_lite(tmp_path: Path) -> None:

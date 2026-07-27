@@ -88,6 +88,7 @@ def test_training_bundle_is_reused_and_sha_verified(tmp_path: Path) -> None:
         "split_policy_path": split,
         "drive_bundle_directory": tmp_path / "drive-bundles",
         "cache_directory": tmp_path / "cache",
+        "allow_bundle_creation": True,
     }
     first = stage_cityscapes_training(
         **arguments,
@@ -118,4 +119,27 @@ def test_partial_staged_destination_is_rejected(tmp_path: Path) -> None:
             drive_bundle_directory=tmp_path / "drive-bundles",
             cache_directory=tmp_path / "cache",
             staged_dataset_root=partial,
+            allow_bundle_creation=True,
         )
+
+
+def test_staging_dry_run_is_zero_download_and_requires_explicit_bundle_creation(
+    tmp_path: Path,
+) -> None:
+    root, dataset, split = _manifests(tmp_path)
+    arguments = {
+        "dataset_root": root,
+        "dataset_manifest_path": dataset,
+        "split_policy_path": split,
+        "drive_bundle_directory": tmp_path / "drive-bundles",
+        "cache_directory": tmp_path / "cache",
+        "staged_dataset_root": tmp_path / "staged",
+    }
+
+    plan = stage_cityscapes_training(**arguments, dry_run=True)
+
+    assert plan["expected_download_bytes"] == 0
+    assert plan["expected_drive_write_bytes"] > 0
+    assert plan["bundle_reusable"] is False
+    with pytest.raises(ValueError, match="explicit --create-bundle"):
+        stage_cityscapes_training(**arguments)

@@ -123,6 +123,8 @@ def stage_cityscapes_training(
     drive_bundle_directory: Path,
     cache_directory: Path,
     staged_dataset_root: Path,
+    allow_bundle_creation: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Create/reuse, copy, verify, and safely extract one deterministic bundle."""
     identity, samples = load_policy_selected_cityscapes_split(
@@ -133,10 +135,30 @@ def stage_cityscapes_training(
         f"cityscapes-fine-{identity.dataset_manifest_sha256[:12]}-"
         f"{identity.split_manifest_sha256[:12]}.tar.gz"
     )
-    drive_bundle_directory.mkdir(parents=True, exist_ok=True)
     receipt_path = drive_bundle_directory / f"{bundle_name}.receipt.json"
-    status = LongRunStatus(drive_bundle_directory / "run_status.json")
     bundle = drive_bundle_directory / bundle_name
+    source_bytes = sum((dataset_root / relative).stat().st_size for relative in paths)
+    bundle_reusable = bundle.is_file() and receipt_path.is_file()
+    plan = {
+        "schema_version": "1.0",
+        "record_type": "cityscapes_training_staging_plan",
+        "status": "ready" if bundle_reusable else "blocked_missing_reusable_bundle",
+        "bundle_name": bundle_name,
+        "bundle_reusable": bundle_reusable,
+        "expected_download_bytes": 0,
+        "expected_drive_write_bytes": 0 if bundle_reusable else source_bytes,
+        "expected_local_staging_bytes": bundle.stat().st_size if bundle_reusable else source_bytes,
+        "sample_count": len(samples),
+        "file_count": len(paths),
+    }
+    if dry_run:
+        return plan
+    if not bundle_reusable and not allow_bundle_creation:
+        raise ValueError(
+            "verified Drive bundle is missing; creation requires explicit --create-bundle"
+        )
+    drive_bundle_directory.mkdir(parents=True, exist_ok=True)
+    status = LongRunStatus(drive_bundle_directory / "run_status.json")
     if bundle.exists():
         if not receipt_path.is_file():
             raise ValueError("existing Drive bundle has no identity receipt")
@@ -220,10 +242,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-manifest", type=Path, required=True)
     parser.add_argument("--split-policy-manifest", type=Path, required=True)
     parser.add_argument("--drive-bundle-directory", type=Path, required=True)
-    parser.add_argument(
-        "--cache-directory", type=Path, default=Path("/content/edgeguard-data-cache")
-    )
+    parser.add_argument("--cache-directory", type=Path, required=True)
     parser.add_argument("--staged-dataset-root", type=Path, required=True)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--create-bundle", action="store_true")
     return parser
 
 
@@ -236,6 +258,8 @@ def main() -> int:
         drive_bundle_directory=args.drive_bundle_directory,
         cache_directory=args.cache_directory,
         staged_dataset_root=args.staged_dataset_root,
+        allow_bundle_creation=args.create_bundle,
+        dry_run=args.dry_run,
     )
     print(canonical_json(result))
     return 0

@@ -9,7 +9,7 @@ NOTEBOOK = REPO_ROOT / "notebooks/colab/00_environment_and_smoke.ipynb"
 PIDNET_NOTEBOOK = REPO_ROOT / "notebooks/colab/01_pidnet_single_image_spike.ipynb"
 CITYSCAPES_NOTEBOOK = REPO_ROOT / "notebooks/colab/02_pidnet_cityscapes_val_eval.ipynb"
 CITYSCAPES_TRAIN_NOTEBOOK = REPO_ROOT / "notebooks/colab/03_prepare_cityscapes_fine_train.ipynb"
-SEMANTIC_STACK_NOTEBOOK = REPO_ROOT / "notebooks/colab/04_semantic_training_stack_probe.ipynb"
+SEMANTIC_STACK_NOTEBOOK = REPO_ROOT / "notebooks/colab/04_colab_semantic_compatibility_probe.ipynb"
 SEMANTIC_SMOKE_NOTEBOOK = REPO_ROOT / "notebooks/colab/05_semantic_five_model_smoke.ipynb"
 ACQUISITION_NOTEBOOK = REPO_ROOT / "notebooks/colab/06_acquire_edgeguard_datasets.ipynb"
 PIDNET_RUNNER = REPO_ROOT / "scripts/run_pidnet_spike.py"
@@ -143,18 +143,20 @@ def test_semantic_stack_notebook_is_thin_exact_commit_gated_and_stops_before_dat
     assert payload["nbformat_minor"] >= 5
     assert all(not cell.get("outputs") for cell in payload["cells"])
     source = "\n".join(line for cell in payload["cells"] for line in cell.get("source", []))
-    assert "REPLACE_WITH_REVIEWED_EG_SEG_001_COMMIT_SHA" in source
+    assert "REPLACE_WITH_REVIEWED_LOCAL_FIRST_COMMIT_SHA" in source
     assert 're.fullmatch(r"[0-9a-f]{40}"' in source
     assert 'checkout", "--detach", EDGEGUARD_EXPECTED_COMMIT' in source
     assert 'status", "--porcelain=v1' in source
     assert "install_semantic_stack.py" in source
-    assert "validate-configs" in source
-    assert "stack-probe" in source
-    assert "verify_semantic_training_artifact.py" in source
-    assert "files.download" in source
+    assert "--runtime-current-root" in source
+    assert "--runtime-py311-root" in source
+    assert "--cache-root" in source
+    assert "bootstrap_failure.json" in source
+    assert "five_model_probe" in source
+    assert "checkpoint_resume_verified" in source
     assert "drive.mount" not in source
     assert "private_inputs" not in source
-    assert "Cityscapes training" in source
+    assert "stage_cityscapes_training.py" not in source
     assert "RoadAnomaly21" not in source
     assert "RoadObstacle21" not in source
     assert "/Users/" not in source
@@ -169,20 +171,21 @@ def test_semantic_smoke_notebook_is_thin_identity_gated_and_stops_before_screeni
 
     assert payload["nbformat"] == 4
     assert all(not cell.get("outputs") for cell in payload["cells"])
-    assert "REPLACE_WITH_REVIEWED_EG_SEG_002_COMMIT_SHA" in source
-    assert "install_semantic_stack.py" in source
+    assert "REPLACE_WITH_REVIEWED_LOCAL_FIRST_COMMIT_SHA" in source
+    assert "install_semantic_stack.py" not in source
+    assert "compatibility_receipt.json" in source
+    assert "checkpoint_resume_verified" in source
+    assert source.index("compatibility_receipt.json") < source.index("drive.mount")
+    assert "inventory_edgeguard_storage.py" in source
+    assert "--require-cityscapes-reusable" in source
     assert "rebuild_cityscapes_splits.py" in source
     assert "stage_cityscapes_training.py" in source
     assert "run_semantic_smoke.py" in source
     assert "split-policy-v1" in source
     assert "ready_for_common_screening" in source
-    assert "compatibility_failures.json" in source
-    assert "run_status.json" in source
-    assert "*.stderr.log" in source
-    assert "lines[-120:]" in source
-    assert "shutil.disk_usage" in source
-    assert "torch.cuda.get_device_name" in source
-    assert "Do not start the common screening campaign" in source
+    assert "--dry-run" in source
+    assert "--create-bundle" not in source
+    assert "Do not start common screening" in source
     assert "/Users/" not in source
     for prohibited in ("api_key", "password=", "token=", "credential="):
         assert prohibited not in source.lower()

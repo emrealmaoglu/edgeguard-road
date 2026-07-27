@@ -8,7 +8,9 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import time
+import types
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -58,6 +60,34 @@ def _distribution_version(*names: str) -> tuple[str, str]:
     raise RuntimeError(f"required distribution is unavailable: {', '.join(names)}")
 
 
+def _install_mmcv_lite_ops_guard() -> bool:
+    """Permit pure-model imports while failing closed if a compiled MMCV op is used."""
+    try:
+        importlib.metadata.version("mmcv-lite")
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    try:
+        import mmcv._ext  # type: ignore[import-not-found]  # noqa: F401
+    except ModuleNotFoundError:
+        extension = types.ModuleType("mmcv._ext")
+
+        def unavailable(name: str) -> Any:
+            if name.startswith("__"):
+                raise AttributeError(name)
+
+            def fail(*_args: Any, **_kwargs: Any) -> Any:
+                raise RuntimeError(
+                    f"selected model attempted unavailable compiled MMCV operation: {name}"
+                )
+
+            return fail
+
+        extension.__getattr__ = unavailable  # type: ignore[attr-defined]
+        sys.modules["mmcv._ext"] = extension
+        return True
+    return False
+
+
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -67,20 +97,23 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _verify_clean_checkout(repo: Path, expected_commit: str) -> None:
+def _verify_clean_checkout(repo: Path, expected_commit: str, *, allow_dirty: bool = False) -> None:
     if _git(repo, "rev-parse", "HEAD") != expected_commit:
         raise ValueError("project checkout does not match the reviewed commit")
-    if _git(repo, "status", "--porcelain=v1"):
+    if not allow_dirty and _git(repo, "status", "--porcelain=v1"):
         raise ValueError("stack probe requires a clean project checkout")
 
 
 def _strip_pretrained(value: Any) -> None:
     if isinstance(value, dict):
-        if value.get("type") == "Pretrained":
-            value.clear()
-        if "pretrained" in value:
-            value["pretrained"] = None
-        for nested in value.values():
+        for key, nested in tuple(value.items()):
+            if key == "init_cfg" and isinstance(nested, dict):
+                if nested.get("type") == "Pretrained":
+                    value[key] = None
+                    continue
+            if key == "pretrained":
+                value[key] = None
+                continue
             _strip_pretrained(nested)
     elif isinstance(value, list):
         for nested in value:
@@ -104,11 +137,13 @@ def _replace_pretrained(value: Any, checkpoint: Path) -> int:
     return replacements
 
 
-def _environment(torch: Any) -> dict[str, Any]:
-    if not torch.cuda.is_available():
-        raise RuntimeError("semantic stack probe requires CUDA")
-    properties = torch.cuda.get_device_properties(0)
-    capability = torch.cuda.get_device_capability(0)
+def _environment(torch: Any, *, device_name: str = "cuda") -> dict[str, Any]:
+    if device_name == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("semantic stack probe requires an available CUDA device")
+    if device_name not in {"cpu", "cuda"}:
+        raise ValueError("semantic stack probe device must be cpu or cuda")
+    properties = torch.cuda.get_device_properties(0) if device_name == "cuda" else None
+    capability = torch.cuda.get_device_capability(0) if device_name == "cuda" else None
     mmcv_distribution, mmcv_version = _distribution_version("mmcv", "mmcv-lite")
     return {
         "schema_version": "1.0",
@@ -121,10 +156,13 @@ def _environment(torch: Any) -> dict[str, Any]:
         "mmengine_version": importlib.metadata.version("mmengine"),
         "mmcv_distribution": mmcv_distribution,
         "mmcv_version": mmcv_version,
-        "cuda_version": torch.version.cuda,
-        "gpu_name": torch.cuda.get_device_name(0),
-        "vram_bytes": int(properties.total_memory),
-        "compute_capability": [int(capability[0]), int(capability[1])],
+        "device": device_name,
+        "cuda_version": torch.version.cuda if device_name == "cuda" else None,
+        "gpu_name": torch.cuda.get_device_name(0) if device_name == "cuda" else None,
+        "vram_bytes": int(properties.total_memory) if properties is not None else None,
+        "compute_capability": (
+            [int(capability[0]), int(capability[1])] if capability is not None else None
+        ),
         "precision_mode": "fp32",
         "device_batch": 1,
         "effective_global_batch": 1,
@@ -136,7 +174,11 @@ def _environment(torch: Any) -> dict[str, Any]:
 
 
 def _model_from_official_config(
-    model_spec: SemanticModelConfig, mmseg_checkout: Path, *, torch: Any
+    model_spec: SemanticModelConfig,
+    mmseg_checkout: Path,
+    *,
+    torch: Any,
+    device_name: str,
 ) -> Any:
     from mmengine.config import Config
     from mmseg.registry import MODELS
@@ -149,15 +191,25 @@ def _model_from_official_config(
     _strip_pretrained(model_config)
     model = MODELS.build(model_config)
     model.init_weights()
-    return model.to(torch.device("cuda"))
+    return model.to(torch.device(device_name))
 
 
-def _probe_model(model: Any, model_spec: SemanticModelConfig, *, torch: Any) -> dict[str, Any]:
+def _probe_model(
+    model: Any,
+    model_spec: SemanticModelConfig,
+    *,
+    torch: Any,
+    device_name: str,
+) -> dict[str, Any]:
     model.train()
+    for module in model.modules():
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+            module.eval()
     model.zero_grad(set_to_none=True)
-    inputs = torch.randn((1, 3, 128, 256), device="cuda", dtype=torch.float32)
-    torch.cuda.reset_peak_memory_stats()
-    torch.cuda.synchronize()
+    inputs = torch.randn((1, 3, 128, 256), device=device_name, dtype=torch.float32)
+    if device_name == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
     started = time.perf_counter()
     output = model(inputs, mode="tensor")
     if isinstance(output, (list, tuple)):
@@ -171,7 +223,8 @@ def _probe_model(model: Any, model_spec: SemanticModelConfig, *, torch: Any) -> 
     if not bool(torch.isfinite(synthetic_loss)):
         raise ValueError("synthetic stack-probe scalar is non-finite")
     synthetic_loss.backward()
-    torch.cuda.synchronize()
+    if device_name == "cuda":
+        torch.cuda.synchronize()
     elapsed = time.perf_counter() - started
     aligned = torch.nn.functional.interpolate(
         output,
@@ -191,9 +244,14 @@ def _probe_model(model: Any, model_spec: SemanticModelConfig, *, torch: Any) -> 
         "align_corners": model_spec.logits.align_corners,
         "forward_backward_seconds": elapsed,
         "images_per_second": 1.0 / elapsed,
-        "peak_allocated_bytes": int(torch.cuda.max_memory_allocated()),
-        "peak_reserved_bytes": int(torch.cuda.max_memory_reserved()),
+        "peak_allocated_bytes": (
+            int(torch.cuda.max_memory_allocated()) if device_name == "cuda" else None
+        ),
+        "peak_reserved_bytes": (
+            int(torch.cuda.max_memory_reserved()) if device_name == "cuda" else None
+        ),
         "synthetic_scalar_probe_loss": float(synthetic_loss.detach().cpu()),
+        "batch_norm_mode": "frozen_eval_for_batch_size_one_probe",
         "scientific_accuracy_evidence": False,
     }
 
@@ -968,13 +1026,15 @@ def run_real_training(
         raise ValueError("MMSegmentation checkout commit mismatch")
     import torch
     from mmengine.runner import Runner
+
+    _install_mmcv_lite_ops_guard()
     from mmseg.utils import register_all_modules
 
     if not torch.cuda.is_available():
         raise RuntimeError("semantic training requires a CUDA runtime")
     if precision == "bf16" and not torch.cuda.is_bf16_supported():
         raise ValueError("selected CUDA runtime does not support BF16")
-    environment = _environment(torch)
+    environment = _environment(torch, device_name="cuda")
     environment["precision_mode"] = precision
     environment["device_batch"] = common.device_batch
     environment["effective_global_batch"] = common.effective_global_batch
@@ -1088,12 +1148,20 @@ def run_stack_probe(
     output_dir: Path,
     project_root: Path,
     project_commit: str,
+    *,
+    device_name: str = "cuda",
+    allow_dirty_project: bool = False,
 ) -> dict[str, Any]:
-    """Run five synthetic CUDA probes and one exact checkpoint resume."""
+    """Run five synthetic CPU/CUDA probes and one exact checkpoint resume."""
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError("stack-probe output directory must be absent or empty")
     output_dir.mkdir(parents=True, exist_ok=True)
-    _verify_clean_checkout(project_root, project_commit)
+    _verify_clean_checkout(
+        project_root,
+        project_commit,
+        allow_dirty=allow_dirty_project,
+    )
+    project_dirty = bool(_git(project_root, "status", "--porcelain=v1"))
     framework = load_semantic_framework_config(config_root / "framework_mmseg.yaml")
     common = load_semantic_common_config(config_root / "common_cityscapes.yaml")
     models = load_semantic_model_suite(config_root)
@@ -1101,18 +1169,25 @@ def run_stack_probe(
         raise ValueError("MMSegmentation checkout commit mismatch")
 
     import torch
+
+    mmcv_lite_ops_guard = _install_mmcv_lite_ops_guard()
     from mmseg.utils import register_all_modules
 
     register_all_modules(init_default_scope=True)
-    environment = _environment(torch)
+    environment = _environment(torch, device_name=device_name)
+    environment["mmcv_lite_ops_guard"] = mmcv_lite_ops_guard
+    project_status = (
+        ProjectStatus.COLAB_MEASURED if device_name == "cuda" else ProjectStatus.LOCALLY_TESTED
+    )
     dataset = DatasetIdentity(
         kind="synthetic_stack_fixture",
         synthetic_fixture_identity=common.synthetic_fixture_identity,
     )
     probes: list[dict[str, Any]] = []
     checkpoint_metadata: CheckpointMetadata | None = None
+    checkpoint_resume_experiment_ids: list[str] = []
     registry_path = output_dir / "registry.jsonl"
-    for index, model_spec in enumerate(models):
+    for model_spec in models:
         contract = build_experiment_contract(
             framework,
             common,
@@ -1120,47 +1195,73 @@ def run_stack_probe(
             dataset=dataset,
             git_commit=project_commit,
             environment=environment,
-            status=ProjectStatus.COLAB_MEASURED,
+            status=project_status,
         )
-        model = _model_from_official_config(model_spec, mmseg_checkout, torch=torch)
-        probe = _probe_model(model, model_spec, torch=torch)
+        model = _model_from_official_config(
+            model_spec,
+            mmseg_checkout,
+            torch=torch,
+            device_name=device_name,
+        )
+        probe = _probe_model(
+            model,
+            model_spec,
+            torch=torch,
+            device_name=device_name,
+        )
         probes.append(probe)
-        if index == 0:
-            checkpoint_metadata = _checkpoint_round_trip(model, contract, output_dir, torch=torch)
-        append_registry(
-            registry_path,
-            ExperimentRegistryRecord(
-                experiment_id=contract.experiment_id,
-                status=ProjectStatus.COLAB_MEASURED,
-                config_sha256=contract.config_sha256,
-                git_commit=project_commit,
-                git_dirty=False,
-                framework_identity_sha256=contract.framework_identity_sha256,
-                dataset_manifest_sha256=None,
-                split_manifest_sha256=None,
-                initialization_checkpoint_sha256=None,
-                seed=common.seed,
-                runtime={"device": "cuda", "synthetic_stack_probe": True},
-                final_metrics={},
-                last_metrics={},
-                artifact_paths=("experiments/segmentation/stack-probe/",),
-                failure_summary=None,
-            ),
-        )
+        checkpoint_metadata = _checkpoint_round_trip(model, contract, output_dir, torch=torch)
+        checkpoint_resume_experiment_ids.append(contract.experiment_id)
+        if project_dirty:
+            append_jsonl(
+                registry_path,
+                {
+                    "record_type": "dirty_stack_probe_receipt",
+                    "experiment_id": contract.experiment_id,
+                    "git_commit": project_commit,
+                    "git_dirty": True,
+                    "scientific_accuracy_evidence": False,
+                },
+            )
+        else:
+            append_registry(
+                registry_path,
+                ExperimentRegistryRecord(
+                    experiment_id=contract.experiment_id,
+                    status=project_status,
+                    config_sha256=contract.config_sha256,
+                    git_commit=project_commit,
+                    git_dirty=False,
+                    framework_identity_sha256=contract.framework_identity_sha256,
+                    dataset_manifest_sha256=None,
+                    split_manifest_sha256=None,
+                    initialization_checkpoint_sha256=None,
+                    seed=common.seed,
+                    runtime={"device": device_name, "synthetic_stack_probe": True},
+                    final_metrics={},
+                    last_metrics={},
+                    artifact_paths=("experiments/segmentation/stack-probe/",),
+                    failure_summary=None,
+                ),
+            )
         del model
-        torch.cuda.empty_cache()
+        if device_name == "cuda":
+            torch.cuda.empty_cache()
     assert checkpoint_metadata is not None
     summary = {
         "schema_version": "1.0",
         "record_type": "semantic_stack_probe_summary",
         "run_family": "EGX-SEG-STACK-*",
         "project_commit": project_commit,
+        "git_dirty": project_dirty,
         "framework_commit": framework.commit,
         "model_count": len(probes),
         "models": probes,
         "checkpoint_resume_verified": True,
+        "checkpoint_resume_model_count": len(checkpoint_resume_experiment_ids),
+        "checkpoint_resume_experiment_ids": checkpoint_resume_experiment_ids,
         "scientific_accuracy_evidence": False,
-        "status": "colab_measured",
+        "status": project_status.value,
     }
     config_receipt = validate_configs(config_root)
     _write_json(output_dir / "environment.json", environment)
@@ -1180,12 +1281,14 @@ def run_stack_probe(
     result = {
         "schema_version": "1.0",
         "record_type": "semantic_stack_probe_completion",
-        "status": "colab_measured",
+        "status": project_status.value,
         "scientific_accuracy_evidence": False,
         "project_commit": project_commit,
+        "git_dirty": project_dirty,
         "framework_commit": framework.commit,
         "model_count": len(probes),
         "checkpoint_resume_verified": True,
+        "checkpoint_resume_model_count": len(checkpoint_resume_experiment_ids),
         "evidence_package": package.name,
         "evidence_package_sha256": sha256_file(package),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1205,6 +1308,7 @@ def _parser() -> argparse.ArgumentParser:
     probe.add_argument("--output-dir", type=Path, required=True)
     probe.add_argument("--project-root", type=Path, required=True)
     probe.add_argument("--project-commit", required=True)
+    probe.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     train = subparsers.add_parser("train")
     train.add_argument("--config-root", type=Path, required=True)
     train.add_argument("--model-config", type=Path, required=True)
@@ -1239,6 +1343,7 @@ def main() -> int:
             args.output_dir,
             args.project_root,
             args.project_commit,
+            device_name=args.device,
         )
     else:
         result = run_real_training(

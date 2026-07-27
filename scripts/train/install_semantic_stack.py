@@ -10,11 +10,14 @@ import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+from edgeguard.runtime import RuntimePathContract
 from edgeguard.serialization import canonical_json, sha256_file
 from edgeguard.telemetry.longrun import LiveCommandRunner, LongRunStatus, atomic_write_json
 from edgeguard.training.config import load_semantic_framework_config
@@ -34,46 +37,102 @@ PURE_RUNTIME_PINS = (
     "matplotlib==3.10.5",
     "scipy==1.16.1",
     "terminaltables==3.1.10",
+    "ftfy==6.3.1",
+    "regex==2024.11.6",
 )
 UV_VERSION = "0.8.8"
-PATH_A_ROOT = Path("/content/edgeguard-runtime-current")
-PATH_B_ROOT = Path("/content/edgeguard-runtime-py311")
-DEFAULT_LOG_ROOT = Path("/content/edgeguard-logs")
-OWNED_RUNTIME_NAMES = {"edgeguard-runtime-current", "edgeguard-runtime-py311"}
+OWNED_RUNTIME_NAMES = {
+    "edgeguard-runtime-current",
+    "edgeguard-runtime-py311",
+    "runtime-current",
+    "runtime-py311",
+}
 OWNED_CHECKOUT_NAMES = {"mmseg-path-a", "mmseg-path-b"}
+
+WhichFunction = Callable[[str], str | None]
+VersionProbe = Callable[[Path], str]
+
+
+class BootstrapError(RuntimeError):
+    """Classified uv bootstrap failure with one exact terminal stage."""
+
+    def __init__(self, stage: str, classification: str, message: str) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.classification = classification
 
 
 def _python(root: Path) -> Path:
     return root / "bin" / "python"
 
 
-def _resolve_uv_executable(runner: LiveCommandRunner) -> tuple[Path, str, list[dict[str, Any]]]:
-    """Bootstrap bounded uv once and resolve its actual executable from PATH."""
-    receipts: list[dict[str, Any]] = []
-    resolved = shutil.which("uv")
-    if resolved is None:
-        receipts.append(
-            runner.run(
-                "bootstrap-uv",
-                (sys.executable, "-m", "pip", "install", f"uv=={UV_VERSION}"),
-                stage_index=1,
-                stage_total=1,
-            )
-        )
-        resolved = shutil.which("uv")
-    if resolved is None:
-        raise RuntimeError("uv bootstrap completed but no executable was found on PATH")
-    executable = Path(resolved).resolve()
-    if not executable.is_file() or not os.access(executable, os.X_OK):
-        raise RuntimeError("resolved uv path is not an executable regular file")
-    version_output = subprocess.run(
+def _uv_version(executable: Path) -> str:
+    return subprocess.run(
         [str(executable), "--version"],
         check=True,
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def _resolve_uv_executable(
+    runner: LiveCommandRunner,
+    *,
+    which: WhichFunction = shutil.which,
+    scripts_directory: Path | None = None,
+    version_probe: VersionProbe = _uv_version,
+) -> tuple[Path, str, list[dict[str, Any]]]:
+    """Bootstrap bounded uv once and resolve its actual executable from PATH."""
+    receipts: list[dict[str, Any]] = []
+    scripts_root = scripts_directory or Path(sysconfig.get_path("scripts"))
+    resolved = which("uv")
+    if resolved is None:
+        try:
+            receipts.append(
+                runner.run(
+                    "bootstrap-uv",
+                    (sys.executable, "-m", "pip", "install", f"uv=={UV_VERSION}"),
+                    stage_index=1,
+                    stage_total=1,
+                )
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise BootstrapError(
+                "uv_install",
+                "uv_install_failed",
+                "hosted uv installation command failed",
+            ) from error
+        resolved = which("uv")
+        if resolved is None:
+            scripts_candidate = scripts_root / "uv"
+            resolved = str(scripts_candidate) if scripts_candidate.exists() else None
+    if resolved is None:
+        raise BootstrapError(
+            "uv_resolution",
+            "uv_executable_not_found",
+            "uv installation completed but PATH and interpreter scripts have no uv executable",
+        )
+    executable = Path(resolved).resolve()
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise BootstrapError(
+            "uv_executable_validation",
+            "uv_executable_invalid",
+            "resolved uv path is not an executable regular file",
+        )
+    try:
+        version_output = version_probe(executable)
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise BootstrapError(
+            "uv_version_validation",
+            "uv_version_probe_failed",
+            "uv version probe failed",
+        ) from error
     if version_output != f"uv {UV_VERSION}":
-        raise RuntimeError(f"unexpected uv version: {version_output}")
+        raise BootstrapError(
+            "uv_version_validation",
+            "uv_version_mismatch",
+            f"unexpected uv version: {version_output}",
+        )
     return executable, UV_VERSION, receipts
 
 
@@ -150,8 +209,9 @@ def build_path_a_commands(
     checkout: Path,
     *,
     uv_executable: Path,
+    hosted_python: Path,
     project_root: Path,
-    runtime_root: Path = PATH_A_ROOT,
+    runtime_root: Path,
 ) -> tuple[tuple[str, ...], ...]:
     """Build a hosted-stack-preserving Python-3.12-compatible command sequence."""
     interpreter = _python(runtime_root)
@@ -162,7 +222,7 @@ def build_path_a_commands(
             "venv",
             "--system-site-packages",
             "--python",
-            sys.executable,
+            str(hosted_python),
             str(runtime_root),
         ),
         (
@@ -214,7 +274,7 @@ def build_path_b_commands(
     *,
     uv_executable: Path,
     project_root: Path,
-    runtime_root: Path = PATH_B_ROOT,
+    runtime_root: Path,
 ) -> tuple[tuple[str, ...], ...]:
     """Build the isolated Python 3.11/CUDA 12.1 fallback sequence."""
     uv = str(uv_executable)
@@ -403,6 +463,8 @@ def _probe_command(
         str(project_root),
         "--project-commit",
         project_commit,
+        "--device",
+        "cuda",
     )
 
 
@@ -531,44 +593,104 @@ def _reuse_completed_environment(
     return {**receipt, "reused_completed_environment": True}
 
 
+def _exception_chain(error: BaseException) -> list[dict[str, str]]:
+    chain: list[dict[str, str]] = []
+    current: BaseException | None = error
+    while current is not None and len(chain) < 5:
+        chain.append(
+            {
+                "error_type": type(current).__name__,
+                "message": str(current)[:1000],
+            }
+        )
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def _record_bootstrap_failure(
+    error: BaseException,
+    *,
+    paths: RuntimePathContract,
+    status: LongRunStatus,
+) -> None:
+    """Persist terminal bootstrap evidence even when no child command completed."""
+    stage = error.stage if isinstance(error, BootstrapError) else "uv_bootstrap"
+    classification = (
+        error.classification if isinstance(error, BootstrapError) else "bootstrap_unclassified"
+    )
+    scripts_directory = Path(sysconfig.get_path("scripts"))
+    diagnostics = {
+        "schema_version": "1.0",
+        "record_type": "semantic_bootstrap_failure",
+        "status": "failed",
+        "failed_stage": stage,
+        "failure_classification": classification,
+        "exception_chain": _exception_chain(error),
+        "path_entries": os.environ.get("PATH", "").split(os.pathsep),
+        "interpreter_scripts_directory": str(scripts_directory),
+        "scripts_directory_exists": scripts_directory.is_dir(),
+        "scripts_directory_uv_exists": (scripts_directory / "uv").exists(),
+        "runtime_contract": paths.receipt(),
+    }
+    paths.log_root.mkdir(parents=True, exist_ok=True)
+    (paths.log_root / "00-uv-bootstrap.stdout.log").write_text(
+        canonical_json(
+            {
+                "failed_stage": stage,
+                "failure_classification": classification,
+                "path_entry_count": len(diagnostics["path_entries"]),
+                "scripts_directory": str(scripts_directory),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (paths.log_root / "00-uv-bootstrap.stderr.log").write_text(
+        canonical_json({"exception_chain": diagnostics["exception_chain"]}) + "\n",
+        encoding="utf-8",
+    )
+    atomic_write_json(paths.evidence_root / "bootstrap_failure.json", diagnostics)
+    status.update(phase=stage, last_error=classification, force=True)
+    status.fail(error)
+
+
 def install_compatibility_cascade(
     config_path: Path,
     *,
+    paths: RuntimePathContract,
     project_root: Path,
     project_commit: str,
     config_root: Path,
-    checkout_root: Path,
-    evidence_root: Path,
-    log_root: Path = DEFAULT_LOG_ROOT,
 ) -> dict[str, Any]:
     """Select the first path that passes all five model and resume checks."""
     config = load_semantic_framework_config(config_path)
+    paths = paths.validated()
     hosted = _hosted_runtime_summary()
     if hosted["cuda_available"] is not True:
         raise RuntimeError("compatibility cascade requires a CUDA Colab runtime")
-    evidence_root.mkdir(parents=True, exist_ok=True)
+    paths.evidence_root.mkdir(parents=True, exist_ok=True)
     cleanup_actions: list[dict[str, str]] = []
     try:
         completed = _reuse_completed_environment(
-            evidence_root, checkout_root, config, project_commit
+            paths.evidence_root, paths.checkout_root, config, project_commit
         )
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError):
-        if evidence_root.name != "edgeguard-compatibility":
+        if paths.evidence_root.name not in {"edgeguard-compatibility", "evidence"}:
             raise
-        (evidence_root / "compatibility_receipt.json").unlink(missing_ok=True)
-        (evidence_root / "semantic-compatibility-evidence.zip").unlink(missing_ok=True)
+        (paths.evidence_root / "compatibility_receipt.json").unlink(missing_ok=True)
+        (paths.evidence_root / "semantic-compatibility-evidence.zip").unlink(missing_ok=True)
         cleanup_actions.append(
             {
-                "target": evidence_root.name,
+                "target": paths.evidence_root.name,
                 "action": "removed_invalid_completion_receipt",
             }
         )
         completed = None
     if completed is not None:
         return completed
-    stale_failure = evidence_root / "compatibility_failures.json"
+    stale_failure = paths.evidence_root / "compatibility_failures.json"
     if stale_failure.is_file():
-        if evidence_root.name != "edgeguard-compatibility":
+        if paths.evidence_root.name not in {"edgeguard-compatibility", "evidence"}:
             raise ValueError("refusing to remove failure evidence outside the owned root")
         stale_failure.unlink()
         cleanup_actions.append(
@@ -577,37 +699,43 @@ def install_compatibility_cascade(
                 "action": "removed_stale_failure_receipt_before_retry",
             }
         )
-    status = LongRunStatus(evidence_root / "run_status.json")
-    runner = LiveCommandRunner(log_root, status)
+    status = LongRunStatus(paths.evidence_root / "run_status.json")
+    runner = LiveCommandRunner(paths.log_root, status)
     failures: list[dict[str, str]] = []
-    uv_executable, uv_version, bootstrap_receipts = _resolve_uv_executable(runner)
+    try:
+        uv_executable, uv_version, bootstrap_receipts = _resolve_uv_executable(runner)
+    except BaseException as error:
+        _record_bootstrap_failure(error, paths=paths, status=status)
+        raise
 
-    path_a_checkout = checkout_root / "mmseg-path-a"
+    path_a_checkout = paths.checkout_root / "mmseg-path-a"
     cleanup_actions.extend(
         repair_owned_path(
-            runtime_root=PATH_A_ROOT,
+            runtime_root=paths.runtime_current_root,
             checkout=path_a_checkout,
-            probe=evidence_root / "hosted_current-five-model-probe",
+            probe=paths.evidence_root / "hosted_current-five-model-probe",
             expected_commit=config.commit,
         )
     )
     try:
-        _preflight_path_a(config, runner, evidence_root / "path-a-wheel-preflight")
+        _preflight_path_a(config, runner, paths.cache_root / "path-a-wheel-preflight")
         receipt = _execute_path(
             "hosted_current",
             build_path_a_commands(
                 config,
                 path_a_checkout,
                 uv_executable=uv_executable,
+                hosted_python=Path(sys.executable),
                 project_root=project_root,
+                runtime_root=paths.runtime_current_root,
             ),
-            interpreter=_python(PATH_A_ROOT),
+            interpreter=_python(paths.runtime_current_root),
             checkout=path_a_checkout,
             config=config,
             project_root=project_root,
             project_commit=project_commit,
             config_root=config_root,
-            evidence_root=evidence_root,
+            evidence_root=paths.evidence_root,
             runner=runner,
         )
         if receipt["environment"].get("torch_version") != hosted["torch_version"]:
@@ -616,12 +744,12 @@ def install_compatibility_cascade(
             raise ValueError("hosted Path A did not preserve the hosted TorchVision version")
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         failures.append({"path": "hosted_current", "error": str(error)[:1000]})
-        path_b_checkout = checkout_root / "mmseg-path-b"
+        path_b_checkout = paths.checkout_root / "mmseg-path-b"
         cleanup_actions.extend(
             repair_owned_path(
-                runtime_root=PATH_B_ROOT,
+                runtime_root=paths.runtime_py311_root,
                 checkout=path_b_checkout,
-                probe=evidence_root / "isolated_py311-five-model-probe",
+                probe=paths.evidence_root / "isolated_py311-five-model-probe",
                 expected_commit=config.commit,
             )
         )
@@ -633,21 +761,22 @@ def install_compatibility_cascade(
                     path_b_checkout,
                     uv_executable=uv_executable,
                     project_root=project_root,
+                    runtime_root=paths.runtime_py311_root,
                 ),
-                interpreter=_python(PATH_B_ROOT),
+                interpreter=_python(paths.runtime_py311_root),
                 checkout=path_b_checkout,
                 config=config,
                 project_root=project_root,
                 project_commit=project_commit,
                 config_root=config_root,
-                evidence_root=evidence_root,
+                evidence_root=paths.evidence_root,
                 runner=runner,
             )
         except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as fallback_error:
             failures.append({"path": "isolated_py311", "error": str(fallback_error)[:1000]})
             status.fail("both compatibility paths failed")
             atomic_write_json(
-                evidence_root / "compatibility_failures.json",
+                paths.evidence_root / "compatibility_failures.json",
                 {
                     "failures": failures,
                     "cleanup_actions": cleanup_actions,
@@ -668,12 +797,13 @@ def install_compatibility_cascade(
                 "bootstrap_commands": bootstrap_receipts,
             },
             "project_commit": project_commit,
+            "runtime_contract": paths.receipt(),
         }
     )
-    package = _evidence_zip(evidence_root, receipt)
+    package = _evidence_zip(paths.evidence_root, receipt)
     receipt["evidence_package"] = package.name
     receipt["evidence_package_sha256"] = sha256_file(package)
-    atomic_write_json(evidence_root / "compatibility_receipt.json", receipt)
+    atomic_write_json(paths.evidence_root / "compatibility_receipt.json", receipt)
     status.complete(last_checkpoint=receipt["five_model_probe"].get("evidence_package"))
     return receipt
 
@@ -684,9 +814,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--project-commit", required=True)
     parser.add_argument("--config-root", type=Path, required=True)
+    parser.add_argument("--runtime-current-root", type=Path, required=True)
+    parser.add_argument("--runtime-py311-root", type=Path, required=True)
     parser.add_argument("--checkout-root", type=Path, required=True)
     parser.add_argument("--evidence-root", type=Path, required=True)
-    parser.add_argument("--log-root", type=Path, default=DEFAULT_LOG_ROOT)
+    parser.add_argument("--log-root", type=Path, required=True)
+    parser.add_argument("--cache-root", type=Path, required=True)
+    parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--execute", action="store_true")
     return parser
 
@@ -694,15 +828,22 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     config = load_semantic_framework_config(args.config)
+    paths = RuntimePathContract(
+        runtime_current_root=args.runtime_current_root,
+        runtime_py311_root=args.runtime_py311_root,
+        checkout_root=args.checkout_root,
+        evidence_root=args.evidence_root,
+        log_root=args.log_root,
+        cache_root=args.cache_root,
+        data_root=args.data_root,
+    ).validated()
     if args.execute:
         result = install_compatibility_cascade(
             args.config,
+            paths=paths,
             project_root=args.project_root,
             project_commit=args.project_commit,
             config_root=args.config_root,
-            checkout_root=args.checkout_root,
-            evidence_root=args.evidence_root,
-            log_root=args.log_root,
         )
     else:
         result = {
@@ -713,20 +854,24 @@ def main() -> int:
                 list(command)
                 for command in build_path_a_commands(
                     config,
-                    args.checkout_root / "mmseg-path-a",
+                    paths.checkout_root / "mmseg-path-a",
                     uv_executable=Path("<resolved-uv>"),
+                    hosted_python=Path(sys.executable),
                     project_root=args.project_root,
+                    runtime_root=paths.runtime_current_root,
                 )
             ],
             "path_b": [
                 list(command)
                 for command in build_path_b_commands(
                     config,
-                    args.checkout_root / "mmseg-path-b",
+                    paths.checkout_root / "mmseg-path-b",
                     uv_executable=Path("<resolved-uv>"),
                     project_root=args.project_root,
+                    runtime_root=paths.runtime_py311_root,
                 )
             ],
+            "runtime_contract": paths.receipt(),
             "executes": False,
         }
     print(canonical_json(result))

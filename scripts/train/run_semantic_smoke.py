@@ -221,7 +221,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-root", type=Path, required=True)
     parser.add_argument("--dataset-manifest", type=Path, required=True)
     parser.add_argument("--split-policy-manifest", type=Path, required=True)
-    parser.add_argument("--run-root", type=Path, default=Path("/content/edgeguard-runs/EG-SEG-002"))
+    parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--drive-root", type=Path, required=True)
     return parser
 
