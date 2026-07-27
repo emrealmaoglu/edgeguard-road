@@ -29,7 +29,7 @@ calibration, training, detector, or deployment claim exists.
 | `EGX-SEG-MEDIUM-{01..03}` | Promoted top three | Approved init; `512×1024` | Equal medium budget; promote top two | Project checkpoint, curves, select metrics, compute record | Early export gate | `planned` |
 | `EGX-SEG-HPO-{A,B}-T*` | Top two on fit/select | Fixed `512×1024` | Limited pruned trials; no official val | Study snapshot, trial configs, compute/failure ledger | Medium ranking | `planned` |
 | `EGX-SEG-FINAL-{01..03}` | Three human-approved final configs | At least one random initialization | Full project-owned run | Final checkpoints, curves, config/data/model hashes | HPO/final config freeze | `planned` |
-| `EGX-SEG-FINAL-CONFIRM-{01..03}` | Three frozen final checkpoints | Optional `1024×2048` evaluation | One official-val confirmation each | Frozen semantic report and evidence package | Final runs | `planned` |
+| `EGX-SEG-FINAL-CONFIRM-{01..03}` | Three frozen final checkpoints | Optional `1024×2048` evaluation | One common official-val evaluation each; not sealed/unseen | Common semantic report and evidence package | Final runs | `planned` |
 | `EGX-SEG-RES-ABL-{512,768}` | Selected semantic model | `512×1024` vs `768×1536` | Controlled aggressive ablation | Accuracy/cost/memory comparison | Model freeze | `planned` |
 
 ## Planned detector, OOD, fusion, and deployment families

@@ -172,7 +172,7 @@ def build_cityscapes_val_manifest(root: Path) -> dict[str, Any]:
         "schema_version": "1.0",
         "record_type": "cityscapes_val_manifest",
         "dataset": "Cityscapes",
-        "dataset_role": "id_validation/semantic_development",
+        "dataset_role": "official_val_common_eval",
         "split": "val",
         "image_count": len(samples),
         "label_count": len(samples),

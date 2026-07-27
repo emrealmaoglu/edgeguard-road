@@ -13,8 +13,13 @@ No OOD performance, threshold, calibration, or anomaly-probability claim is
 made from this Cityscapes ID-development run.
 
 This completed run remains valid historical baseline evidence. Under Master
-Plan V2, official Cityscapes val is reserved for frozen final semantic
-confirmation and must not be reused for per-trial tuning or HPO.
+Plan V2, official Cityscapes val has the forward role
+`official_val_common_eval`: it supports common evaluation of frozen final models
+but is not routine HPO, `train_select`, temperature-fitting data, sealed, or
+previously unseen. This historical artifact record is not rewritten. The active
+config files now carry the corrected role, so they do not claim byte-identical
+reproduction of this run and must produce a new config hash, fingerprint, and run
+ID when executed. The historical config hash below remains unchanged.
 
 ## External evidence identity
 
@@ -33,6 +38,8 @@ confirmation and must not be reused for per-trial tuning or HPO.
 - Run ID: `7505687f-1180-4f27-9ab3-09b50dd81222`
 - Config SHA-256:
   `b576c2445d51b13ea1eab7992ea26d458b3a6ae0d7add5577bef46dbce32f3aa`
+- Checkpoint SHA-256:
+  `b51aa935bdb64a0779d776f38267fd49f7cce59413910abbbf0a74934b3d7c01`
 - Experiment fingerprint:
   `cf09f266564db661f29bcdac74592ed78d38fbfed6ff983d82d12be4621f8b77`
 

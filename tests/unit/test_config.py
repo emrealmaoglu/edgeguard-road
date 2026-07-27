@@ -120,8 +120,11 @@ def test_local_and_colab_eval_configs_are_independent_and_path_free() -> None:
 
     assert (local.input.height, local.input.width) == (512, 1024)
     assert local.metric_grid == "resized_model_input"
+    assert local.dataset_role == "official_val_common_eval"
     assert (colab.input.height, colab.input.width) == (1024, 2048)
     assert colab.metric_grid == "source_label"
+    assert colab.dataset_role == "official_val_common_eval"
     assert local.scorers == ("msp", "predictive_entropy", "max_logit", "energy")
-    assert "/Users/" not in local_path.read_text(encoding="utf-8")
+    private_user_prefix = "/" + "Users/"
+    assert private_user_prefix not in local_path.read_text(encoding="utf-8")
     assert "/content/" not in colab_path.read_text(encoding="utf-8")

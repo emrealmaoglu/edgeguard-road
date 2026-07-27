@@ -2,16 +2,29 @@
 
 ## Dataset roles and leakage
 
+- Every run records ontology version `edgeguard-ontology-v1`; semantic, detection,
+  OOD, and operational-risk IDs remain separate namespaces.
+- Native source labels are preserved until an explicit, versioned mapping is applied.
+  Unlisted BDD100K detection classes fail closed; no label is silently dropped or
+  converted to background.
 - Cityscapes train is inspected before deterministic group-level
   `train_fit`/`train_select`/`train_calibration` candidates are proposed; no fixed
   percentage is assumed in advance.
-- Official Cityscapes val is excluded from per-trial tuning and used only for frozen
-  final semantic confirmation.
+- Official Cityscapes val has role `official_val_common_eval`. It is excluded from
+  routine HPO, `train_select`, and temperature fitting, and is used for common
+  evaluation of frozen final models. It is not sealed or previously unseen; the
+  existing 500-image PIDNet-S result is historical measured baseline evidence.
 - Project synthetic anomaly data trains OOD methods. Fishyscapes Static is OOD
   development/HPO. Full Fishyscapes Lost & Found is a one-time frozen holdout. SMIYC
   is sealed final and unavailable to automated development.
 - Video frames remain in one sequence/group role. Missing labels are never converted
   silently to background.
+
+Private storage is addressed only through the runtime-supplied
+`EDGEGUARD_EXTERNAL_ROOT`, which represents the `EdgeGuard/` project root rather than
+its legacy/current `private_inputs/` child. Committed configs/manifests remain
+root-free, and active Colab training data is staged under `/content` rather than read
+sample-by-sample from mounted Drive.
 
 ## Fair model comparison
 

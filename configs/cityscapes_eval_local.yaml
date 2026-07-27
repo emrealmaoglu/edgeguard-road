@@ -5,7 +5,7 @@ record_schema_version: "1.0"
 pipeline_name: pidnet-s-cityscapes-val-eval
 seed: 20260726
 dataset_name: Cityscapes
-dataset_role: id_validation/semantic_development
+dataset_role: official_val_common_eval
 split: val
 upstream:
   repository_url: https://github.com/XuJiacong/PIDNet.git

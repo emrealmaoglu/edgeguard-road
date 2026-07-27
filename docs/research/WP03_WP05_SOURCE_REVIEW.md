@@ -9,11 +9,12 @@ download data or model artifacts, integrate upstream source, or close a
 scientific gate.
 
 The role matrix below is retained as historical evidence for that first vertical
-slice. Master Plan V2 supersedes future use as follows: official Cityscapes val
-is reserved for frozen final semantic confirmation; Fishyscapes Static is the
-OOD development/HPO source; the complete Fishyscapes Lost & Found validation set
-is a one-time frozen holdout. SMIYC remains sealed final. No historical measured
-result is changed by this migration.
+slice. Master Plan V2 supersedes future use as follows: official Cityscapes val is
+`official_val_common_eval`, excluded from routine HPO, `train_select`, and
+temperature fitting but not sealed or previously unseen; Fishyscapes Static is the
+OOD development/HPO source; the complete Fishyscapes Lost & Found validation set is
+a one-time frozen holdout. SMIYC remains sealed final. No historical measured result
+is changed by this migration.
 
 All sources below were accessed on 2026-07-26. Status labels mean:
 

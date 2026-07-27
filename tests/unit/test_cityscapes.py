@@ -47,6 +47,7 @@ def test_cityscapes_val_discovery_is_sorted_and_root_independent(tmp_path: Path)
     second = build_cityscapes_val_manifest(second_root)
 
     assert first == second
+    assert first["dataset_role"] == "official_val_common_eval"
     assert [sample["sample_id"] for sample in first["samples"]] == [
         "frankfurt_000000_000003",
         "frankfurt_000001_000002",

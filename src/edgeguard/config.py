@@ -218,7 +218,7 @@ class PIDNetEvalConfig(BaseConfig):
     pipeline_name: Literal["pidnet-s-cityscapes-val-eval"]
     seed: int = Field(ge=0, le=2**32 - 1)
     dataset_name: Literal["Cityscapes"]
-    dataset_role: Literal["id_validation/semantic_development"]
+    dataset_role: Literal["official_val_common_eval"]
     split: Literal["val"]
     upstream: PIDNetUpstreamConfig
     checkpoint: PIDNetCheckpointConfig

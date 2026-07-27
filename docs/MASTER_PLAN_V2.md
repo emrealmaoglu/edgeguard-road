@@ -9,7 +9,7 @@ Colab jobs, early export checks, and promotion gates that stop low-value runs.
 
 The largest combined risk is schedule loss from data acquisition, I/O, framework
 compatibility, or export failure discovered too late. The mitigation is to measure the
-pipeline before allocating the full queue, keep Cityscapes val and OOD holdouts frozen,
+pipeline before allocating the full queue, keep Cityscapes val out of tuning and OOD holdouts frozen,
 and separate scientific merit from deployment eligibility.
 
 The existing PIDNet-S/Cityscapes result is the first measured baseline, not evidence
@@ -60,7 +60,7 @@ five-model smoke
 → top-three medium-budget training
 → top-two limited HPO at fixed 512×1024
 → three final project-owned training runs
-→ frozen Cityscapes-val confirmation
+→ common Cityscapes-val evaluation of frozen final models
 ```
 
 - Smoke verifies data, labels, loss, gradients, checkpoints, resume, and evaluator;
@@ -75,8 +75,9 @@ five-model smoke
   model-relevant regularization. Resolution is excluded.
 - Resolution is a separate controlled ablation at `512×1024` and `768×1536`; full
   `1024×2048` is optional evaluation, not a guaranteed training setting.
-- Final confirmation uses frozen configs/checkpoints. Official Cityscapes val is not
-  consulted during trials.
+- Common evaluation uses frozen configs/checkpoints. Official Cityscapes val is not
+  consulted during trials, used as `train_select`, or used for temperature fitting;
+  it is neither sealed nor previously unseen.
 
 ## OOD and calibration program
 
@@ -171,30 +172,47 @@ reliable measurement exists.
 ## Storage and interruption policy
 
 Private Google Drive has approximately 5 TB available; the local M1 Mac has only
-approximately 18 GiB free and must not hold expanded datasets. The compatible logical
-Drive root is:
+approximately 18 GiB free and must not hold expanded datasets. The proposed project
+root is `EdgeGuard/`, supplied at runtime through `EDGEGUARD_EXTERNAL_ROOT`. The
+existing `private_inputs/` directory remains a legacy/current child, not the canonical
+root. The relative child contract is:
 
 ```text
-EdgeGuard/
-  datasets/{archives,extracted,manifests,generated}/
-  checkpoints/{segmentation,detection,ood,depth}/
-  experiments/{segmentation,detection,ood,calibration,deployment}/
-  hpo/
-  exports/{onnx,tensorrt_metadata}/
-  evidence/
-  presentation/
-  thesis/
-  backups/
+private_inputs/
+archives/
+datasets/
+manifests/
+generated/ood/
+checkpoints/segmentation/
+checkpoints/detection/
+checkpoints/ood/
+hpo/
+experiments/segmentation/
+experiments/detection/
+experiments/ood/
+experiments/calibration/
+experiments/deployment/
+exports/onnx/
+evidence/jetson/
+presentation/
+thesis/
+backups/checkpoints/
+backups/experiment_registries/
 ```
 
-Directories are created only by an approved acquisition/experiment task. Absolute
-private roots never enter Git. Canonical archives are immutable and record filename,
-byte size, SHA-256, source, access date, and terms. Extracted data is shared rather
-than duplicated per run. Active data is copied or extracted into
+No directory in this proposal is created by EG-DATA-001. Directories are created only
+by an approved acquisition/experiment task after the root convention is accepted.
+Absolute private roots never enter Git. Canonical archives are immutable and record
+filename, byte size, SHA-256, source, access date, and terms. Extracted data is shared
+rather than duplicated per run. Active data is copied or extracted into
 `/content/edgeguard-work/<run_id>`; results and recovery state sync atomically back to
 Drive with verified hashes. Oversized active data uses deterministic shards only
 after fit/I/O measurement. The Mac is not a large-data relay. Irreplaceable
 checkpoints and experiment registries retain at least one verified backup.
+
+Migration or reuse of files already under `private_inputs/` is decided during
+EG-DATA-002 or the first relevant acquisition task; this plan performs no automatic
+move or copy.
 
 Every expensive job supports new, exact resume, overwrite refusal, identity checks,
 `last`/`best` and bounded recovery checkpoints, and path-free completion summaries.
@@ -252,8 +270,8 @@ EG-FUSION-001 + EG-JETSON-001 → EG-DEMO-001 → EG-THESIS-002
 
 ## Immediate next actions
 
-1. Human reviews and accepts or rejects this documentation migration.
-2. After a separate commit decision, execute `EG-DATA-001 — Storage, access and
-   ontology gate` without downloading data.
-3. Do not start `EG-DATA-002`, framework installation, training, or Drive structure
-   creation until `EG-DATA-001` human gates close.
+1. Human reviews the locally implemented EG-DATA-001 storage and ontology contract.
+2. After a separate commit decision and applicable access approval, execute
+   `EG-DATA-002 — Cityscapes Fine train preparation`.
+3. Do not download/extract train data, install a training framework, start training,
+   or create the proposed Drive hierarchy until the applicable human gates close.

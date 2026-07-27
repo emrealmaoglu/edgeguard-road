@@ -6,7 +6,10 @@
   remotely verified** at Commit D
   `345d9fd1dcff0a7aa9c54c6f3929c2c751c24c7c`.
 - `EG-THESIS-001 — Scope, title and claim migration`: **implemented, locally
-  validated, and accepted for commit; remote CI pending**.
+  validated, committed, pushed, and remotely verified** at
+  `ee4460bda9b518a4e784cd43ad23d043ad15cd7b`.
+- `EG-DATA-001 — Storage, access and ontology gate`: **locally implemented and
+  tested; provisional ontology and storage/access contracts pending human review**.
 - No dataset acquisition, framework installation, training, Jetson mutation, or
   sealed-data access is in progress.
 
@@ -28,12 +31,13 @@ planning ranges until replaced by measurements.
 - **Colab work:** None beyond a future mount/path probe after approval.
 - **Jetson work:** Read-only storage inventory only under a separately authorized
   device task; none here.
-- **Expected outputs:** Reviewed storage map, acquisition queue, ontology table,
-  human-gate ledger, and updated data catalog.
+- **Expected outputs:** Proposed runtime-root storage map, access-decision matrix,
+  versioned machine-readable ontology, human-gate checklist, and updated data catalog.
 - **Tests:** Schema/canonical-hash tests, duplicate/path/root rejection, documentation
   link and secret scans.
-- **Acceptance:** Human freezes ontology, roles, storage convention, and first
-  acquisition; no private absolute root enters Git.
+- **Acceptance:** Local validators/tests pass; then the human freezes ontology,
+  roles, storage convention, and first acquisition. No private absolute root enters
+  Git and no Drive hierarchy is claimed created.
 - **Stop conditions:** Unclear terms, conflicting ontology, unknown Drive convention,
   or request to acquire data before approval.
 - **Fallback:** Keep affected dataset blocked and progress only independent approved
@@ -41,7 +45,7 @@ planning ranges until replaced by measurements.
 - **Compute estimate:** Local CPU under 2 hours; 0 GPU hours.
 - **Storage estimate:** Git under 1 MiB; no dataset storage created.
 - **Commit boundary:** Catalog/schema/documentation/tests only; no downloads.
-- **Next task:** `EG-DATA-002` and `EG-COMPUTE-001` after their gates.
+- **Next task:** `EG-DATA-002` after its Cityscapes access and human-review gates.
 
 ### EG-DATA-002 — Cityscapes Fine train preparation
 
@@ -243,22 +247,24 @@ planning ranges until replaced by measurements.
 ### EG-SEG-006 — Three final semantic runs
 
 - **Objective:** Produce three frozen project-owned final checkpoints, including at
-  least one random-initialization training run, then perform one official-val
-  confirmation per checkpoint.
+  least one random-initialization training run, then perform one common official-val
+  evaluation per checkpoint.
 - **Dependencies:** `EG-SEG-005`, human final config/init freeze.
 - **Human inputs:** Three final configs, random-init assignment, confirmation gate.
 - **Local work:** Preflight identities and post-run artifact verification.
-- **Colab work:** Three full interruption-safe runs and frozen Cityscapes-val
-  confirmation after training completes.
+- **Colab work:** Three full interruption-safe runs and common Cityscapes-val
+  evaluation from frozen configs/checkpoints after training completes.
 - **Jetson work:** None until final export.
 - **Expected outputs:** Three checkpoints/curves, confirmation metrics, compute/failure
   ledger, final semantic model decision.
 - **Tests:** Exact config/data/init identity, resume, checkpoint hashes, evaluator and
   official-val non-leakage audit.
-- **Acceptance:** Human accepts three complete runs and selects scientific/deployment
-  candidates without mixing training stages.
-- **Stop conditions:** Official val accessed before freeze, missing random-init run,
-  incomplete recovery evidence, or corrupted artifact.
+- **Acceptance:** Human accepts three complete runs, verifies that official val was
+  excluded from HPO, `train_select`, and temperature fitting, and selects
+  scientific/deployment candidates without mixing training stages.
+- **Stop conditions:** Official val influences model selection/calibration, the
+  random-init run is missing, recovery evidence is incomplete, or an artifact is
+  corrupted.
 - **Fallback:** Resume exact run; replace a failed final only by human decision.
 - **Compute estimate:** 18–30 GPU hours.
 - **Storage estimate:** 100–250 GiB Drive plus verified backup.

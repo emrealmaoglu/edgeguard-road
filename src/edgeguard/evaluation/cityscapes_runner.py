@@ -398,7 +398,7 @@ def run_cityscapes_evaluation(
         "schema_version": "1.0",
         "record_type": "cityscapes_eval_run_metadata",
         "evaluation_name": "EdgeGuard-Road single-scale PIDNet-S Cityscapes-val evaluation",
-        "claim_scope": "id_semantic_development_and_score_summary_only",
+        "claim_scope": "id_common_evaluation_and_score_summary_only",
         "run_id": run_id,
         "created_at": created_at.isoformat(),
         "command": ["python", "scripts/run_cityscapes_eval.py"],
@@ -495,7 +495,12 @@ def run_cityscapes_evaluation(
         files=file_hashes,
         created_at=created_at,
         created_by="edgeguard-road",
-        notes="Single-scale Cityscapes-val development evaluation; no OOD or probability claim.",
+        notes=" ".join(
+            (
+                "Single-scale Cityscapes-val common evaluation;",
+                "no sealed, OOD, or probability claim.",
+            )
+        ),
     )
     _write_json(output_dir / "artifact_manifest.json", artifact_manifest)
     return {

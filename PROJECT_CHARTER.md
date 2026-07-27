@@ -73,7 +73,9 @@ privileged Jetson operations.
 - No measurement or scientific result may be invented.
 - Train, select, calibration, development, holdout, and sealed-final roles remain
   disjoint; video data is split by group/sequence.
-- Cityscapes official validation is reserved for frozen final semantic confirmation.
+- Cityscapes official validation supports common evaluation of frozen final models;
+  it is excluded from routine HPO, `train_select`, and temperature fitting but is
+  not sealed or previously unseen.
 - Project synthetic anomalies train OOD methods; Fishyscapes Static supports
   development/HPO; full Lost & Found is a one-time frozen holdout; SMIYC remains
   sealed final.
