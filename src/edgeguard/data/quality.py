@@ -101,7 +101,7 @@ def audit_semantic_samples(samples: tuple[SemanticSample, ...]) -> dict[str, Any
         presence_counts += (counts > 0).astype(np.uint64)
         ignored += int(np.count_nonzero(~valid))
         total += int(valid.size)
-        resolutions.append(sample.train_ids.shape)
+        resolutions.append((int(sample.train_ids.shape[0]), int(sample.train_ids.shape[1])))
         height, width = sample.train_ids.shape
         for y_bin in range(4):
             for x_bin in range(4):

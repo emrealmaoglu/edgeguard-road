@@ -54,3 +54,7 @@ pretty = true
 show_error_codes = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["mmengine.*", "mmseg.*", "streamlit", "transformers.*", "ultralytics.*"]
+ignore_missing_imports = true

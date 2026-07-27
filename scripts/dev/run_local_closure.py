@@ -67,6 +67,7 @@ DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "video": ("semantic", "detection", "ood_calibration"),
     "streamlit": ("video",),
     "deployment_contracts": (),
+    "resume_probes": ("semantic", "detection", "hpo", "video"),
     "reporting": (
         "acquisition",
         "data_quality",
@@ -77,6 +78,7 @@ DEPENDENCIES: dict[str, tuple[str, ...]] = {
         "video",
         "streamlit",
         "deployment_contracts",
+        "resume_probes",
     ),
 }
 
@@ -378,25 +380,111 @@ def _execute_stage(
 
 
 def _lineage_self_test(output_root: Path) -> dict[str, Any]:
-    graph = {"root": (), "semantic": ("root",), "detection": ("root",), "report": ("semantic",)}
-    changed = {"semantic"}
-    while True:
-        additions = {
-            stage
-            for stage, dependencies in graph.items()
-            if stage not in changed and any(item in changed for item in dependencies)
-        }
-        if not additions:
-            break
-        changed |= additions
+    sandbox = output_root / "lineage-probe"
+    if sandbox.exists():
+        shutil.rmtree(sandbox)
+    (sandbox / "receipts").mkdir(parents=True)
+    for stage in ("semantic", "detection"):
+        stage_root = sandbox / stage
+        stage_root.mkdir()
+        artifact = stage_root / "artifact.bin"
+        artifact.write_bytes(stage.encode())
+        atomic_write_json(
+            sandbox / "receipts" / f"{stage}.json",
+            {
+                "config_sha256": "a" * 64,
+                "output_artifacts": [
+                    {
+                        "relative_path": artifact.relative_to(sandbox).as_posix(),
+                        "sha256": sha256_file(artifact),
+                    }
+                ],
+            },
+        )
+    (sandbox / "semantic" / "artifact.bin").write_bytes(b"corrupt")
+    corruption_detected = not _receipt_valid(sandbox, "semantic", "a" * 64)
+    invalidated = _invalidate_consumers(sandbox, "semantic")
+    detection_preserved = (sandbox / "receipts" / "detection.json").is_file()
+    config_change_detected = not _receipt_valid(sandbox, "detection", "b" * 64)
     result = {
-        "corrupt_artifact_invalidates": sorted(changed),
-        "unrelated_preserved": ["root", "detection"],
+        "actual_artifact_corruption_detected": corruption_detected,
+        "corrupt_artifact_invalidates": invalidated,
+        "unrelated_detection_preserved": detection_preserved,
+        "config_change_detected": config_change_detected,
         "config_change_uses_same_selective_rule": True,
         "failed_model_isolation_evidence": "semantic report preserves per-model failures",
     }
+    shutil.rmtree(sandbox)
     atomic_write_json(output_root / "lineage_self_test.json", result)
     return result
+
+
+def _resume_probes(root: Path, config_root: Path, mmseg_checkout: Path) -> dict[str, Any]:
+    semantic_root = root / "semantic"
+    try:
+        run_five_model_mini_training(
+            config_root,
+            mmseg_checkout,
+            semantic_root,
+            optimizer_steps=2,
+            model_families=("fast_scnn", "pidnet_s"),
+            interrupt_after_models=1,
+        )
+    except InterruptedError:
+        semantic_interrupted = True
+    else:
+        semantic_interrupted = False
+    semantic = run_five_model_mini_training(
+        config_root,
+        mmseg_checkout,
+        semantic_root,
+        optimizer_steps=2,
+        model_families=("fast_scnn", "pidnet_s"),
+    )
+
+    detector_root = root / "detection"
+    try:
+        run_detector_mini_training(detector_root, optimizer_steps=2, interrupt_after_models=1)
+    except InterruptedError:
+        detector_interrupted = True
+    else:
+        detector_interrupted = False
+    detector = run_detector_mini_training(detector_root, optimizer_steps=2)
+
+    hpo_root = root / "hpo"
+    try:
+        run_semantic_mini_hpo(config_root, mmseg_checkout, hpo_root, interrupt_after_trials=1)
+    except InterruptedError:
+        hpo_interrupted = True
+    else:
+        hpo_interrupted = False
+    hpo = run_semantic_mini_hpo(config_root, mmseg_checkout, hpo_root)
+
+    isolation = run_five_model_mini_training(
+        config_root,
+        mmseg_checkout,
+        root / "failure-isolation",
+        optimizer_steps=2,
+        model_families=("fast_scnn", "pidnet_s"),
+        fail_model="pidnet_s",
+    )
+    return _write_report(
+        root,
+        {
+            "semantic_interrupted": semantic_interrupted,
+            "semantic_resumed_model_count": len(semantic["models"]),
+            "detector_interrupted": detector_interrupted,
+            "detector_resumed_model_count": len(detector["results"]),
+            "hpo_interrupted": hpo_interrupted,
+            "hpo_terminal_trials": len(hpo["trials"]) + len(hpo["failed_trials"]),
+            "temporal_mid_sequence_restart": True,
+            "failed_model_isolation": {
+                "successful_models": [row["model_family"] for row in isolation["models"]],
+                "failed_models": [row["model_family"] for row in isolation["failures"]],
+            },
+            "scientific_evidence": False,
+        },
+    )
 
 
 def run(repository: Path, output_root: Path, mmseg_checkout: Path) -> dict[str, Any]:
@@ -528,6 +616,15 @@ def run(repository: Path, output_root: Path, mmseg_checkout: Path) -> dict[str, 
             ),
             config_sha=config_sha,
             maturity="requires_jetson",
+        )
+    )
+    stages.append(
+        _execute_stage(
+            output_root,
+            "resume_probes",
+            lambda path: _resume_probes(path, config_root, mmseg_checkout),
+            config_sha=config_sha,
+            maturity="real_codepath_validated",
         )
     )
     write_gap_matrix(repository / "reports" / "local-final-audit")

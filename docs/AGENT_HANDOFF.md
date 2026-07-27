@@ -1,52 +1,37 @@
 # Agent Handoff
 
-- **Task:** Autonomous local-first campaign, cross-notebook handoff, review reporting,
-  and deterministic thesis-figure generation.
+- **Milestone:** `EG-LOCAL-COMPLETE`.
 - **Branch:** `feat/first-vertical-slice`.
-- **Executable evidence commit:** `add61f7703110e3a901976ceda8a89139cafa7bb`.
-- **Classification:** All new campaign measurements are
-  `NON-SCIENTIFIC PIPELINE VALIDATION`.
+- **Classification:** `NON-SCIENTIFIC PIPELINE VALIDATION`.
 
-## Completed local gates
+## Completed local evidence
 
-- Clean local-mini campaign: 19/19 stages completed.
-- Idempotent rerun: 19 reused, 0 executed.
-- Interruption recovery: `semantic_smoke` failed by bounded injection, then completed
-  on attempt 2 with the compatible recovery identity.
-- Notebook handoff: all five thin wrappers executed over one campaign state.
-- Mac five-model probe: 5/5 random-weight MMSeg CPU forward/backward and exact
-  checkpoint-resume paths passed; no ranking is permitted.
-- Local ONNX/ORT surrogate probe: 5/5 passed checker and numerical comparison. The
-  surrogate result does not establish production-architecture exportability.
-- Assistant pack:
-  `.local/edgeguard-campaign-final-add61f7/reports/edgeguard-review-eg-local-mini-add61f7-report_generation.zip`.
-- Thesis figures:
-  `.local/edgeguard-campaign-final-add61f7/reports/edgeguard-thesis-figures-eg-local-mini-add61f7.zip`.
-- Local cache growth: 30680 KiB.
+- 5/5 actual random-weight MMSeg architectures: mini train, validation, feature tap, anomaly head, checkpoint and exact resume.
+- 5/5 actual semantic ONNX graphs: checker and ONNX Runtime comparison.
+- 2/2 actual detector families: mini train, decoding, checkpoint/resume, common contract and ONNX comparison.
+- Actual interruption/restart probes: semantic, detector, HPO, and temporal all pass; one injected semantic-model and one detector-frame failure remain isolated.
+- OOD/calibration: four scores, AUROC/AP/FPR95, threshold-policy records, per-source metrics, bootstrap, components, temperature, NLL/ECE/Brier.
+- Data lifecycle: resumable HTTP Range, retry, size/hash rejection, URL redaction, atomic promotion, generator resume, multi-artifact readiness, and slow destination copy.
+- Six-frame actual-codepath synthetic video and Streamlit headless smoke pass.
+- `EG-LOCAL-COMPLETE` first run completed every stage and its second run reused every stage after hash verification.
+- Full local quality gate: Ruff lint/format, mypy, 328 passed and 2 optional skipped pytest tests.
 
-## Cross-platform continuation
+## Review artifacts
 
-The notebook sequence is:
+- `.local/EG-LOCAL-COMPLETE/reporting/assistant-review.zip`
+- `.local/EG-LOCAL-COMPLETE/reporting/thesis-figures.zip`
+- `.local/EG-LOCAL-COMPLETE/reporting/data-lifecycle-audit.zip`
+- `.local/EG-LOCAL-COMPLETE/reporting/colab-readiness.zip`
+- `reports/local-final-audit/project_gap_matrix.json`
+- `reports/local-final-audit/CODEX_INDEPENDENT_CRITIQUE.md`
 
-1. `notebooks/colab/00_campaign_control.ipynb`
-2. `notebooks/colab/10_semantic_campaign.ipynb`
-3. `notebooks/colab/20_ood_calibration_risk.ipynb`
-4. `notebooks/colab/30_detection_temporal_fusion.ipynb`
-5. `notebooks/colab/40_export_and_reporting.ipynb`
+## Remaining external boundaries
 
-Every wrapper requires an exact 40-character project commit, verifies prior artifacts,
-displays the plan, resumes only compatible state, and emits an assistant review pack.
-No scientific implementation exists only in notebook cells.
+- Real dataset manifests, class frequencies, selected split identity, and acquisition evidence require approved private data.
+- Scientific semantic/detection/OOD/calibration measurements require the frozen roles and real Colab campaign.
+- CUDA throughput, production/pretrained export comparison, and TensorRT parser checks require the appropriate runtime.
+- Jetson numerical, sustained latency, memory, power, thermal and throttling evidence requires the approved device.
+- Lost & Found remains a one-time frozen holdout; SMIYC remains sealed final.
 
-## Remaining platform-only checks
-
-- Run the real Colab campaign only after approved dataset/checkpoint identities and an
-  exact clean commit are supplied.
-- Replace local surrogate export evidence with per-production-model ONNX numerical
-  evidence; preserve any failed export as results-only evidence.
-- Build TensorRT engines only on the approved Jetson and run sustained numerical,
-  latency, memory, power, and thermal checks under separate authorization.
-- Do not open full Lost & Found or SMIYC without their existing human gates.
-
-No real data, weight, Drive, Colab, Jetson, or sealed-set operation occurred in this
-campaign. Synthetic metrics must not enter thesis performance tables.
+Do not treat random-weight fixture metrics as model quality. Do not assign Jetson profiles,
+promote HPO trials, freeze thresholds, or make thesis claims without human review.

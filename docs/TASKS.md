@@ -15,10 +15,14 @@
   `9d269c35f0adc08be193ec3ee50b7c505c485fae`; measured A/B/C candidates are rejected
   and the real diversity-policy D/E split-only rebuild is pending**.
 - `EG-SEG-001 — Pinned semantic training laboratory`: **repository implementation
-  and local dependency-free validation complete; Colab framework probe and human
+  and actual local CPU five-model validation complete; Colab framework probe and human
   framework acceptance pending**.
-- No real dataset processing, training-framework installation, scientific model
-  training, Jetson mutation, or sealed-data access is in progress.
+- `EG-LOCAL-COMPLETE — Comprehensive local closure`: **all locally executable fixture,
+  real random-weight architecture, export, detector, anomaly, OOD/calibration, HPO,
+  video, UI, lineage and reporting paths completed; remote CI/Linux verification
+  pending on the final revision**.
+- No real dataset processing, scientific model training, Jetson mutation, or sealed-data
+  access is in progress. The next work is external-data/platform gated `EG-SEG-002`.
 
 Each task below is a commit-sized human-gated unit. Compute and storage values are
 planning ranges until replaced by measurements.

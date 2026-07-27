@@ -20,7 +20,7 @@ jobs:
   linux-cpu-probe:
     name: Linux x86 CPU five-model probe
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,6 +39,9 @@ jobs:
             termcolor==3.1.0 tqdm==4.67.1 yapf==0.43.0 \
             matplotlib==3.10.5 scipy==1.16.1 terminaltables==3.1.10
           python -m pip install ftfy==6.3.1 regex==2024.11.6
+          python -m pip install \
+            onnx==1.18.0 onnxruntime==1.22.1 onnxscript==0.7.1 \
+            ultralytics==8.3.175 transformers==4.53.2 streamlit==1.47.1
       - name: Checkout pinned MMSegmentation
         run: |
           git clone --filter=blob:none --no-checkout \
@@ -52,11 +55,20 @@ jobs:
             --workspace-root .local/linux-cpu-readiness \
             --profile linux-cpu \
             --mmseg-checkout /tmp/mmsegmentation
+      - name: Run comprehensive real-codepath local closure
+        run: |
+          python scripts/dev/run_local_closure.py \
+            --repository-root . \
+            --output-root .local/linux-cpu-closure \
+            --mmseg-checkout /tmp/mmsegmentation
       - name: Upload readiness evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: semantic-framework-linux-cpu-evidence
-          path: .local/linux-cpu-readiness/evidence/
+          path: |
+            .local/linux-cpu-readiness/evidence/
+            .local/linux-cpu-closure/campaign_summary.json
+            .local/linux-cpu-closure/reporting/*.zip
           if-no-files-found: error
           retention-days: 14

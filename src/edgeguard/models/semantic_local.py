@@ -65,9 +65,9 @@ def _strip_pretrained(value: Any) -> None:
 
 def _build_model(spec: Any, mmseg_checkout: Path, torch: Any) -> Any:
     _install_mmcv_lite_guard()
-    from mmengine.config import Config  # type: ignore[import-untyped]
-    from mmseg.registry import MODELS  # type: ignore[import-not-found]
-    from mmseg.utils import register_all_modules  # type: ignore[import-not-found]
+    from mmengine.config import Config
+    from mmseg.registry import MODELS
+    from mmseg.utils import register_all_modules
 
     register_all_modules(init_default_scope=True)
     config_path = mmseg_checkout / spec.mmseg_config_relative_path
@@ -141,6 +141,7 @@ def run_five_model_mini_training(
     learning_rate: float = 0.001,
     weight_decay: float = 0.0,
     optimizer_name: str = "sgd",
+    interrupt_after_models: int | None = None,
 ) -> dict[str, Any]:
     """Train all five real random-weight MMSeg architectures for bounded CPU steps."""
     if optimizer_steps < 2 or optimizer_steps > 5:
@@ -148,10 +149,8 @@ def run_five_model_mini_training(
     if learning_rate <= 0 or weight_decay < 0 or optimizer_name not in {"sgd", "adamw"}:
         raise ValueError("semantic mini optimizer parameters are invalid")
     torch = __import__("torch")
-    output_root.mkdir(parents=True, exist_ok=False)
+    output_root.mkdir(parents=True, exist_ok=True)
     framework_commit = load_semantic_framework_config(config_root / "framework_mmseg.yaml").commit
-    results: list[dict[str, Any]] = []
-    failures: list[dict[str, str]] = []
     suite = load_semantic_model_suite(config_root)
     selected = (
         tuple(spec for spec in suite if spec.model_family.value in model_families)
@@ -160,9 +159,36 @@ def run_five_model_mini_training(
     )
     if not selected or (model_families is not None and len(selected) != len(set(model_families))):
         raise ValueError("semantic mini model selection is empty or contains unknown families")
+    run_identity = sha256_payload(
+        {
+            "models": [spec.model_family.value for spec in selected],
+            "optimizer_steps": optimizer_steps,
+            "optimizer": optimizer_name,
+            "learning_rate": learning_rate,
+            "weight_decay": weight_decay,
+            "framework_commit": framework_commit,
+        }
+    )
+    state_path = output_root / "mini_training_state.json"
+    if state_path.is_file():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if state.get("run_identity") != run_identity:
+            raise ValueError("semantic mini resume identity mismatch")
+    else:
+        state = {"run_identity": run_identity, "completed_models": []}
+    completed = set(state["completed_models"])
+    results: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+    executed = 0
     for model_index, spec in enumerate(selected):
         name = spec.model_family.value
         model_root = output_root / name
+        result_path = model_root / "result.json"
+        if name in completed:
+            if not result_path.is_file():
+                raise ValueError("completed semantic mini model is missing its result")
+            results.append(json.loads(result_path.read_text(encoding="utf-8")))
+            continue
         model_root.mkdir()
         try:
             if fail_model == name:
@@ -338,6 +364,17 @@ def run_five_model_mini_training(
                 json.dumps(results[-1], sort_keys=True, separators=(",", ":")) + "\n",
                 encoding="utf-8",
             )
+            completed.add(name)
+            state["completed_models"] = sorted(completed)
+            state_path.write_text(
+                json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            executed += 1
+            if interrupt_after_models is not None and executed >= interrupt_after_models:
+                raise InterruptedError("bounded semantic campaign interruption injection")
+        except InterruptedError:
+            raise
         except Exception as error:
             failures.append(
                 {

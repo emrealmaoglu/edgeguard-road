@@ -36,7 +36,7 @@ def run_synthetic_video_pipeline(
     if not 5 <= frame_count <= 10:
         raise ValueError("synthetic video validation requires 5..10 frames")
     torch = __import__("torch")
-    from ultralytics.utils.ops import non_max_suppression  # type: ignore[import-untyped]
+    from ultralytics.utils.ops import non_max_suppression
 
     output_root.mkdir(parents=True, exist_ok=False)
     overlay_root = output_root / "overlays"

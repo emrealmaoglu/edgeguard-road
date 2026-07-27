@@ -49,8 +49,8 @@ def _checkpoint_round_trip(
 
 
 def _build_yolo(torch: Any) -> Any:
-    from ultralytics.cfg import get_cfg  # type: ignore[import-untyped]
-    from ultralytics.nn.tasks import DetectionModel  # type: ignore[import-untyped]
+    from ultralytics.cfg import get_cfg
+    from ultralytics.nn.tasks import DetectionModel
 
     model = DetectionModel("yolo11n.yaml", ch=3, nc=10, verbose=False)
     model.args = get_cfg()
@@ -115,7 +115,7 @@ def _common_predictions(
 
 
 def _run_yolo(output_root: Path, torch: Any, optimizer_steps: int) -> dict[str, Any]:
-    from ultralytics.utils.ops import non_max_suppression  # type: ignore[import-untyped]
+    from ultralytics.utils.ops import non_max_suppression
 
     torch.manual_seed(20260727)
     model = _build_yolo(torch).train()
@@ -256,17 +256,68 @@ def _run_rtdetr(output_root: Path, torch: Any, optimizer_steps: int) -> dict[str
     }
 
 
-def run_detector_mini_training(output_root: Path, *, optimizer_steps: int = 2) -> dict[str, Any]:
+def run_detector_mini_training(
+    output_root: Path,
+    *,
+    optimizer_steps: int = 2,
+    interrupt_after_models: int | None = None,
+) -> dict[str, Any]:
     """Run two actual weight-free detector mini-training and resume paths."""
     if not 2 <= optimizer_steps <= 5:
         raise ValueError("detector mini training requires 2..5 optimizer steps")
+    return _run_detector_campaign(
+        output_root,
+        optimizer_steps=optimizer_steps,
+        interrupt_after_models=interrupt_after_models,
+    )
+
+
+def _run_detector_campaign(
+    output_root: Path,
+    *,
+    optimizer_steps: int = 2,
+    interrupt_after_models: int | None = None,
+) -> dict[str, Any]:
+    """Run/restart the detector campaign at model boundaries."""
     torch = __import__("torch")
-    output_root.mkdir(parents=True, exist_ok=False)
+    output_root.mkdir(parents=True, exist_ok=True)
+    identity = sha256_payload({"models": ["yolo11n", "rt_detr_r18"], "steps": optimizer_steps})
+    state_path = output_root / "mini_training_state.json"
+    if state_path.is_file():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if state.get("run_identity") != identity:
+            raise ValueError("detector mini resume identity mismatch")
+    else:
+        state = {"run_identity": identity, "completed_models": []}
+    completed = set(state["completed_models"])
     results: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
+    executed = 0
     for name, operation in (("yolo11n", _run_yolo), ("rt_detr_r18", _run_rtdetr)):
+        result_path = output_root / f"{name}.result.json"
+        if name in completed:
+            if not result_path.is_file():
+                raise ValueError("completed detector mini model is missing its result")
+            results.append(json.loads(result_path.read_text(encoding="utf-8")))
+            continue
         try:
-            results.append(operation(output_root, torch, optimizer_steps))
+            result = operation(output_root, torch, optimizer_steps)
+            results.append(result)
+            result_path.write_text(
+                json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            completed.add(name)
+            state["completed_models"] = sorted(completed)
+            state_path.write_text(
+                json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            executed += 1
+            if interrupt_after_models is not None and executed >= interrupt_after_models:
+                raise InterruptedError("bounded detector campaign interruption injection")
+        except InterruptedError:
+            raise
         except Exception as error:
             failures.append(
                 {
