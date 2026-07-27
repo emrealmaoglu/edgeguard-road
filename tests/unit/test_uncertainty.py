@@ -10,6 +10,7 @@ from edgeguard.scoring.uncertainty import (
     predictive_entropy,
     semantic_mask,
     stable_softmax,
+    uncertainty_score_contract,
 )
 
 
@@ -89,3 +90,76 @@ def test_energy_rejects_invalid_temperature(temperature: float) -> None:
 
     with pytest.raises(ValueError, match="positive finite"):
         energy_anomaly_score(logits, temperature=temperature)
+
+
+@pytest.mark.parametrize(
+    "logits, expected",
+    [
+        (np.zeros((2, 3, 4), dtype=np.float32), "rank 4"),
+        (np.zeros((1, 0, 2, 2), dtype=np.float32), "positive"),
+        (np.full((1, 2, 1, 1), np.nan, dtype=np.float32), "finite"),
+        (np.full((1, 2, 1, 1), np.inf, dtype=np.float32), "finite"),
+    ],
+)
+def test_scoring_rejects_invalid_layout_and_nonfinite_values(
+    logits: np.ndarray, expected: str
+) -> None:
+    with pytest.raises(ValueError, match=expected):
+        msp_anomaly_score(logits)
+
+
+def test_scoring_accepts_float64_and_entropy_respects_class_bound() -> None:
+    logits = np.zeros((2, 5, 3, 4), dtype=np.float64)
+
+    entropy = predictive_entropy(logits)
+
+    assert entropy.shape == (2, 3, 4)
+    assert np.isfinite(entropy).all()
+    assert np.all(entropy >= 0.0)
+    assert np.all(entropy <= np.log(5.0) + 1.0e-12)
+
+
+def test_all_scores_point_toward_obviously_uncertain_example() -> None:
+    confident = np.array([[[[10.0]], [[0.0]], [[-1.0]]]], dtype=np.float32)
+    uncertain = np.full((1, 3, 1, 1), -2.0, dtype=np.float32)
+
+    for scorer in (
+        msp_anomaly_score,
+        predictive_entropy,
+        max_logit_anomaly_score,
+        energy_anomaly_score,
+    ):
+        assert float(scorer(uncertain).item()) > float(scorer(confident).item())
+
+
+def test_scoring_contract_rejects_probability_and_cross_method_normalization_claims() -> None:
+    contract = uncertainty_score_contract()
+
+    assert contract["calibrated_anomaly_probability"] is False
+    assert contract["normalization_across_methods"] == "none"
+    assert all(method["anomaly_probability"] is False for method in contract["methods"].values())
+
+
+def test_torch_cpu_scoring_preserves_layout_and_stays_finite() -> None:
+    torch = pytest.importorskip("torch")
+    logits = torch.tensor(
+        [[[[2.0, 0.0]], [[0.0, 0.0]], [[-1.0, 0.0]]]],
+        dtype=torch.float32,
+        device="cpu",
+    )
+
+    probabilities = stable_softmax(logits)
+    scores = (
+        msp_anomaly_score(logits),
+        predictive_entropy(logits),
+        max_logit_anomaly_score(logits),
+        energy_anomaly_score(logits, temperature=1.5),
+    )
+
+    assert tuple(probabilities.shape) == (1, 3, 1, 2)
+    assert probabilities.device.type == "cpu"
+    assert semantic_mask(logits).dtype == torch.int64
+    for score in scores:
+        assert tuple(score.shape) == (1, 1, 2)
+        assert score.device.type == "cpu"
+        assert bool(torch.isfinite(score).all().item())

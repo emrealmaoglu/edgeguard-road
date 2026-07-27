@@ -1,22 +1,20 @@
 # Agent Handoff
 
-- **Task:** Local-first Colab readiness gate
-- **Branch/base:** `feat/first-vertical-slice` at task-start commit
-  `f9b489338517e32dcabe0110614993f046af43ed`
-- **Repository result:** Implemented and locally tested; remote CI and manual Linux CPU
-  verification pending
+- **Task:** Local OOD uncertainty scoring and semantic calibration foundation
+- **Branch/base:** `feat/first-vertical-slice` after operational CI commit
+  `ee2a292e00d0d14711163ba037b4a35dacd1f0d1`
+- **Repository result:** Bounded CPU-only implementation and local validation complete;
+  scientific commit and remote verification pending
 - **No scientific result claimed:** Only synthetic, random-weight compatibility probes
   ran. No Drive data, real Cityscapes sample, pretrained weight, training campaign or
   accelerator performance measurement was used.
 
 ## Colab execution
 
-Do not open Colab yet. First push the single local-first commit, pass normal Python
-3.10/3.11 CI, and manually pass `.github/workflows/semantic-framework-cpu-probe.yml`.
-After those gates, `notebooks/colab/04_colab_semantic_compatibility_probe.ipynb` runs
-only the clean compatibility install and five synthetic CUDA probes. It does not mount
-Drive. `notebooks/colab/05_semantic_five_model_smoke.ipynb` accepts only a successful
-same-runtime compatibility receipt before it may mount Drive or stage data.
+The operational workflow activation passed normal Python 3.10/3.11 CI and Linux x86
+Python 3.12 five-model CPU run `30275255124`. Do not open or use Colab in this task.
+The future compatibility-only notebook remains separate from the Drive-backed smoke
+notebook, and the latter still requires a successful same-runtime receipt.
 
 Persistent outputs are external to Git:
 
@@ -37,6 +35,13 @@ path-sanitized evidence ZIP. The real Mac CPU probe constructed all five pinned 
 models and verified finite forward/backward plus model/optimizer/scheduler resume for
 each. The storage inventory is read-only; the empty local check predicted zero
 Cityscapes download bytes and correctly blocked on missing verified private assets.
+
+The new OOD/calibration command uses six deterministic synthetic fixture masks and
+produces only four small JSON records plus a deterministic ZIP. Temperature fitting is
+bounded in log space, preserves input logits, fails on an empty valid region, and
+records before/after NLL. Calibration outputs describe semantic class confidence;
+MSP, entropy, MaxLogit and Energy remain uncertainty/OOD scores, not anomaly
+probabilities.
 
 Do not access official Cityscapes val, full Fishyscapes Lost & Found or either SMIYC
 set in this milestone. Do not infer training quality from compatibility smoke results.
