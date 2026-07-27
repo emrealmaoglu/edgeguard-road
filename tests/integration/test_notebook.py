@@ -13,6 +13,13 @@ SEMANTIC_STACK_NOTEBOOK = REPO_ROOT / "notebooks/colab/04_colab_semantic_compati
 SEMANTIC_SMOKE_NOTEBOOK = REPO_ROOT / "notebooks/colab/05_semantic_five_model_smoke.ipynb"
 ACQUISITION_NOTEBOOK = REPO_ROOT / "notebooks/colab/06_acquire_edgeguard_datasets.ipynb"
 PIDNET_RUNNER = REPO_ROOT / "scripts/run_pidnet_spike.py"
+CANONICAL_NOTEBOOKS = {
+    "00_campaign_control.ipynb",
+    "10_semantic_campaign.ipynb",
+    "20_ood_calibration_risk.ipynb",
+    "30_detection_temporal_fusion.ipynb",
+    "40_export_and_reporting.ipynb",
+}
 
 
 def test_notebook_is_valid_thin_wrapper_without_secret_markers() -> None:
@@ -28,6 +35,21 @@ def test_notebook_is_valid_thin_wrapper_without_secret_markers() -> None:
     assert "pytest -q" in source
     for prohibited in ("api_key", "password=", "token=", "credential="):
         assert prohibited not in source
+
+
+def test_only_canonical_campaign_notebooks_are_active() -> None:
+    active: set[str] = set()
+    deprecated: set[str] = set()
+    for path in (REPO_ROOT / "notebooks/colab").glob("*.ipynb"):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        first_markdown = next(cell for cell in payload["cells"] if cell["cell_type"] == "markdown")
+        source = "".join(first_markdown["source"])
+        if "DEPRECATED — NON-CANONICAL" in source:
+            deprecated.add(path.name)
+        else:
+            active.add(path.name)
+    assert active == CANONICAL_NOTEBOOKS
+    assert len(deprecated) == 7
 
 
 def test_pidnet_notebook_is_valid_execution_only_wrapper() -> None:

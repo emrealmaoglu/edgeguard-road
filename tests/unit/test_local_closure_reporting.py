@@ -24,6 +24,8 @@ def test_gap_matrix_has_all_capabilities_and_complete_fields(tmp_path: Path) -> 
         for row in payload["records"]
     )
     assert "NON-SCIENTIFIC" in (tmp_path / "project_gap_matrix.md").read_text()
+    deployment = next(row for row in payload["records"] if row["capability_id"] == "EG-CAP-24")
+    assert deployment["after"]["maturity"] == "local_end_to_end_validated"
 
 
 def test_closure_packages_are_small_sanitized_and_parseable(tmp_path: Path) -> None:

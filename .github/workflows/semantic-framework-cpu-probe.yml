@@ -66,6 +66,13 @@ jobs:
           python scripts/dev/run_onnx_equivalence.py \
             --mmseg-checkout /tmp/mmsegmentation \
             --output-root .local/linux-onnx-equivalence
+      - name: Build and verify pre-Colab deployment evidence
+        run: |
+          python scripts/dev/run_precolab_stabilization.py \
+            --expected-commit "$(git rev-parse HEAD)" \
+            --closure-root .local/linux-cpu-closure \
+            --equivalence-report .local/linux-onnx-equivalence/report.json \
+            --output-root .local/linux-precolab
       - name: Upload readiness evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -76,5 +83,7 @@ jobs:
             .local/linux-cpu-closure/campaign_summary.json
             .local/linux-cpu-closure/reporting/*.zip
             .local/linux-onnx-equivalence/report.json
+            .local/linux-precolab/*.zip
+            .local/linux-precolab/precolab-readiness.json
           if-no-files-found: error
           retention-days: 14

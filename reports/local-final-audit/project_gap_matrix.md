@@ -27,7 +27,7 @@
 | EG-CAP-21 | statistical evaluation | contract_only | local_end_to_end_validated | human scientific review |
 | EG-CAP-22 | error analysis | contract_only | real_codepath_validated | human scientific review |
 | EG-CAP-23 | model export | surrogate_validated | real_codepath_validated | human scientific review |
-| EG-CAP-24 | deployment packaging | contract_only | contract_only | human scientific review |
+| EG-CAP-24 | deployment packaging | contract_only | local_end_to_end_validated | human scientific review |
 | EG-CAP-25 | Colab observability | contract_only | real_codepath_validated | human scientific review |
 | EG-CAP-26 | Jetson and TensorRT readiness | contract_only | requires_jetson | real data/platform measurement |
 | EG-CAP-27 | evidence and thesis reporting | contract_only | local_end_to_end_validated | human scientific review |

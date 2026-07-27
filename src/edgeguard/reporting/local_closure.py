@@ -90,7 +90,7 @@ AFTER: dict[str, str] = {
     "EG-CAP-21": "local_end_to_end_validated",
     "EG-CAP-22": "real_codepath_validated",
     "EG-CAP-23": "real_codepath_validated",
-    "EG-CAP-24": "contract_only",
+    "EG-CAP-24": "local_end_to_end_validated",
     "EG-CAP-25": "real_codepath_validated",
     "EG-CAP-26": "requires_jetson",
     "EG-CAP-27": "local_end_to_end_validated",
