@@ -23,8 +23,45 @@ _LABEL_PATTERN = re.compile(
     r"(?P<frame>[0-9]{6})_gtFine_labelIds\.png$"
 )
 
-CITYSCAPES_LABEL_ID_TO_TRAIN_ID = np.full(256, 255, dtype=np.uint8)
-for _label_id, _train_id in {
+CITYSCAPES_SOURCE_LABEL_NAMES: dict[int, str] = {
+    0: "unlabeled",
+    1: "ego_vehicle",
+    2: "rectification_border",
+    3: "out_of_roi",
+    4: "static",
+    5: "dynamic",
+    6: "ground",
+    7: "road",
+    8: "sidewalk",
+    9: "parking",
+    10: "rail_track",
+    11: "building",
+    12: "wall",
+    13: "fence",
+    14: "guard_rail",
+    15: "bridge",
+    16: "tunnel",
+    17: "pole",
+    18: "polegroup",
+    19: "traffic_light",
+    20: "traffic_sign",
+    21: "vegetation",
+    22: "terrain",
+    23: "sky",
+    24: "person",
+    25: "rider",
+    26: "car",
+    27: "truck",
+    28: "bus",
+    29: "caravan",
+    30: "trailer",
+    31: "train",
+    32: "motorcycle",
+    33: "bicycle",
+    255: "license_plate",
+}
+
+CITYSCAPES_TRAIN_ID_BY_LABEL_ID: dict[int, int] = {
     7: 0,
     8: 1,
     11: 2,
@@ -44,7 +81,10 @@ for _label_id, _train_id in {
     31: 16,
     32: 17,
     33: 18,
-}.items():
+}
+
+CITYSCAPES_LABEL_ID_TO_TRAIN_ID = np.full(256, 255, dtype=np.uint8)
+for _label_id, _train_id in CITYSCAPES_TRAIN_ID_BY_LABEL_ID.items():
     CITYSCAPES_LABEL_ID_TO_TRAIN_ID[_label_id] = _train_id
 
 
@@ -128,6 +168,10 @@ def label_ids_to_train_ids(
         raise ValueError("Cityscapes label IDs must be a uint8 numpy array")
     if label_ids.ndim != 2 or any(dimension <= 0 for dimension in label_ids.shape):
         raise ValueError("Cityscapes label IDs must have positive HW dimensions")
+    observed = {int(value) for value in np.unique(label_ids)}
+    unknown = sorted(observed - set(CITYSCAPES_SOURCE_LABEL_NAMES))
+    if unknown:
+        raise ValueError(f"unknown Cityscapes source label IDs: {unknown}")
     return CITYSCAPES_LABEL_ID_TO_TRAIN_ID[label_ids]
 
 

@@ -4,135 +4,111 @@
 - **To:** Human project owner
 - **Repository root:** `.`
 - **Branch:** `feat/first-vertical-slice`
-- **Base commit:** `ee4460bda9b518a4e784cd43ad23d043ad15cd7b`
-  (EG-THESIS-001, pushed and remotely verified)
-- **Task:** `EG-DATA-001 — Storage, access and ontology gate`
-- **State:** Locally implemented and tested; human review pending
-- **Excluded:** No dataset download/extraction/inspection, Drive folder creation,
-  framework installation, Colab training, SMIYC access, Jetson action, stage,
-  commit, or push
+- **Base commit:** `0114d4e4778c1d6e53b6359e0a11f71eb15d2fb4`
+- **Task:** `EG-DATA-002 — Cityscapes Fine train preparation`
+- **State:** Implemented and locally tested with synthetic fixtures; human diff
+  review and real Colab preparation pending
+- **Excluded:** No real archive read, dataset extraction, Drive mutation, split
+  freeze, framework installation, training, Cityscapes test-label access, SMIYC,
+  unrelated dataset access, Jetson action, stage, commit, or push
 
-## Storage contract
+## Preparation architecture
 
-The proposal uses `EDGEGUARD_EXTERNAL_ROOT` as the runtime-only anchor for the
-`EdgeGuard/` project root; no absolute private path is committed. Existing
-`private_inputs/` remains a legacy/current child, not the canonical project root.
-Relative siblings cover immutable archives, shared extracted datasets, manifests,
-generated OOD data, segmentation/detection/OOD checkpoints, HPO, experiments, ONNX
-exports, Jetson evidence, presentation/thesis assets, and verified backups.
+The existing `scripts/prepare_cityscapes.py` now has a narrow `--split train` path.
+It reuses the existing pinned archive constants and ZIP safety validation and the
+shared Cityscapes label mapping; it does not introduce a generalized extraction or
+dataset framework.
 
-No part of that hierarchy was created. After approval, Colab stages only the active
-subset/shard in `/content/edgeguard-work/<run_id>/`, trains from ephemeral storage,
-and atomically syncs hash-verified recovery/final outputs to Drive. The approximately
-18 GiB-free Mac is excluded from heavy-data relay/storage duties; approximately 5 TB
-private Drive remains canonical capacity.
+The real flow is:
 
-Migration, reuse, or retention of existing `private_inputs/` files is decided during
-EG-DATA-002 or the first relevant acquisition task. No file was moved or copied.
+```text
+immutable private_inputs archives
+→ filename/size/SHA and complete ZIP safety validation
+→ train-only RGB/native-label extraction into Colab-local staging
+→ deterministic 0..18/255 train-ID PNG generation
+→ streaming geometry/source-ID/class/city/group analysis
+→ CSF-SPLIT-A/B/C group-atomic candidates
+→ temporary-result validation
+→ incoming copy and second exact validation
+→ canonical dataset/manifests promotion
+→ small independently verifiable evidence ZIP
+```
 
-Lifecycle rules cover immutable archive identity, shared extraction, periodic
-identity-protected `last` and metric-selected `best` checkpoints, final transfer hash
-verification, an independently verified backup for irreplaceable project-owned
-checkpoints/registries, and bounded failed-HPO retention without deleting audit or
-negative-result evidence.
+Original `labelIds` remain external and unchanged. Every generated train-ID mask is
+byte-deterministically encoded and hashed. Original image/label identity is anchored
+to the verified immutable archive hashes and root-free paths. The real run records
+generated-mask hashing duration and bytes so broader hashing can be judged from
+measurement.
 
-## Dataset access result
+Unknown source label IDs hard-fail; they are not converted silently to ignore. The
+class-mapping receipt includes every reviewed source ID, its Cityscapes name, mapped
+project train ID or ignore action, and observed pixel count. Image/label/train-ID
+geometry is checked while streaming; full-resolution masks are not retained in
+memory as a dataset-wide collection.
 
-The access matrix now records role, official/manual source, human account/terms gate,
-expected packages, planning storage, relative destination, allowed/prohibited uses,
-redistribution boundary, manifest, next task, and current status for:
+## Split boundary
 
-- Cityscapes Fine and Coarse/trainextra;
-- BDD100K detection;
-- Fishyscapes Static and full Lost & Found;
-- project synthetic OOD sources;
-- SOS or an approved temporal alternative;
-- optional Mapillary Vistas;
-- demo-only prerecorded videos;
-- SMIYC RoadAnomaly21 and RoadObstacle21.
+Each candidate keeps `city+sequence` groups atomic and records sample/city/group
+counts, class pixels and presence, rare-class coverage, sample deviation,
+class-coverage penalty, pixel-distribution divergence, rare-class absence, and
+leakage validation. Candidate targets are near `85/10/5`, `80/15/5`, and `90/5/5`,
+but no ratio or candidate is approved. The compact comparison status is always
+`recommended_pending_human_approval`.
 
-No dataset is acquired. Full Lost & Found remains a one-time frozen holdout. Both
-SMIYC datasets have no destination, loader, config, manifest, inspection, or debug
-path before a human sealed-final event.
+Official Cityscapes val remains `official_val_common_eval`: not routine HPO,
+`train_select`, temperature fitting, sealed, or unseen. Cityscapes test labels and
+SMIYC are inaccessible to this workflow. No semantic training may begin before the
+human accepts a measured candidate.
 
-## Ontology result
+## Command and external outputs
 
-`configs/dataset/ontology_v1.yaml` is the single compact provisional source for:
+The notebook calls the repository entry point with runtime-only paths:
 
-- `semantic_cityscapes19`: exact train IDs `0..18`, ignore `255`;
-- `known_detection10`: person, rider, car, truck, bus, train, motorcycle, bicycle,
-  traffic_light, traffic_sign at IDs `0..9`;
-- `ood_binary`: `0=id`, `1=anomaly`, ignore `255`;
-- `risk_operational`: `0=low`, `1=medium`, `2=high`.
+```text
+python scripts/prepare_cityscapes.py
+  --split train
+  --left-images-archive <external-root>/private_inputs/leftImg8bit_trainvaltest.zip
+  --labels-archive <external-root>/private_inputs/gtFine_trainvaltest.zip
+  --destination <external-root>/datasets/cityscapes/fine/v1
+  --manifests-destination <external-root>/manifests/cityscapes/fine/v1
+  --work-directory /content/edgeguard-work/cityscapes-fine-v1
+  --preparation-git-commit <reviewed-commit-sha>
+  --ontology-config configs/dataset/ontology_v1.yaml
+```
 
-BDD100K mappings explicitly implement pedestrian→person, motor→motorcycle,
-bike→bicycle, traffic light/sign normalization, and the seven identity mappings.
-Source IDs remain `null` rather than invented because the reviewed annotation
-contract is name-keyed; the real package must confirm this. Unknown source classes
-are rejected, ignored/unsupported lists are explicitly empty, and Mapillary is
-deferred until its real label specification is reviewed.
+`--verify-only` idempotently verifies an existing exact prepared dataset. Normal mode
+refuses any existing dataset, manifest, staging, or incoming destination.
 
-The narrow validator rejects duplicate project IDs/names, unknown actions, duplicate
-source mappings, incomplete fixed namespaces, mismatched targets, duplicate YAML
-keys, and absolute/user-relative paths. It does not create a registry or plugin
-system.
+Full manifests, prepared data, masks, and evidence remain outside Git. The evidence
+ZIP contains only archive/preparation receipts, ontology identity, aggregate class
+and group summaries, split comparison/report, environment, manifest identities, and
+failures; it contains no image or mask.
 
-Validation does not freeze this ontology. Its machine-readable status remains
-`provisional` until human acceptance.
+## Local result and validation
 
-## Cityscapes split-analysis handoff
-
-EG-DATA-002 must inventory authorized Fine train data by city/sequence, frame and
-pixel class counts, rare-class coverage, and full-distribution deviation. It then
-proposes two or three deterministic group-atomic candidates for `train_fit`,
-`train_select`, and `train_calibration`. No percentage is pre-frozen; the human
-selects one candidate only after the report. Official val is
-`official_val_common_eval`: it is excluded from routine HPO, `train_select`, and
-temperature fitting and used for common final-model evaluation. It is not sealed or
-previously unseen because all 500 images were already evaluated and selected results
-and visualizations were inspected. The existing PIDNet-S measurement remains a
-historical baseline; SMIYC is the actual sealed-final boundary. Groups cannot cross
-roles, and Cityscapes test labels are never used.
-
-## Human gates
-
-- Approve the `EdgeGuard/` root convention and runtime variable; decide later how
-  existing `private_inputs/` files are reused or migrated.
-- Approve Cityscapes Fine train access/terms and exact archive identities.
-- Approve BDD100K access/terms, package version, and split basis.
-- Approve Fishyscapes sources and separate Lost & Found annotation/image terms.
-- Select legal synthetic object-mask sources.
-- Select SOS or another temporal dataset.
-- Decide whether YOLO AGPL obligations are acceptable.
-- Resolve the proposed title/university process.
-- Treat accelerator availability as unknown until measured.
-- Measure Jetson storage in a separately authorized task.
-- Accept or revise provisional `edgeguard-ontology-v1`, then authorize the first
-  acquisition task.
-
-## Next task and publication
-
-The exact next implementation task is `EG-DATA-002 — Cityscapes Fine train
-preparation`, gated by the applicable human approvals. `EG-DET-001` remains blocked
-on BDD100K and YOLO decisions. Neither task was started.
-
-- Final validation: Ruff check passed; Ruff format check passed for 100 files; mypy
-  passed for 28 source files; pytest passed 183 with 2 expected opt-in skips;
-  ontology tests passed 9/9; `git diff --check` passed
-- Repository safety: all 3 notebooks parsed and 3 focused notebook tests passed;
-  changed-file path, secret, >1 MiB, binary, and forbidden-artifact scans were clean
-- Ontology canonical payload SHA-256:
+- Private Drive root at the approved Colab mount: unavailable in this local runtime
+- Real archives processed: no
+- Real archive hash status: pending Colab verification
+- Real sample/group/city counts: unavailable
+- Real class-frequency and split summaries: unavailable
+- Evidence package: unavailable until real preparation
+- Ontology: provisional; SHA-256
   `24fd17b54a4aa461e004eaf8c5feebe7b3115c0906559ff24f3bd7f2e1510a10`
-- Current changes: unstaged
-- Publication: no commit or push
+- Ruff check: passed
+- Ruff format check: 103 files passed
+- mypy: 29 source files passed
+- pytest: 201 passed, 2 expected opt-in skips
+- `git diff --check`: passed
 
-## Changed-file inventory
+## Human gates and exact next action
 
-- Runtime/config: `.env.example`, `configs/dataset/README.md`,
-  `configs/dataset/ontology_v1.yaml`
-- Validation code/tests: `src/edgeguard/data/ontology.py`,
-  `tests/unit/test_ontology.py`
-- Contracts/planning: `docs/DATA_CATALOG.md`, `docs/MASTER_PLAN_V2.md`,
-  `docs/EXPERIMENT_PROTOCOL.md`, `docs/DECISIONS.md`, `docs/TASKS.md`
-- Agent memory/audit: `docs/PROJECT_STATE.md`, `docs/AGENT_HANDOFF.md`,
-  `docs/AI_USAGE_LOG.md`
+1. Review this complete unstaged EG-DATA-002 diff.
+2. Authorize a coherent commit and push; do not run the notebook from an unstaged or
+   dirty checkout.
+3. Run `notebooks/colab/03_prepare_cityscapes_fine_train.ipynb` at that exact commit.
+4. Verify archive identities, counts, class/group summaries, manifest/evidence hashes,
+   and absence of failures.
+5. Inspect all three candidates and explicitly select, revise, or reject one.
+
+`EG-SEG-001` remains blocked. Current changes are unstaged; publication is not
+authorized in this task.

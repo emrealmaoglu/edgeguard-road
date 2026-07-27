@@ -26,9 +26,9 @@ results and transient implementation notes do not become ADRs.
   sealed evaluation, or deployment claims, and do not require a new ADR until an
   implementation architecture is actually selected.
 
-## EG-DATA-001 locally implemented contracts pending human freeze
+## EG-DATA-001 remotely verified contracts
 
-- `EDGEGUARD_EXTERNAL_ROOT` is the proposed runtime anchor for the `EdgeGuard/`
+- `EDGEGUARD_EXTERNAL_ROOT` is the human-approved runtime anchor for the `EdgeGuard/`
   project root. Existing `private_inputs/` is a legacy/current child; its migration
   or reuse is deferred to EG-DATA-002 or the first relevant acquisition task. The
   relative hierarchy was not created.
@@ -42,6 +42,25 @@ results and transient implementation notes do not become ADRs.
   `official_val_common_eval`: common evaluation for frozen final models, but not
   routine HPO, `train_select`, temperature-fitting data, sealed, or previously
   unseen. Lost & Found remains a full frozen holdout, and SMIYC remains sealed.
-- These contracts are locally implemented proposals. The ontology remains
-  provisional; human approval is still needed for the Drive root, ontology freeze,
-  every acquisition, and the Cityscapes split.
+- EG-DATA-001 is remotely verified at
+  `0114d4e4778c1d6e53b6359e0a11f71eb15d2fb4`. The ontology remains provisional;
+  validation does not freeze it or a Cityscapes split.
+
+## EG-DATA-002 local preparation architecture
+
+- The existing `scripts/prepare_cityscapes.py` is extended with a project-specific
+  `--split train` path; its existing val path remains available. No generic dataset
+  or extraction framework is introduced.
+- The train path verifies the two pinned archive hashes, validates every ZIP member,
+  extracts only Fine `train` RGB and native `labelIds` into Colab-local staging,
+  generates deterministic `0..18/255` masks from the shared LUT, analyzes masks
+  streaming, and promotes only a validated incoming tree.
+- Every generated mask is hashed. Original RGB/label integrity is anchored to the
+  immutable source-archive hashes and root-free sample paths; measured mask-hashing
+  time is reported rather than assumed.
+- `CSF-SPLIT-A/B/C` are deterministic bounded candidates near `85/10/5`, `80/15/5`,
+  and `90/5/5`. The heuristic records sample deviation, class-presence coverage,
+  pixel-distribution divergence, and rare-class absence. Its recommendation is not
+  an approval or freeze.
+- The local runtime cannot access the approved private Drive mount. No real archive,
+  dataset, class frequency, group count, or split result exists yet.

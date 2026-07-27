@@ -8,8 +8,11 @@
 - `EG-THESIS-001 — Scope, title and claim migration`: **implemented, locally
   validated, committed, pushed, and remotely verified** at
   `ee4460bda9b518a4e784cd43ad23d043ad15cd7b`.
-- `EG-DATA-001 — Storage, access and ontology gate`: **locally implemented and
-  tested; provisional ontology and storage/access contracts pending human review**.
+- `EG-DATA-001 — Storage, access and ontology gate`: **completed and remotely
+  verified** at `0114d4e4778c1d6e53b6359e0a11f71eb15d2fb4`.
+- `EG-DATA-002 — Cityscapes Fine train preparation`: **implemented and locally
+  tested with synthetic ZIP fixtures; real private-Drive preparation and human split
+  selection pending**.
 - No dataset acquisition, framework installation, training, Jetson mutation, or
   sealed-data access is in progress.
 
@@ -50,8 +53,8 @@ planning ranges until replaced by measurements.
 ### EG-DATA-002 — Cityscapes Fine train preparation
 
 - **Objective:** Verify approved Fine train archives, inventory city/sequence/class
-  distributions, propose 2–3 deterministic group splits, and prepare one
-  human-selected `train_fit`/`train_select`/`train_calibration` split.
+  distributions, and propose three deterministic group-atomic splits. Human
+  selection/freeze remains a separate gate.
 - **Dependencies:** `EG-DATA-001` and approved Cityscapes Fine train access.
 - **Human inputs:** Official archives, hashes/source/terms, split-candidate selection.
 - **Local work:** Implement project-specific verification, manifest and distribution
@@ -59,8 +62,8 @@ planning ranges until replaced by measurements.
 - **Colab work:** Copy archives to ephemeral storage, verify/extract once, compute
   distributions, and write candidate manifests back to Drive.
 - **Jetson work:** None.
-- **Expected outputs:** Archive records, class/group inventory, candidate split
-  reports, frozen root-free manifests, and mapping evidence.
+- **Expected outputs:** Archive records, class/group inventory, unapproved candidate
+  reports, root-free manifests, mapping evidence, and a small evidence package.
 - **Tests:** Hash, unsafe archive member, duplicate/missing pair, geometry, mapping,
   group leakage, determinism, root-independence.
 - **Acceptance:** Human selects a candidate; no group overlap; distribution and rare

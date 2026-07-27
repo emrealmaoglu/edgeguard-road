@@ -103,6 +103,13 @@ def test_cityscapes_label_id_mapping_preserves_train_ids_and_ignore() -> None:
     )
 
 
+def test_cityscapes_label_id_mapping_rejects_unknown_source_id() -> None:
+    label_ids = np.array([[7, 34]], dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="unknown Cityscapes source label IDs"):
+        label_ids_to_train_ids(label_ids)
+
+
 def test_cityscapes_mask_resize_uses_nearest_neighbor() -> None:
     mask = np.array([[0, 18], [255, 1]], dtype=np.uint8)
 

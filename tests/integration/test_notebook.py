@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 NOTEBOOK = REPO_ROOT / "notebooks/colab/00_environment_and_smoke.ipynb"
 PIDNET_NOTEBOOK = REPO_ROOT / "notebooks/colab/01_pidnet_single_image_spike.ipynb"
 CITYSCAPES_NOTEBOOK = REPO_ROOT / "notebooks/colab/02_pidnet_cityscapes_val_eval.ipynb"
+CITYSCAPES_TRAIN_NOTEBOOK = REPO_ROOT / "notebooks/colab/03_prepare_cityscapes_fine_train.ipynb"
 PIDNET_RUNNER = REPO_ROOT / "scripts/run_pidnet_spike.py"
 
 
@@ -97,6 +98,36 @@ def test_cityscapes_eval_notebook_is_thin_and_claim_safe() -> None:
     assert "files.download" in source
     assert "/Users/emrealmaoglu" not in source
     assert "weights_only=False" not in source
+    lowered = source.lower()
+    for prohibited in ("api_key", "password=", "token=", "credential="):
+        assert prohibited not in lowered
+
+
+def test_cityscapes_train_notebook_is_thin_and_stops_before_training() -> None:
+    payload = json.loads(CITYSCAPES_TRAIN_NOTEBOOK.read_text(encoding="utf-8"))
+
+    assert payload["nbformat"] == 4
+    assert payload["nbformat_minor"] >= 5
+    assert all(not cell.get("outputs") for cell in payload["cells"])
+    source = "\n".join(line for cell in payload["cells"] for line in cell.get("source", []))
+    assert "Reviewed EG-DATA-002 commit SHA" in source
+    assert "https://github.com/emrealmaoglu/edgeguard-road.git" in source
+    assert 'drive.mount("/content/drive")' in source
+    assert 'Path("/content/drive/MyDrive/EdgeGuard")' in source
+    assert "private_inputs/leftImg8bit_trainvaltest.zip" in source
+    assert "private_inputs/gtFine_trainvaltest.zip" in source
+    assert "datasets/cityscapes/fine/v1" in source
+    assert "manifests/cityscapes/fine/v1" in source
+    assert "scripts/prepare_cityscapes.py" in source
+    assert '"--split"' in source and '"train"' in source
+    assert "--verify-only" in source
+    assert "recommended_pending_human_approval" in source
+    assert "files.download" in source
+    assert "MMSegmentation" not in source
+    assert "run_cityscapes_eval.py" not in source
+    assert "scripts/train.py" not in source
+    assert "SMIYC" in source
+    assert "/Users/" not in source
     lowered = source.lower()
     for prohibited in ("api_key", "password=", "token=", "credential="):
         assert prohibited not in lowered

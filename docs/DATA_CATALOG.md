@@ -9,9 +9,9 @@ empty environment-variable names `EDGEGUARD_PIDNET_CHECKPOINT`,
 root-free, runtime artifacts were ignored, and no generic storage abstraction
 existed.
 
-EG-DATA-001 adds `EDGEGUARD_EXTERNAL_ROOT` as the single future private-storage
-anchor while preserving the narrower variables for existing tools. It must point at
-runtime to the human-approved `EdgeGuard/` project root. The existing
+EG-DATA-001 adds `EDGEGUARD_EXTERNAL_ROOT` as the single private-storage anchor while
+preserving the narrower variables for existing tools. The human approved the runtime
+Drive mount ending at the `EdgeGuard/` project root. The existing
 `private_inputs/` directory is a legacy/current private input location below that
 root; it is not the canonical root for archives, experiments, checkpoints, exports,
 or evidence. These are Drive-relative names, not committed absolute paths, and no
@@ -130,7 +130,7 @@ replace them only after authorized acquisition.
 
 | Dataset | Role | Acquisition source and human gate | Expected package(s) | Reserve | Canonical Drive-relative destination | Allowed use | Prohibited use | Redistribution boundary | Required manifest | Next task / status |
 | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- | --- |
-| Cityscapes Fine | Train: `train_fit`, `train_select`, `train_calibration`; official val: `official_val_common_eval` | Official Cityscapes portal; human account, terms, research-use approval, and archive hash review | `leftImg8bit_trainvaltest.zip`, `gtFine_trainvaltest.zip`; exact downloaded identities required | Up to 25 GiB | `archives/cityscapes/fine/`, `datasets/cityscapes/fine/`, `manifests/datasets/cityscapes/fine/` | Approved train roles; common evaluation of final frozen models on official val | Official val as routine HPO, `train_select`, temperature-fitting/calibration data, sealed holdout, or previously unseen evidence; Cityscapes test labels; cross-role groups | No archive/image/label redistribution | Archive records; native-label inventory; group split manifests; provisional ontology version; official-val manifest | `EG-DATA-002`; historical 500-image PIDNet-S baseline exists, train not acquired in this task |
+| Cityscapes Fine | Train: `train_fit`, `train_select`, `train_calibration`; official val: `official_val_common_eval` | Human-approved existing private archives; exact pinned hashes must still pass in Colab | `leftImg8bit_trainvaltest.zip`, `gtFine_trainvaltest.zip` under legacy/current `private_inputs/` | Up to 25 GiB | `datasets/cityscapes/fine/v1/`, `manifests/cityscapes/fine/v1/` | Approved train preparation and candidate analysis; common evaluation of final frozen models on official val | Official val as routine HPO, `train_select`, temperature fitting, sealed/unseen evidence; Cityscapes test labels; cross-role groups | No archive/image/label redistribution | Archive records; native-label inventory; train-ID file map; group/split candidates; provisional ontology identity | `EG-DATA-002` locally tested with synthetic ZIPs; real archives remain unprocessed pending Colab execution |
 | Cityscapes Coarse/trainextra | `id_train_extra`, aggressive only | Official Cityscapes portal; separate human terms, role, and experiment approval | Expected official `leftImg8bit_trainextra.zip` and `gtCoarse.zip`; identities must be confirmed | Up to 100 GiB | `archives/cityscapes/coarse/`, `datasets/cityscapes/coarse/`, `manifests/datasets/cityscapes/coarse/` | Approved coarse-to-fine ablation | Core-path dependency or use before Fine baseline freeze | No archive/image/label redistribution | Archive, label-version, mapping, split, and leakage manifests | Later aggressive acquisition task; `not_acquired` |
 | BDD100K detection images and labels | `det_train`, `det_select`, frozen detector confirmation | Official BDD100K source; human account/terms, package/version, ontology, and split approval | Official detection image and label packages; exact release filenames pending real source review | Up to 350 GiB | `archives/bdd100k/detection/`, `datasets/bdd100k/detection/`, `manifests/datasets/bdd100k/detection/` | Two-detector common training, selection, and frozen confirmation | Silent class dropping, unfrozen splits, semantic/OOD substitution | No dataset redistribution; only sanitized summaries/mappings | Archive/package records; sequence/group split; class counts; mapping version; geometry/duplicate audit | `EG-DET-001`, blocked on access/terms and YOLO license decision; `not_acquired` |
 | Fishyscapes Static | `ood_development` | Official human-reviewed generator pin plus legally available Cityscapes inputs | Generated dataset, not an assumed downloadable ZIP; generator source/config/input identities required | Up to 50 GiB | `generated/ood/fishyscapes_static/`, `manifests/generated/fishyscapes_static/` | Zero-shot development, normalization, HPO, calibration impact, trainable-method selection | Final/holdout claim; redistribution; use as semantic train labels | Generated images remain private; source terms remain attached | Input Cityscapes manifest, generator commit/config hash, output/shard hashes, ontology/mapping version | `EG-OOD-002`; `not_generated` |
@@ -226,10 +226,11 @@ training task may begin.
 
 ## Human decision checklist
 
-- [ ] Approve `EdgeGuard/` as the project root addressed at runtime by
+- [x] Approve `EdgeGuard/` as the project root addressed at runtime by
   `EDGEGUARD_EXTERNAL_ROOT`, with existing `private_inputs/` retained as a
   legacy/current child pending task-specific migration/reuse decisions.
-- [ ] Confirm Cityscapes Fine train access/terms and exact archive identities.
+- [x] Authorize the existing Cityscapes Fine archives for EG-DATA-002 preparation;
+  their two exact expected SHA-256 identities still must pass in the real Colab run.
 - [ ] Confirm BDD100K access/terms, package version, and group-split basis.
 - [ ] Confirm Fishyscapes Static generator/source acquisition and separate Lost &
   Found annotation/image terms.
@@ -243,5 +244,31 @@ training task may begin.
 - [ ] Measure and approve Jetson storage inventory in its separately authorized task.
 
 Ontology validation is complete locally, but `edgeguard-ontology-v1` remains
-provisional until human acceptance. Dataset acquisition and split freeze remain
-blocked until their applicable human decisions close.
+provisional until human acceptance. Cityscapes preparation is authorized but not yet
+executed on real data; every other acquisition and the split freeze remain blocked
+until their applicable human decisions close.
+
+## EG-DATA-002 implementation and pending real execution
+
+`scripts/prepare_cityscapes.py --split train` reuses the existing archive safety and
+Cityscapes LUT. It checks pinned filenames, measured byte sizes and SHA-256 values;
+rejects unsafe, absolute, duplicate, symlink, or unexpected train members; extracts
+only train RGB plus native `labelIds`; produces deterministic `trainIds`; and streams
+geometry, source-ID, class-frequency, city, and `city+sequence` group validation.
+
+Generated mask files each receive SHA-256 verification and a canonical file-map hash.
+Original images and native labels remain tied to immutable archive hashes and
+root-free paths. The real run records mask hashing time so a broader per-file hashing
+policy can be reviewed from measurements rather than guessed.
+
+The command writes three unapproved candidates (`CSF-SPLIT-A/B/C`), a compact
+comparison marked `recommended_pending_human_approval`, full external sample/group
+manifests, and a small evidence ZIP containing no images or masks. Preparation first
+occurs in Colab-local staging, is revalidated after incoming copy, and refuses any
+existing or partial destination unless `--verify-only` proves the exact identity.
+
+The local Mac has no legitimate access to the approved private Drive mount, so no
+real archive was read, no Drive directory was created, and no count, frequency,
+candidate, or evidence-package result is claimed. The next execution gate is human
+review of this diff, followed by an exact committed Colab run and then human split
+selection. Semantic training remains blocked.

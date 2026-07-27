@@ -10,6 +10,10 @@
 - Cityscapes train is inspected before deterministic group-level
   `train_fit`/`train_select`/`train_calibration` candidates are proposed; no fixed
   percentage is assumed in advance.
+- EG-DATA-002 candidates keep `city+sequence` groups atomic, reject unknown native
+  label IDs, and remain `recommended_pending_human_approval` until the human freezes
+  one exact candidate and its hashes. Locally tested synthetic fixtures are not
+  evidence that the licensed Fine train archives were prepared.
 - Official Cityscapes val has role `official_val_common_eval`. It is excluded from
   routine HPO, `train_select`, and temperature fitting, and is used for common
   evaluation of frozen final models. It is not sealed or previously unseen; the

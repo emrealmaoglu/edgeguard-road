@@ -1,7 +1,8 @@
 """Tests for the project-specific Cityscapes val preparation script."""
 
+import stat
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 
 import pytest
 
@@ -20,10 +21,23 @@ def test_cityscapes_archive_hash_mismatch_is_rejected(tmp_path: Path) -> None:
         )
 
 
-def test_cityscapes_zip_rejects_unsafe_member(tmp_path: Path) -> None:
+@pytest.mark.parametrize("member", ["../escape.txt", "/absolute.txt"])
+def test_cityscapes_zip_rejects_unsafe_member(tmp_path: Path, member: str) -> None:
     archive_path = tmp_path / "unsafe.zip"
     with ZipFile(archive_path, "w") as archive:
-        archive.writestr("../escape.txt", "unsafe")
+        archive.writestr(member, "unsafe")
+
+    with ZipFile(archive_path) as archive, pytest.raises(ValueError, match="unsafe ZIP member"):
+        prepare_cityscapes._validated_infos(archive)
+
+
+def test_cityscapes_zip_rejects_symlink_member(tmp_path: Path) -> None:
+    archive_path = tmp_path / "symlink.zip"
+    info = ZipInfo("leftImg8bit/train/alpha/link")
+    info.create_system = 3
+    info.external_attr = (stat.S_IFLNK | 0o777) << 16
+    with ZipFile(archive_path, "w") as archive:
+        archive.writestr(info, "target")
 
     with ZipFile(archive_path) as archive, pytest.raises(ValueError, match="unsafe ZIP member"):
         prepare_cityscapes._validated_infos(archive)

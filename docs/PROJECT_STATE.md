@@ -2,59 +2,58 @@
 
 - **Branch:** `feat/first-vertical-slice`
 - **Current committed revision:**
-  `ee4460bda9b518a4e784cd43ad23d043ad15cd7b`
-- **Starting state for EG-DATA-001:** Clean and synchronized with
+  `0114d4e4778c1d6e53b6359e0a11f71eb15d2fb4`
+- **Starting state for EG-DATA-002:** Clean and synchronized with
   `origin/feat/first-vertical-slice`
 - **EG-OOD-001:** Complete and remotely verified at Commit D
-  `345d9fd1dcff0a7aa9c54c6f3929c2c751c24c7c`; Python 3.10 and 3.11 CI passed
+  `345d9fd1dcff0a7aa9c54c6f3929c2c751c24c7c`
 - **EG-THESIS-001:** Complete and remotely verified at
-  `ee4460bda9b518a4e784cd43ad23d043ad15cd7b`; Python 3.10 and 3.11 CI passed
-- **EG-DATA-001:** Runtime storage-root proposal, lifecycle, dataset access matrix,
-  four-namespace ontology, BDD100K mappings, Cityscapes split-analysis method, and
-  human gate checklist are locally implemented and tested; human freeze is pending
-- **Storage proposal:** `EDGEGUARD_EXTERNAL_ROOT` will point at the human-approved
-  `EdgeGuard/` project root. Existing `private_inputs/` remains a legacy/current
-  child whose migration or reuse is deferred. No Drive directory was created or
-  moved.
-- **Resource boundary:** Approximately 5 TB private Drive is available for canonical
-  external storage; the local Apple M1 has approximately 18 GiB free and is not a
-  heavy-data store or transfer relay
-- **Ontology proposal:** Provisional `edgeguard-ontology-v1` preserves separate
-  `semantic_cityscapes19`, `known_detection10`, `ood_binary`, and
-  `risk_operational` namespaces. Ten reviewed BDD100K names map explicitly; unknown
-  source classes fail closed. Mapillary mapping remains deferred.
-- **Current implemented baseline:** Strict PIDNet-S checkpoint validation,
-  native/aligned-logit inference, four uncertainty scores, Cityscapes evaluation,
-  manual-only Fishyscapes adapter foundation, and NumPy AP/FPR95 metrics
-- **Measured Cityscapes baseline:** 500 selected, 500 successful, 0 failures; mIoU
-  `0.7875813077220126`, pixel accuracy `0.9619008903101843`, mean class accuracy
-  `0.8618737663500519`
-- **Forward dataset roles:** Cityscapes Fine train awaits distribution-based
-  `train_fit`/`train_select`/`train_calibration` analysis; official val is
-  `official_val_common_eval`, used for common final-model evaluation but not HPO,
-  `train_select`, temperature fitting, or sealed/unseen claims; Fishyscapes Static
-  is OOD development/HPO; full Lost & Found is a one-time frozen holdout; SMIYC
-  remains the actual unaccessed sealed-final boundary
-- **Acquisition/training state:** No dataset was downloaded, extracted, inspected,
-  copied, or marked acquired. No framework was installed; no training, HPO, Colab
-  campaign, export, Jetson access, or Drive mutation occurred.
-- **Exact next implementation task:** `EG-DATA-002 — Cityscapes Fine train
-  preparation`; it must not start before human approval of the applicable Drive,
-  Cityscapes access, ontology, and task gates
-- **Parallel detector state:** `EG-DET-001` remains blocked on BDD100K
-  access/terms/package decisions and the proposed YOLO path's AGPL decision
-- **Human gates:** Drive root convention; Cityscapes and BDD100K access/terms;
-  Fishyscapes sources; synthetic object-mask sources; temporal dataset; YOLO AGPL;
-  title/university decision; actual Colab accelerator availability; Jetson storage
-  inventory; ontology and first acquisition freeze
-- **Validation:** 2026-07-27T00:19Z — Ruff check passed; Ruff format check passed for
-  100 files; mypy passed for 28 source files; pytest passed 183 with 2 expected
-  opt-in skips; `git diff --check` passed. Ontology tests passed 9/9; all 3 notebooks
-  parsed and their 3 focused integration tests passed; path, secret, >1 MiB, binary,
-  and forbidden-artifact scans were clean. Ontology canonical payload SHA-256 is
-  `24fd17b54a4aa461e004eaf8c5feebe7b3115c0906559ff24f3bd7f2e1510a10`.
-- **Git action:** All EG-DATA-001 changes remain unstaged; no commit or push is
+  `ee4460bda9b518a4e784cd43ad23d043ad15cd7b`
+- **EG-DATA-001:** Complete and remotely verified at
+  `0114d4e4778c1d6e53b6359e0a11f71eb15d2fb4`; Python 3.10 and 3.11 CI passed
+- **EG-DATA-002:** Cityscapes Fine train archive validation, train-only staging,
+  deterministic train-ID generation, streaming class/group analysis, three
+  group-atomic split candidates, idempotent verification, evidence packaging, and a
+  thin Colab wrapper are implemented and locally tested with synthetic ZIP fixtures
+- **EG-DATA-002 real-data state:** The local runtime has no access to the approved
+  private Drive mount. Neither approved archive was opened; no dataset or Drive
+  directory was created, no real count/frequency/candidate was produced, and no
+  evidence package was promoted
+- **Approved runtime storage:** `EDGEGUARD_EXTERNAL_ROOT` resolves to the private
+  `EdgeGuard/` root. Existing archives remain immutable under relative
+  `private_inputs/`; prepared data and manifests target
+  `datasets/cityscapes/fine/v1/` and `manifests/cityscapes/fine/v1/`
+- **Archive identities awaiting real verification:**
+  `leftImg8bit_trainvaltest.zip` →
+  `3ccff9ac1fa1d80a6a064407e589d747ed0657aac7dc495a4403ae1235a37525`;
+  `gtFine_trainvaltest.zip` →
+  `40461a50097844f400fef147ecaf58b18fd99e14e4917fb7c3bf9c0d87d95884`
+- **Ontology:** `edgeguard-ontology-v1` remains provisional with canonical SHA-256
+  `24fd17b54a4aa461e004eaf8c5feebe7b3115c0906559ff24f3bd7f2e1510a10`;
+  local validation does not freeze it
+- **Split status:** `CSF-SPLIT-A/B/C` are implemented candidate definitions only.
+  A real run must produce measured manifests and a
+  `recommended_pending_human_approval` comparison; no candidate is selected or
+  frozen
+- **Official val:** `official_val_common_eval`; excluded from `train_select`, routine
+  HPO, and temperature fitting; not sealed or previously unseen
+- **Protected boundaries:** Cityscapes test labels and SMIYC remain unaccessed. No
+  BDD100K, Mapillary, SOS, or Fishyscapes data was accessed. No training framework,
+  model training, Colab campaign, or Jetson action occurred
+- **Validation:** Ruff check passed; Ruff format check passed for 103 files; mypy
+  passed for 29 source files; pytest passed 201 with 2 expected opt-in skips;
+  `git diff --check` passed. Synthetic preparation tests cover unsafe/absolute/
+  symlink/duplicate archive members, train-only selection, pairs, geometry, corrupt
+  PNG, unknown IDs, deterministic masks/manifests/candidates, leakage, partial output,
+  exact verification, and destination collision
+- **Exact next action:** Human reviews this unstaged diff and authorizes a commit.
+  After that exact commit is pushed, the human runs
+  `notebooks/colab/03_prepare_cityscapes_fine_train.ipynb`, verifies the real evidence
+  package, and selects or rejects one measured split candidate
+- **Training gate:** `EG-SEG-001` remains blocked until the real preparation passes
+  and the human explicitly freezes a split
+- **Git action:** All EG-DATA-002 changes remain unstaged; no commit or push is
   authorized
 
-Planned, implemented, locally tested, acquired, Colab measured, Jetson measured, and
-human accepted remain distinct states.
+Planned, implemented, locally tested, acquired, prepared, Colab measured, human
+accepted, and remotely verified remain distinct states.

@@ -14,6 +14,7 @@ negative state. A later state is never inferred from code or a completed noteboo
 | `EGX-BASE-PIDNET-CITYSCAPES-001` | PIDNet-S single-scale semantic evaluation | Cityscapes official val, 500 images | `1024×2048`, restricted pretrained checkpoint | mIoU `0.7875813077220126`, pixel accuracy `0.9619008903101843`, mean class accuracy `0.8618737663500519`, 500/500 success | Commit C and manifest `7e91ab…f852` | `human_accepted` within documented claim boundary |
 | `EGX-OOD-METRIC-FOUNDATION-001` | Pixel AP/FPR95 implementation | Synthetic unit fixtures | N/A | Perfect/reversed/ties/imbalance/void/undefined cases | EG-OOD-001 | `locally_tested` |
 | `EGX-OOD-LAF-ADAPTER-001` | Manual Lost & Found pairing/manifest contract | Synthetic fixtures only | Native geometry | Root-free manifest and mask contract | EG-OOD-001 | `locally_tested`; no real data |
+| `EGX-DATA-CS-FINE-PREP-001` | Fine-train archive, mapping, analysis, and split-candidate preparation | Synthetic ZIP fixtures only | Native label geometry; no model | Root-free manifests, class/group summaries, three unapproved candidates | EG-DATA-002 | `locally_tested`; real Drive run pending |
 
 The Cityscapes timing is end-to-end evaluation-pipeline timing, not pure inference or
 Jetson FPS. Four uncertainty-score summaries were finite ID-only evidence; no real OOD,
