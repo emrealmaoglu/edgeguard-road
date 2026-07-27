@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from edgeguard.telemetry.longrun import LiveCommandRunner, LongRunStatus, require_finite
+from edgeguard.serialization import sha256_file
+from edgeguard.telemetry.longrun import (
+    LiveCommandRunner,
+    LongRunStatus,
+    atomic_copy_verified,
+    ensure_disk_space,
+    require_finite,
+    require_fresh_heartbeat,
+)
 
 
 def test_long_run_status_is_atomic_and_complete(tmp_path: Path) -> None:
@@ -64,3 +73,40 @@ def test_live_command_redacts_runtime_url_from_console_and_logs(
 def test_require_finite_rejects_non_finite_values(value: float) -> None:
     with pytest.raises(FloatingPointError):
         require_finite(value, "test value")
+
+
+def test_stale_heartbeat_is_rejected() -> None:
+    now = datetime(2026, 7, 27, tzinfo=timezone.utc)
+    with pytest.raises(TimeoutError, match="stale"):
+        require_fresh_heartbeat(
+            {"heartbeat_utc": (now - timedelta(seconds=61)).isoformat()},
+            now=now,
+            maximum_age_seconds=60,
+        )
+    require_fresh_heartbeat(
+        {"heartbeat_utc": (now - timedelta(seconds=30)).isoformat()},
+        now=now,
+        maximum_age_seconds=60,
+    )
+
+
+def test_disk_exhaustion_prediction_fails_before_write(tmp_path: Path) -> None:
+    with pytest.raises(OSError, match="insufficient disk"):
+        ensure_disk_space(tmp_path, 2**63, reserve_bytes=0)
+
+
+def test_failed_artifact_copy_is_not_promoted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.bin"
+    destination = tmp_path / "destination.bin"
+    source.write_bytes(b"validated")
+
+    def fail_copy(_source: Path, _destination: Path) -> None:
+        raise OSError("injected copy failure")
+
+    monkeypatch.setattr("shutil.copy2", fail_copy)
+    with pytest.raises(OSError, match="injected"):
+        atomic_copy_verified(source, destination, expected_sha256=sha256_file(source))
+    assert not destination.exists()
+    assert not destination.with_name(".destination.bin.incoming").exists()

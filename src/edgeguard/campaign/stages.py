@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -212,68 +213,86 @@ def _semantic_smoke(context: StageContext) -> dict[str, Any]:
     generator = torch.Generator().manual_seed(20260727)
     loader = DataLoader(dataset, batch_size=2, shuffle=True, generator=generator)
     results: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
     steps = PROFILES[context.profile].optimizer_steps
     checkpoint_root = context.campaign_root / "checkpoints" / "semantic"
     checkpoint_root.mkdir(parents=True, exist_ok=True)
     for model_index, model_name in enumerate(MODEL_NAMES):
-        torch.manual_seed(20260727 + model_index)
-        model = _tiny_semantic_model(torch, model_index)
-        optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.9)
-        losses: list[float] = []
-        optimizer.zero_grad(set_to_none=True)
-        for step, (inputs, labels) in enumerate(loader, start=1):
-            if step > steps:
-                break
-            if step % 2 == 0:
-                inputs = torch.flip(inputs, dims=(3,))
-                labels = torch.flip(labels, dims=(2,))
-            logits = model(inputs)
-            loss = torch.nn.functional.cross_entropy(logits, labels, ignore_index=255) / 2
-            if not bool(torch.isfinite(loss)):
-                raise FloatingPointError(f"non-finite semantic loss for {model_name}")
-            loss.backward()
-            if step % 2 == 0 or step == steps:
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
-                scheduler.step()
-            losses.append(float(loss.detach()) * 2)
-        with torch.no_grad():
-            validation_logits = model(torch.from_numpy(images[:2]))
-        prediction = validation_logits.argmax(dim=1).numpy().astype(np.int64)
-        metrics = SemanticConfusionMatrix()
-        metrics.update(prediction, targets[:2])
-        checkpoint = checkpoint_root / f"{model_name}.pt"
-        identity = sha256_payload(
-            {"campaign_id": context.campaign_id, "model": model_name, "profile": context.profile}
-        )
-        torch.save(
-            {
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "scheduler": scheduler.state_dict(),
-                "identity": identity,
-            },
-            checkpoint,
-        )
-        restored = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        if restored["identity"] != identity:
-            raise ValueError("semantic checkpoint identity mismatch")
-        resumed = _tiny_semantic_model(torch, model_index)
-        resumed.load_state_dict(restored["model"], strict=True)
-        results.append(
-            {
-                "model_family": model_name,
-                "execution": "project_owned_tiny_common_training_path",
-                "optimizer_steps": steps,
-                "train_losses": losses,
-                "validation": metrics.result(),
-                "checkpoint_sha256": sha256_file(checkpoint),
-                "exact_resume": True,
-                "native_logits_shape": list(validation_logits.shape),
-                "scientific_evidence": False,
-            }
-        )
+        try:
+            if os.environ.get("EDGEGUARD_FAIL_MODEL") == model_name:
+                raise RuntimeError("bounded per-model failure injection")
+            torch.manual_seed(20260727 + model_index)
+            model = _tiny_semantic_model(torch, model_index)
+            optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.9)
+            losses: list[float] = []
+            optimizer.zero_grad(set_to_none=True)
+            for step, (inputs, labels) in enumerate(loader, start=1):
+                if step > steps:
+                    break
+                if step % 2 == 0:
+                    inputs = torch.flip(inputs, dims=(3,))
+                    labels = torch.flip(labels, dims=(2,))
+                logits = model(inputs)
+                loss = torch.nn.functional.cross_entropy(logits, labels, ignore_index=255) / 2
+                if not bool(torch.isfinite(loss)):
+                    raise FloatingPointError(f"non-finite semantic loss for {model_name}")
+                loss.backward()
+                if step % 2 == 0 or step == steps:
+                    optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
+                    scheduler.step()
+                losses.append(float(loss.detach()) * 2)
+            with torch.no_grad():
+                validation_logits = model(torch.from_numpy(images[:2]))
+            prediction = validation_logits.argmax(dim=1).numpy().astype(np.int64)
+            metrics = SemanticConfusionMatrix()
+            metrics.update(prediction, targets[:2])
+            checkpoint = checkpoint_root / f"{model_name}.pt"
+            identity = sha256_payload(
+                {
+                    "campaign_id": context.campaign_id,
+                    "model": model_name,
+                    "profile": context.profile,
+                }
+            )
+            torch.save(
+                {
+                    "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict(),
+                    "identity": identity,
+                },
+                checkpoint,
+            )
+            restored = torch.load(checkpoint, map_location="cpu", weights_only=True)
+            if restored["identity"] != identity:
+                raise ValueError("semantic checkpoint identity mismatch")
+            resumed = _tiny_semantic_model(torch, model_index)
+            resumed.load_state_dict(restored["model"], strict=True)
+            results.append(
+                {
+                    "model_family": model_name,
+                    "execution": "project_owned_tiny_common_training_path",
+                    "optimizer_steps": steps,
+                    "train_losses": losses,
+                    "validation": metrics.result(),
+                    "checkpoint_sha256": sha256_file(checkpoint),
+                    "exact_resume": True,
+                    "native_logits_shape": list(validation_logits.shape),
+                    "scientific_evidence": False,
+                }
+            )
+        except Exception as error:
+            failures.append(
+                {
+                    "model_family": model_name,
+                    "classification": type(error).__name__,
+                    "error": str(error)[:500],
+                }
+            )
+    if not results:
+        raise RuntimeError("all local-mini semantic model paths failed")
     actual_probe: dict[str, Any] = {"status": "not_requested"}
     if context.mmseg_checkout is not None:
         actual_output = context.stage_root / "actual-five-model-probe"
@@ -297,6 +316,7 @@ def _semantic_smoke(context: StageContext) -> dict[str, Any]:
         context,
         status="passed",
         models=results,
+        model_failures=failures,
         actual_five_model_probe=actual_probe,
         ranking_permitted=False,
     )
@@ -502,29 +522,82 @@ def _temporal_fusion(context: StageContext) -> dict[str, Any]:
 
 
 def _export_probe(context: StageContext) -> dict[str, Any]:
-    dependency = importlib.util.find_spec("onnx") is not None
-    records = []
-    for model_name in MODEL_NAMES:
-        records.append(
-            {
-                "model_family": model_name,
-                "status": (
-                    "not_attempted_missing_optional_onnx" if not dependency else "ready_for_probe"
-                ),
-                "opset": None,
-                "input_name": "model_input",
-                "output_name": "native_logits",
-                "fixed_input_shape": [1, 3, 32, 64],
-                "output_shape": None,
-                "numerical_tolerance": None,
-                "unsupported_operators": [],
-                "file_size_bytes": None,
-                "failure_classification": (
-                    "optional_dependency_unavailable" if not dependency else None
-                ),
-                "jetson_performance_claim": False,
-            }
-        )
+    onnx_available = importlib.util.find_spec("onnx") is not None
+    ort_available = importlib.util.find_spec("onnxruntime") is not None
+    records: list[dict[str, Any]] = []
+    for model_index, model_name in enumerate(MODEL_NAMES):
+        record: dict[str, Any] = {
+            "model_family": model_name,
+            "execution": "project_owned_tiny_export_feasibility_surrogate",
+            "status": "not_attempted_missing_optional_onnx",
+            "opset": 17,
+            "input_name": "model_input",
+            "output_name": "native_logits",
+            "fixed_input_shape": [1, 3, 32, 64],
+            "output_shape": None,
+            "numerical_tolerance": None,
+            "operators": [],
+            "file_size_bytes": None,
+            "failure_classification": "optional_dependency_unavailable",
+            "jetson_performance_claim": False,
+        }
+        if onnx_available:
+            try:
+                import torch
+
+                onnx = __import__("onnx")
+                torch.manual_seed(20260727 + model_index)
+                model = _tiny_semantic_model(torch, model_index).eval()
+                inputs = torch.zeros((1, 3, 32, 64), dtype=torch.float32)
+                output_path = context.stage_root / f"{model_name}.onnx"
+                with torch.no_grad():
+                    expected = model(inputs).numpy()
+                torch.onnx.export(
+                    model,
+                    (inputs,),
+                    output_path,
+                    input_names=["model_input"],
+                    output_names=["native_logits"],
+                    opset_version=17,
+                    dynamo=False,
+                )
+                graph = onnx.load(str(output_path))
+                onnx.checker.check_model(graph)
+                record.update(
+                    {
+                        "status": "checker_passed_runtime_pending",
+                        "output_shape": list(expected.shape),
+                        "operators": sorted({node.op_type for node in graph.graph.node}),
+                        "file_size_bytes": output_path.stat().st_size,
+                        "onnx_sha256": sha256_file(output_path),
+                        "failure_classification": None,
+                    }
+                )
+                if ort_available:
+                    ort = __import__("onnxruntime")
+                    session = ort.InferenceSession(
+                        str(output_path), providers=["CPUExecutionProvider"]
+                    )
+                    actual = session.run(["native_logits"], {"model_input": inputs.numpy()})[0]
+                    maximum = float(np.max(np.abs(actual - expected)))
+                    equivalent = bool(np.allclose(actual, expected, atol=1e-5, rtol=1e-4))
+                    record.update(
+                        {
+                            "status": "passed" if equivalent else "numerical_mismatch",
+                            "numerical_tolerance": {"atol": 1e-5, "rtol": 1e-4},
+                            "maximum_absolute_difference": maximum,
+                            "failure_classification": None if equivalent else "numerical_mismatch",
+                        }
+                    )
+            except Exception as error:
+                record.update(
+                    {
+                        "status": "failed",
+                        "failure_classification": type(error).__name__,
+                        "error": str(error)[:500],
+                    }
+                )
+        records.append(record)
     return _base_receipt(
         context,
         status="passed",

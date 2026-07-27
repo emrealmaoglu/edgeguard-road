@@ -11,7 +11,8 @@ STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "semantic_compatibility": ("dataset_prepare",),
     "semantic_smoke": ("semantic_compatibility",),
     "semantic_screening": ("semantic_smoke",),
-    "semantic_medium": ("semantic_screening",),
+    "export_probe": ("semantic_screening",),
+    "semantic_medium": ("semantic_screening", "export_probe"),
     "semantic_hpo": ("semantic_medium",),
     "semantic_final": ("semantic_hpo",),
     "zero_shot_ood": ("semantic_smoke",),
@@ -21,7 +22,6 @@ STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "detection_training": ("detection_smoke",),
     "contextual_risk": ("zero_shot_ood", "detection_training"),
     "temporal_fusion": ("contextual_risk",),
-    "export_probe": ("semantic_smoke",),
     "final_evaluation": (
         "semantic_final",
         "trainable_anomaly_head",

@@ -57,6 +57,47 @@ def ensure_disk_space(path: Path, required_bytes: int, *, reserve_bytes: int = 2
         )
 
 
+def require_fresh_heartbeat(
+    payload: Mapping[str, Any], *, now: datetime, maximum_age_seconds: float
+) -> None:
+    """Fail when a persisted heartbeat is missing, invalid, future, or stale."""
+    if maximum_age_seconds <= 0:
+        raise ValueError("maximum heartbeat age must be positive")
+    value = payload.get("heartbeat_utc")
+    if not isinstance(value, str):
+        raise ValueError("heartbeat_utc is missing")
+    try:
+        heartbeat = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError("heartbeat_utc is invalid") from error
+    if heartbeat.tzinfo is None or now.tzinfo is None:
+        raise ValueError("heartbeat timestamps must be timezone-aware")
+    age = (now - heartbeat).total_seconds()
+    if age < 0 or age > maximum_age_seconds:
+        raise TimeoutError("heartbeat is stale or in the future")
+
+
+def atomic_copy_verified(source: Path, destination: Path, *, expected_sha256: str) -> None:
+    """Copy through an incoming file and promote only after SHA-256 verification."""
+    from edgeguard.serialization import sha256_file
+
+    if not source.is_file() or sha256_file(source) != expected_sha256:
+        raise ValueError("artifact source is missing or has a hash mismatch")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    incoming = destination.with_name(f".{destination.name}.incoming")
+    if destination.exists() or incoming.exists():
+        raise ValueError("artifact destination or incoming file already exists")
+    try:
+        shutil.copy2(source, incoming)
+        if sha256_file(incoming) != expected_sha256:
+            raise RuntimeError("copied artifact failed SHA-256 verification")
+        os.replace(incoming, destination)
+    except BaseException:
+        if incoming.exists():
+            incoming.unlink()
+        raise
+
+
 class LongRunStatus:
     """Atomic heartbeat and progress record for one script-first operation."""
 
