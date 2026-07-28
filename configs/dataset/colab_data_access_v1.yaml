@@ -1,0 +1,128 @@
+schema_version: "1.0"
+record_type: edgeguard_colab_data_access
+storage:
+  drive_capacity_gib: 5120
+  colab_ephemeral_limit_gib: 200
+  reserve_gib: 25
+  maximum_staged_gib: 175
+  drive_project_directory: EdgeGuard
+  dataset_directory: datasets
+  archive_directory: archives
+  bundle_directory: bundles
+datasets:
+  cityscapes:
+    campaign_role: required_source
+    activation_phase: source_training
+    access_method: registered_manual
+    official_url: https://www.cityscapes-dataset.com/downloads/
+    instructions: Register, accept the license, and download only the Fine train/val/test image and label packages.
+    packages:
+      - filename: leftImg8bit_trainvaltest.zip
+        purpose: RGB images
+      - filename: gtFine_trainvaltest.zip
+        purpose: Fine semantic labels
+    prepared_subdirectory: cityscapes
+    required_paths:
+      - leftImg8bit/train
+      - leftImg8bit/val
+      - gtFine/train
+      - gtFine/val
+  bdd100k:
+    campaign_role: required_source
+    activation_phase: source_training
+    access_method: official_direct_or_manual
+    official_url: https://github.com/bdd100k/bdd100k/blob/master/doc/source/download.rst
+    instructions: Download only 10K Images and Semantic Segmentation from the official ETH-hosted release; do not download the 100K detection/video corpus.
+    packages:
+      - filename: bdd100k_images_10k.zip
+        purpose: 10K RGB images
+        published_size: 1.1 GB
+        published_md5: 08f26aecceda982568063d3d5873378e
+      - filename: bdd100k_sem_seg_labels_trainval.zip
+        purpose: semantic train/validation masks
+        published_size: 419 MB
+        published_md5: 9a2968dde3345eeb689cffb1e26f9c78
+    prepared_subdirectory: bdd100k
+    required_paths:
+      - images/10k/train
+      - images/10k/val
+      - labels/sem_seg/masks/train
+      - labels/sem_seg/masks/val
+  idd20k:
+    campaign_role: required_source
+    activation_phase: source_training
+    access_method: registered_manual
+    official_url: https://idd.insaan.iiit.ac.in/evaluation/autonue19/
+    instructions: Register for the AutoNUE event, download IDD20K Part I and Part II, and extract both into the same folder.
+    packages:
+      - filename: IDD20K_PART_I__KEEP_OFFICIAL_FILENAME
+        purpose: IDD20K Part I
+      - filename: IDD20K_PART_II__KEEP_OFFICIAL_FILENAME
+        purpose: IDD20K Part II
+    prepared_subdirectory: idd20k
+    required_paths:
+      - leftImg8bit/train
+      - leftImg8bit/val
+      - gtFine/train
+      - gtFine/val
+  acdc:
+    campaign_role: frozen_domain_shift
+    activation_phase: after_model_freeze
+    access_method: registered_manual
+    official_url: https://acdc.vision.ee.ethz.ch/download
+    instructions: After model freeze, download only RGB train/val/test and semantic train/val ground truth.
+    packages:
+      - filename: rgb_anon_trainvaltest.zip
+        purpose: adverse-condition RGB images
+        published_size: 15.6 GB
+      - filename: gt_trainval.zip
+        purpose: semantic train/validation labels
+        published_size: 127 MB
+    prepared_subdirectory: acdc
+    required_paths:
+      - rgb_anon/val
+      - gt/val
+  wilddash2:
+    campaign_role: primary_sealed_external
+    activation_phase: after_model_and_protocol_freeze
+    access_method: registered_manual_approval
+    official_url: https://www.wilddash.cc/submit
+    instructions: Register with an academic email at least one week early; use the official resumable downloader only after the sealed release gate.
+    packages: []
+    prepared_subdirectory: wilddash2
+    required_paths: []
+  muses:
+    campaign_role: secondary_sealed_external
+    activation_phase: after_model_and_protocol_freeze
+    access_method: official_direct
+    official_url: https://muses.ethz.ch/MUSES_packages/
+    instructions: After the sealed release gate, download only camera frames and semantic ground truth; lidar, radar, events, panoptic and detection packages are unnecessary.
+    packages:
+      - filename: frame_camera_trainvaltest.zip
+        purpose: RGB camera frames
+        published_size: 5.3 GB
+        url: https://muses.ethz.ch/MUSES_packages/frame_camera_trainvaltest.zip
+      - filename: gt_semantic_trainval.zip
+        purpose: semantic train/validation labels
+        published_size: 84 MB
+        url: https://muses.ethz.ch/MUSES_packages/gt_semantic_trainval.zip
+    prepared_subdirectory: muses
+    required_paths: []
+  kitti:
+    campaign_role: external_fallback
+    activation_phase: only_if_wilddash_and_muses_unavailable
+    access_method: registered_manual
+    official_url: https://www.cvlibs.net/datasets/kitti/eval_semseg.php?benchmark=semantics
+    instructions: Register and download the 314 MB semantic/instance labels plus the corresponding KITTI Stereo/Flow 2015 images; use only the predeclared 200 labeled training images.
+    packages: []
+    prepared_subdirectory: kitti
+    required_paths: []
+excluded_sources:
+  - source_id: huggingface-segments-sidewalk-semantic
+    reason: Anonymous Dataset Viewer returned 401 and no official, reproducible acquisition route was verified.
+  - source_id: third_party_dataset_mirrors
+    reason: License, release identity, completeness, and checksum provenance cannot be defended.
+  - source_id: mapillary_vistas_phase_one
+    reason: Account access and a version-frozen Cityscapes19 mapping are not ready; retain only as a future catalog candidate.
+  - source_id: a2d2_phase_one
+    reason: Publicly downloadable but outside the approved first Colab campaign because its lossy RGB ontology mapping needs a separate ablation.

@@ -9,8 +9,8 @@
 | IDD20K | `controlled_lossy_source_ablation` | 20,000 | hierarchical ontology; 26 level-3 evaluation classes | `partial_exact_mapping` | `account_manual` |
 | ACDC | `public_adverse_domain_shift` | 4,006 | 19 Cityscapes semantic classes plus invalid masks | `evaluation_only_direct` | `registered_manual` |
 | WildDash 2 | `primary_sealed_external_test` | 5,032 | Cityscapes labels plus six WildDash-specific classes and negative/void policy | `sealed_server_only` | `public_server_submission` |
-| MUSES | `secondary_sealed_external_test` | 2,500 | 19 Cityscapes evaluation classes with panoptic and difficulty annotations | `sealed_evaluation_only` | `account_manual` |
-| KITTI semantic segmentation | `external_access_fallback` | 400 | Cityscapes-compatible semantic format | `fallback_evaluation_only` | `public_direct` |
+| MUSES | `secondary_sealed_external_test` | 2,500 | 19 Cityscapes evaluation classes with panoptic and difficulty annotations | `sealed_evaluation_only` | `public_direct` |
+| KITTI semantic segmentation | `external_access_fallback` | 400 | Cityscapes-compatible semantic format | `fallback_evaluation_only` | `registered_manual` |
 | Mapillary Vistas | `phase_two_broad_domain_candidate` | 25,000 | version-sensitive taxonomy; V1 paper reports 66 classes | `blocked_pending_versioned_mapping_review` | `account_manual` |
 | A2D2 semantic segmentation | `phase_two_geographic_source_candidate` | 41,277 | 55 official RGB colors representing 38 semantic concepts/variants | `phase2_partial_mapping_proposal` | `public_direct` |
 
@@ -21,8 +21,3 @@
 - Source domains are sampled uniformly in the primary experiment; physical file concatenation is not the sampling policy.
 - Official validation, adverse-domain, and sealed external records never enter training, calibration, preprocessing fitting, HPO, or debugging.
 - Dataset version, license receipt, source hash, mapping hash, split hash, exact hash, and perceptual-hash evidence are required before scientific use.
-
-## Engineering probes
-
-- `huggingface-nateraw-ade20k-tiny`: anonymous_viewer_verified_2026-07-28; engineering schema probe only; not road-domain evidence and not a training source.
-- `huggingface-segments-sidewalk-semantic`: viewer_returned_401_2026-07-28; unavailable without authentication; not accepted from catalog metadata alone.

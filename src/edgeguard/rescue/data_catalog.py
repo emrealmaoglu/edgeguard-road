@@ -183,13 +183,13 @@ def render_catalog_markdown(catalog: dict[str, Any]) -> str:
                 "- Dataset version, license receipt, source hash, mapping hash, split hash, "
                 "exact hash, and perceptual-hash evidence are required before scientific use."
             ),
-            "",
-            "## Engineering probes",
-            "",
         ]
     )
-    for probe in catalog.get("integration_probes", []):
-        lines.append(f"- `{probe['probe_id']}`: {probe['status']}; {probe['scientific_role']}.")
+    probes = catalog.get("integration_probes", [])
+    if probes:
+        lines.extend(("", "## Engineering probes", ""))
+        for probe in probes:
+            lines.append(f"- `{probe['probe_id']}`: {probe['status']}; {probe['scientific_role']}.")
     return "\n".join(lines) + "\n"
 
 

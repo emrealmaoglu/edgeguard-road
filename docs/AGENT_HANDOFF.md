@@ -1,12 +1,26 @@
 # Agent Handoff
 
-- **Milestone:** official-source catalog and bounded public-data probe implemented.
+- **Milestone:** Colab data access, 200 GiB staging, and delivery notebooks implemented.
 - **Branch:** `rescue/semantic-first`; source catalog/probe and CI hardening are pushed
   through `be66669` before this final state record.
 - **Classification:** implementation plus real public-source engineering evidence; no
   scientific model result.
 
-## Completed in this block
+## Latest completion
+
+- Added a strict 5 TiB Drive / 200 GiB Colab access contract and human-readable runbook.
+- Split delivery into data-preflight and training notebooks; both are output-free and
+  their code cells compile.
+- Added archive SHA-256/MD5 inventory, native prepared-root gates, deterministic tar
+  receipts, safe staged extraction, 175 GiB data ceiling, and 25 GiB reserve.
+- Added exact-commit single-file work snapshots so interrupted sessions can resume
+  without training directly against mounted Drive.
+- Corrected MUSES to its official direct package directory and KITTI to registered
+  access; removed inaccessible Hugging Face road probes and third-party mirrors.
+- Full local gate: Ruff 259 files, mypy 99 source files, pytest 374 passed/10 skipped,
+  notebook compile, and diff check passed.
+
+## Earlier source-catalog completion
 
 - Replaced the stale mixed-task dataset catalog with a nine-dataset semantic portfolio.
 - Recorded official counts/splits, native label contracts, access/license state,
@@ -20,8 +34,8 @@
 - Added deterministic size-power domain quotas for a future alpha ablation while keeping
   uniform domains as the primary and only active sampler.
 - Documented merge, leakage, class-imbalance and HPO boundaries, plus the real probe.
-- Verified anonymous Hugging Face Viewer behavior for a tiny plumbing dataset and
-  recorded that inaccessible road candidates remain unavailable.
+- Removed non-road plumbing probes and inaccessible road candidates from the active
+  catalog; the official A2D2 sample evidence remains documented separately.
 
 ## Verification
 
@@ -39,7 +53,8 @@
 
 ## External execution order
 
-1. Acquire licensed Cityscapes, BDD100K and IDD20K packages outside Git and bind hashes.
+1. Run `EdgeGuard_Data_Preflight_Colab.ipynb`; acquire only approved official
+   Cityscapes, BDD100K and IDD20K packages and bind hashes.
 2. Audit, review and explicitly freeze all three source manifests.
 3. Run the five-model smoke/pilot/screening path and validate ONNX feasibility.
 4. Run top-two HPO, dataset-composition and CE/weighted-CE ablations.

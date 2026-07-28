@@ -3,7 +3,7 @@
 - **Repository/branch:** `rescue/semantic-first`; multi-domain rescue baseline `cbef065`,
   dataset-source hardening `0df7801`, optional-integration CI fix `2828630`, and Node 24
   action update `be66669` are committed and pushed.
-- **Active work package:** `EG-MULTIDOMAIN-001`, source acquisition and catalog gate.
+- **Active work package:** `EG-MULTIDOMAIN-001`, Drive acquisition and real-data audit gate.
 - **Research scope:** domain generalization for Cityscapes19 semantic segmentation with
   Cityscapes, BDD100K, and IDD20K source data; five lightweight MMSeg models; bounded
   HPO; class imbalance; reliability; ACDC; sealed WildDash 2/MUSES; ONNX/demo.
@@ -28,18 +28,23 @@
   separate; primary sampling is domain-uniform. Size-power sampling alpha `{0,0.5,1}`
   is implemented/documented only as a post-baseline data ablation and is excluded from
   HPO.
-- **Hugging Face probe:** anonymous Dataset Viewer access was verified for the 20-row
-  `nateraw/ade20k-tiny` image/label fixture as plumbing evidence only. Road-specific
-  candidates returning 401 are treated unavailable, not inferred public.
-- **Local quality:** all-tree Ruff format/lint passed for 253 files, mypy passed for
-  98 source files, and the full suite passed with `369 passed, 10 skipped`. The catalog
-  command, real A2D2 sample probe, nine-source HTTPS probe and `git diff --check` passed.
+- **Colab data path:** two ordered notebooks now separate manual/legal data preparation
+  from GPU execution. The Drive inventory hashes official archives, validates prepared
+  roots and creates deterministic one-file bundles. Staging verifies bundle/receipt
+  hashes and enforces 175 GiB staged data plus a 25 GiB runtime reserve under the user's
+  200 GiB session limit. Work snapshots are single files and restore by exact commit.
+- **Acquisition decision:** inaccessible Hugging Face road probes and all third-party
+  mirrors are removed. MUSES RGB+semantic packages are verified official direct access;
+  KITTI is corrected to registered access. ACDC/WildDash/MUSES/KITTI remain final-only.
+- **Local quality:** all-tree Ruff format/lint passed for 259 files, mypy passed for
+  99 source files, and the full suite passed with `374 passed, 10 skipped`. Both delivery
+  notebooks parse and all code cells compile; `git diff --check` passed.
 - **Remote quality:** GitHub CI run `30332310919` passed both Python 3.10 and 3.11 using
   official `actions/checkout@v7` and `actions/setup-python@v7`. The preceding CI failure
   was traced to one optional MMSeg test assuming `mmengine` in the core environment;
   it now skips only when that optional integration is absent and still runs locally.
 - **Validation separation:** BDD100K/IDD20K official val remains final-only; ACDC is
-  domain-shift-only; WildDash 2/MUSES remain sealed and have no sample download path.
+  domain-shift-only; WildDash 2/MUSES remain sealed even though MUSES files are public.
 - **Implemented experiment/deployment path:** five-model step protocol, measured-only
   top-two Optuna HPO, equal-domain calibration, sealed release, static ONNX validation,
   aspect-preserving inference, Streamlit demo, Colab notebook, evidence tables and
@@ -50,9 +55,10 @@
 - **Local data/compute:** only the bounded public A2D2 probe is present under ignored
   cache. No licensed Cityscapes/BDD100K/IDD20K/ACDC/WildDash/MUSES corpus is available;
   this Apple M1 host has no CUDA training path.
-- **Next action:** acquire licensed Cityscapes/BDD100K/IDD20K packages outside Git,
-  record archive receipts, execute the three real audits, review/freeze manifests, then
-  run five 50-step CUDA smokes. A2D2 stays phase two until the primary comparison exists.
+- **Next action:** run `EdgeGuard_Data_Preflight_Colab.ipynb`, manually acquire only the
+  approved Cityscapes/BDD100K/IDD20K packages, save archive hashes, prepare and bundle
+  native roots, then open the training notebook for the three real audits. Review/freeze
+  manifests before five 50-step CUDA smokes. A2D2 stays phase two.
 
 Implemented, locally verified, externally executed, scientifically measured and human
 accepted remain separate states.

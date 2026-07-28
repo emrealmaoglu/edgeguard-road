@@ -54,12 +54,14 @@ planning ranges until replaced by measurements.
 
 ### EG-DATA-SOURCES-001 — Official source and merge catalog
 
-- **Status:** implemented; public A2D2 sample and all official landing pages verified
-  on 2026-07-28; full licensed source acquisition remains external.
+- **Status:** implemented; public A2D2 sample and official routes verified on 2026-07-28;
+  inaccessible road probes/third-party mirrors removed; Drive inventory/bundle/staging
+  notebooks locally verified; full licensed source acquisition remains external.
 - **Objective:** maintain one semantic-only catalog, reject inaccessible/mislabeled
   mirrors, prove bounded public acquisition, and make every lossy merge explicit.
 - **Implemented:** nine-dataset catalog; source probe; size/SHA-256-gated A2D2 sample;
-  55-color exact/ignore proposal; merge/HPO protocol; size-power sampler ablation helper.
+  55-color exact/ignore proposal; merge/HPO protocol; 200 GiB Colab access plan;
+  archive hashing; prepared-root validation; deterministic bundles and safe staging.
 - **Boundary:** the A2D2 sample is plumbing evidence only. Mapillary/A2D2 cannot enter
   the primary experiment until separately reviewed full-corpus manifests are frozen.
 

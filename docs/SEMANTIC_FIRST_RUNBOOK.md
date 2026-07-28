@@ -132,8 +132,11 @@ ledgers are evidence artifacts and must not be committed.
 
 ## 1. Environment and audit gate
 
-Use `notebooks/EdgeGuard_Road_Colab.ipynb` for the pinned CUDA/MMCV/MMSeg setup. For
-an already prepared runtime, set `MMSEG_ROOT` to the pinned MMSeg checkout.
+First run `notebooks/EdgeGuard_Data_Preflight_Colab.ipynb`; follow
+`docs/COLAB_DATA_ACCESS.md` for official access and the 200 GiB staging contract. Then use
+`notebooks/EdgeGuard_Road_Colab.ipynb` for the pinned CUDA/MMCV/MMSeg setup. The training
+notebook reads verified local `/content` bundles rather than thousands of mounted Drive
+files. For an already prepared runtime, set `MMSEG_ROOT` to the pinned MMSeg checkout.
 
 ```bash
 python scripts/audit_dataset.py \

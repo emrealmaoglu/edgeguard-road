@@ -79,8 +79,8 @@
       "dataset_id": "muses",
       "name": "MUSES",
       "portfolio_role": "secondary_sealed_external_test",
-      "official_source": "https://muses.vision.ee.ethz.ch/",
-      "access": {"mode": "account_manual", "sealed": true, "verified_local": false},
+      "official_source": "https://muses.ethz.ch/MUSES_packages/",
+      "access": {"mode": "public_direct", "sealed": true, "verified_local": false},
       "license": {"id": "MUSES terms", "redistribution": "check official terms", "human_acceptance_required": true},
       "statistics": {"annotated_images": 2500, "conditions": {"clear_day": 500, "adverse_day": 1000, "adverse_night": 1000}, "modalities": ["RGB", "lidar", "radar", "events"]},
       "label_contract": {"native_summary": "19 Cityscapes evaluation classes with panoptic and difficulty annotations", "encoding": "Cityscapes-compatible semantic projection", "canonical_coverage": "19/19"},
@@ -93,7 +93,7 @@
       "name": "KITTI semantic segmentation",
       "portfolio_role": "external_access_fallback",
       "official_source": "https://www.cvlibs.net/datasets/kitti/eval_semseg.php?benchmark=semantics",
-      "access": {"mode": "public_direct", "sealed": false, "verified_local": false},
+      "access": {"mode": "registered_manual", "sealed": false, "verified_local": false},
       "license": {"id": "KITTI non-commercial terms", "redistribution": "prohibited", "human_acceptance_required": true},
       "statistics": {"annotated_images": 400, "splits": {"train": 200, "test": 200}, "geography": "Karlsruhe, Germany"},
       "label_contract": {"native_summary": "Cityscapes-compatible semantic format", "encoding": "regular label IDs/train IDs per devkit", "canonical_coverage": "19/19"},
@@ -137,19 +137,6 @@
           {"filename": "label.png", "role": "front_center_semantic_rgb", "url": "https://audi-autonomous-driving-dataset.s3.eu-central-1.amazonaws.com/camera_lidar_semantic/20180807_145028/label/cam_front_center/20180807145028_label_frontcenter_000000091.png", "byte_size": 71403, "sha256": "43a7a453fe632228d181f06673fc7c9adfd16f19060f70ef31161138d2c89666"}
         ]
       }
-    }
-  ],
-  "integration_probes": [
-    {
-      "probe_id": "huggingface-nateraw-ade20k-tiny",
-      "status": "anonymous_viewer_verified_2026-07-28",
-      "viewer_contract": {"config": "default", "splits": {"train": 10, "validation": 10}, "features": ["image", "label"], "total_bytes": 929750},
-      "scientific_role": "engineering schema probe only; not road-domain evidence and not a training source"
-    },
-    {
-      "probe_id": "huggingface-segments-sidewalk-semantic",
-      "status": "viewer_returned_401_2026-07-28",
-      "scientific_role": "unavailable without authentication; not accepted from catalog metadata alone"
     }
   ]
 }
