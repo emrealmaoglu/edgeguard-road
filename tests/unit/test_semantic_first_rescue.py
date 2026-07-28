@@ -193,6 +193,7 @@ def test_mmseg_role_file_uses_suffix_free_cityscapes_identifiers(tmp_path: Path)
 
 
 def test_all_models_receive_the_same_model_input_size(tmp_path: Path) -> None:
+    pytest.importorskip("mmengine", reason="MMSeg config resolution is an optional integration")
     protocol = load_rescue_config(Path("configs/rescue/semantic_first.yaml"))
     sample = _sample(0)
     record = {
