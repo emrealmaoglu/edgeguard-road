@@ -1,7 +1,8 @@
 # Project State
 
-- **Repository/branch:** `rescue/semantic-first`; multi-domain rescue baseline committed
-  and pushed at `cbef065`; the current dataset-source hardening block is not yet committed.
+- **Repository/branch:** `rescue/semantic-first`; multi-domain rescue baseline `cbef065`,
+  dataset-source hardening `0df7801`, optional-integration CI fix `2828630`, and Node 24
+  action update `be66669` are committed and pushed.
 - **Active work package:** `EG-MULTIDOMAIN-001`, source acquisition and catalog gate.
 - **Research scope:** domain generalization for Cityscapes19 semantic segmentation with
   Cityscapes, BDD100K, and IDD20K source data; five lightweight MMSeg models; bounded
@@ -33,6 +34,10 @@
 - **Local quality:** all-tree Ruff format/lint passed for 253 files, mypy passed for
   98 source files, and the full suite passed with `369 passed, 10 skipped`. The catalog
   command, real A2D2 sample probe, nine-source HTTPS probe and `git diff --check` passed.
+- **Remote quality:** GitHub CI run `30332310919` passed both Python 3.10 and 3.11 using
+  official `actions/checkout@v7` and `actions/setup-python@v7`. The preceding CI failure
+  was traced to one optional MMSeg test assuming `mmengine` in the core environment;
+  it now skips only when that optional integration is absent and still runs locally.
 - **Validation separation:** BDD100K/IDD20K official val remains final-only; ACDC is
   domain-shift-only; WildDash 2/MUSES remain sealed and have no sample download path.
 - **Implemented experiment/deployment path:** five-model step protocol, measured-only

@@ -1,8 +1,8 @@
 # Agent Handoff
 
 - **Milestone:** official-source catalog and bounded public-data probe implemented.
-- **Branch:** `rescue/semantic-first`; baseline `cbef065` is on origin; current block is
-  uncommitted pending final all-tree verification.
+- **Branch:** `rescue/semantic-first`; source catalog/probe and CI hardening are pushed
+  through `be66669` before this final state record.
 - **Classification:** implementation plus real public-source engineering evidence; no
   scientific model result.
 
@@ -34,6 +34,8 @@
 - Full pytest: `369 passed, 10 skipped`.
 - Catalog regeneration, idempotent real sample probe, nine-source HTTPS probe and
   `git diff --check` passed.
+- GitHub CI run `30332310919`: Python 3.10 and 3.11 jobs passed with Node 24-based
+  official action majors. The earlier optional-`mmengine` core-CI failure is fixed.
 
 ## External execution order
 
