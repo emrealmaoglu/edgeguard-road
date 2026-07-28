@@ -1,5 +1,11 @@
 # Executable Task System
 
+> **Active work package: EG-MULTIDOMAIN-001.** The owner expanded the semantic-first
+> path on 2026-07-28 to Cityscapes + BDD100K + IDD20K, five-model screening,
+> top-two bounded HPO, equal-domain calibration, ACDC, and sealed WildDash 2/MUSES.
+> Detection, temporal, depth, fusion, INT8, and advanced tracking remain
+> experimental/legacy and do not block delivery. See `docs/SEMANTIC_FIRST_RUNBOOK.md`.
+
 ## Status
 
 - `EG-OOD-001 — Current Fishyscapes/OOD foundation closure`: **completed and
@@ -26,6 +32,25 @@
 
 Each task below is a commit-sized human-gated unit. Compute and storage values are
 planning ranges until replaced by measurements.
+
+### EG-MULTIDOMAIN-001 — Multi-domain generalization campaign
+
+- **Objective:** Measure whether controlled source-domain expansion improves
+  domain-macro and sealed external performance for lightweight semantic models.
+- **Implemented locally:** Versioned Cityscapes19 mappings; BDD/IDD audit and
+  sequence-atomic manifests; exact/cross-domain duplicate gates; domain-uniform
+  sampler; five step-based models; bounded top-two Optuna HPO; equal-domain
+  calibration evidence; sealed external release/package enforcement; reporting and
+  Colab wiring.
+- **External execution:** Acquire licensed data, audit/freeze three manifests, run
+  smoke/pilot/screening, freeze top two, execute HPO/finals/ablations, then open ACDC
+  and finally one WildDash/MUSES submission.
+- **Acceptance:** Three real source audits, five pilots, interpretable screening,
+  top-two HPO, dataset/loss ablations, calibrated source/ACDC metrics, validated ONNX,
+  and one server-returned sealed external result.
+- **Stop conditions:** Mapping ambiguity, source-role leakage, cross-domain duplicate,
+  non-frozen manifest, external release mismatch, or any attempt to tune after sealed
+  evaluation.
 
 ## Immediate critical path
 

@@ -1,0 +1,10 @@
+{
+  "schema_version": "2.0",
+  "record_type": "edgeguard_sealed_release",
+  "manifest_sha256": "replace-with-frozen-external-manifest-sha256",
+  "checkpoint_sha256": "replace-with-frozen-checkpoint-or-onnx-sha256",
+  "model_selection_frozen": true,
+  "human_approved": true,
+  "opened_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "note": "One scientific submission; technical retry may not change model or preprocessing."
+}

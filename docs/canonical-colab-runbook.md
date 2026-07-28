@@ -1,4 +1,8 @@
-# Canonical Colab runbook
+# Canonical Colab runbook (experimental/legacy)
+
+The rescue delivery notebook is `notebooks/EdgeGuard_Road_Colab.ipynb`. The campaign
+sequence below is retained for historical engineering evidence and is not on the
+semantic-first critical path.
 
 Only the following notebooks are active campaign entry points, in this order:
 

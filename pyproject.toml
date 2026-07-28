@@ -24,7 +24,20 @@ dev = [
   "types-Pillow>=10,<13",
   "types-PyYAML>=6,<7",
 ]
-colab = []
+rescue = [
+  "matplotlib>=3.8,<4",
+  "onnx>=1.16,<2",
+  "onnxruntime>=1.18,<2",
+  "optuna>=4,<5",
+  "streamlit>=1.40,<2",
+]
+colab = [
+  "matplotlib>=3.8,<4",
+  "onnx>=1.16,<2",
+  "onnxruntime>=1.18,<2",
+  "optuna>=4,<5",
+  "streamlit>=1.40,<2",
+]
 jetson = []
 
 [project.scripts]

@@ -9,11 +9,22 @@
 | ADR-0005 | Seal final-test data | Accepted |
 | ADR-0006 | Keep runtime artifacts outside Git | Accepted |
 | ADR-0007 | Preserve AI/human approval boundaries | Accepted |
+| ADR-0008 | Make semantic-first the delivery-critical path | Accepted |
+| ADR-0009 | Make multi-domain generalization the scientific core | Accepted |
 
 New architectural decisions receive the next sequential ADR number. Scientific
 results and transient implementation notes do not become ADRs.
 
-## Approved planning constraints pending implementation
+## Active multi-domain semantic decision
+
+- ADR-0008 keeps semantic segmentation as the delivery-critical path.
+- ADR-0009 expands that path to three source domains, five models, bounded top-two
+  HPO, and sealed WildDash 2/MUSES evaluation without reopening detection/temporal work.
+- `docs/SEMANTIC_FIRST_RUNBOOK.md` is canonical for execution and claim boundaries.
+- The expanded plan remains experimental/legacy; it may resume only after the
+  semantic-first evidence package is safe.
+
+## Historical expanded planning constraints
 
 - The expanded multi-model direction and proposed titles are recorded in
   `PROJECT_CHARTER.md`; university title approval remains open.

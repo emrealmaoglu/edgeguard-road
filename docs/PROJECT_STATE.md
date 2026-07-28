@@ -1,22 +1,51 @@
 # Project State
 
-- **Repository/branch:** `.` on `feat/first-vertical-slice`.
-- **Latest local milestone:** bounded pre-Colab stabilization on top of `EG-LOCAL-COMPLETE`; all evidence remains non-scientific pipeline validation.
-- **Quality:** Python 3.11 local gate passes with Ruff, format, mypy, and 339 pytest tests; two optional tests are skipped. Python 3.10 no-Torch and remote Python 3.10/3.11 gates remain pending for the final revision.
-- **Real semantic code paths:** Fast-SCNN, BiSeNetV2, PIDNet-S, DDRNet-23-Slim, and SegFormer-B0 each complete actual random-weight MMSeg construction, fixture loading, augmentation, loss/backward, two optimizer steps with accumulation, validation, 19-channel native logits, feature extraction, anomaly-head optimization, checkpoint, and exact resume. No synthetic ranking is permitted.
-- **Real detector code paths:** YOLO11n and RT-DETR-R18 each complete authoritative-library random-weight construction, actual detector loss/backward, optimizer/scheduler step, checkpoint/resume, prediction decoding, common box contract, and ONNX feasibility. No pretrained weight was downloaded.
-- **Actual architecture export:** all five semantic architectures and both detectors complete ONNX checker and ONNX Runtime comparison locally. The production-architecture investigation classifies random-weight PIDNet-S and RT-DETR-R18 as `bounded_documented_drift` at opsets 17 and 18 without loosening the fixed diagnostic tolerances. ONNX files remain ignored external artifacts; production/pretrained CUDA, TensorRT, and Jetson equivalence remain unmeasured.
-- **OOD/calibration/statistics:** MSP, entropy, MaxLogit, Energy, AUROC, AP, FPR95, three development-only threshold policies, valid/ignored regions, per-source summaries, deterministic bootstrap, component metrics, scalar temperature fitting, NLL, ECE, and Brier are locally executable. Raw OOD scores are not probabilities.
-- **HPO and recovery:** the actual two-model/four-trial mini HPO supports deterministic identity, hard gates, Pareto reporting, interrupted-trial resume, failed-trial isolation, and human-only final promotion. Separate actual semantic and detector campaign interruption/resume probes pass; temporal state is restored mid-sequence.
-- **Full video/UI:** a six-frame actual random-weight semantic + feature-head + YOLO path completes score maps, components, contextual risk, temporal tracking, missed-frame handling, one isolated detector failure, overlays, lineage, deterministic replay, and Streamlit headless execution. UI time is excluded from latency.
-- **Data lifecycle:** authoritative path-free catalog, task contracts, quality/EDA, transformations, optional class-aware crop, rare-class sampling, source-aware loader, resumable acquisition, retry/range/hash/atomic promotion, generator resume, and slow-destination copy are locally tested with fixtures.
-- **Lineage:** every closure receipt records config identity, exact dependency artifact hashes, output hashes, and maturity. Real file corruption and config-identity mismatch are detected; only transitive consumers are invalidated and unrelated detection evidence is preserved.
-- **Deployment packaging:** a deterministic random-weight ONNX bundle now carries model/config/checkpoint identities, preprocessing/postprocessing contracts, ontology, explicit non-scientific calibration/threshold placeholders, runtime requirements, numerical validation, and a SHA-256 manifest. Package creation, integrity/identity rejection, and ONNX Runtime fixture inference are locally end-to-end validated; binaries remain outside Git.
-- **Canonical Colab entry points:** only `00_campaign_control.ipynb`, `10_semantic_campaign.ipynb`, `20_ood_calibration_risk.ipynb`, `30_detection_temporal_fusion.ipynb`, and `40_export_and_reporting.ipynb` are active. Seven older notebooks are retained only as prominently deprecated historical evidence.
-- **Evidence packages:** assistant review, thesis figure, data-lifecycle audit, and Colab-readiness ZIPs are generated under `.local/EG-LOCAL-COMPLETE/reporting/`. The bounded stabilization additionally generates `final-pre-colab-review.zip`, `onnx-equivalence-report.zip`, and `deployment-package-validation.zip` outside Git. Synthetic outputs are visibly `NON-SCIENTIFIC PIPELINE VALIDATION`.
-- **Protected boundaries:** no Drive access/mutation, real-data download, pretrained-weight download, official-val access, Fishyscapes access, Lost & Found opening, SMIYC access, CUDA claim, TensorRT engine, Jetson run, or scientific model selection occurred.
-- **Remote gates:** normal Python 3.10/3.11 CI and the expanded Linux x86 actual-codepath closure, ONNX-equivalence, and deployment-fixture workflow must pass on the final pushed revision.
-- **Next execution boundary:** after exact-commit preflight passes, approved real-data acquisition/staging and exact-commit Colab throughput/smoke execution; subsequent scientific choices remain human-owned.
+- **Repository/branch:** local `rescue/semantic-first` from `a786522`; working tree
+  remains uncommitted because no commit or push was authorized.
+- **Active work package:** `EG-MULTIDOMAIN-001`.
+- **Research scope:** domain generalization for Cityscapes19 semantic segmentation with
+  Cityscapes, BDD100K, and IDD20K source data; five lightweight MMSeg models; bounded
+  HPO; class imbalance; reliability; ACDC; sealed WildDash 2/MUSES; ONNX/demo.
+- **Implemented source-data path:** strict versioned ontology; BDD100K/IDD20K native
+  adapters; official-count, corrupt, geometry, label, exact-hash and perceptual-hash
+  audit; group-atomic 80/15/5 candidates; explicit human freeze; cross-domain duplicate
+  evidence; domain-uniform distributed sampler; pooled train-fit rare classes and
+  bounded mean-one median-frequency weights.
+- **Validation separation:** BDD100K/IDD20K `--source-split val` creates only
+  `official_source_val`; it requires frozen source manifests for overlap checking and
+  cannot enter training/HPO. Cityscapes official validation remains final-only.
+- **Implemented experiment path:** SegFormer-B0, PIDNet-S, DDRNet-23-Slim,
+  BiSeNetV2, and Fast-SCNN use common random initialization, AdamW, effective batch,
+  augmentation, 512x1024 geometry, and optimizer-step budgets. Only the three approved
+  dataset compositions are accepted.
+- **Implemented HPO path:** measured three-domain screening + validated ONNX gate;
+  top-two selection; 12-trial seeded Optuna TPE per model; 1,500/3,000-step halving;
+  interruption closure/resume; duplicate-trial pruning; domain-macro objective with
+  rare-class tie-break.
+- **Implemented reliability/external path:** equal-pixel, manifest-bound global
+  temperature scaling; ECE/NLL/Brier/confidence/entropy; ACDC/source-domain reporting;
+  hash-bound sealed release; WildDash/MUSES prediction package; official server-score
+  record that is never renamed Cityscapes19 mIoU.
+- **Implemented delivery path:** static ONNX export and numerical/latency validation;
+  aspect-preserving inference; Streamlit demo; one Colab notebook; evidence-only tables;
+  Git-aware append-only run ledgers; external artifact schema examples.
+- **Local quality:** on 2026-07-28, Python 3.11 all-tree Ruff format/lint passed for
+  248 files, mypy passed for 97 source files, five public CLI help smokes passed,
+  notebook JSON/eight code cells compiled without stored outputs, and the full suite
+  passed with `363 passed, 10 skipped`.
+- **Scientific evidence:** no new multi-domain real-data training, HPO, calibration,
+  ACDC, sealed external, or ONNX model result exists. Local fixture tests are engineering
+  evidence only and `--allow-fixture-count` manifests are rejected by training.
+- **Local data/compute:** no licensed Cityscapes/BDD100K/IDD20K/ACDC/WildDash/MUSES
+  corpus is available in this workspace; this Apple M1 host has no CUDA training path.
+- **External gates:** licensed data access; three real source audits; human manifest
+  freezes; CUDA smoke/pilot/screening; human top-two/config freeze; final training;
+  source/ACDC evaluation; sealed release and official submission. Jetson remains optional.
+- **Protected boundaries:** no dataset/model download, real-data processing, Drive
+  mutation, GPU training, official validation, sealed-data inference, submission,
+  checkpoint/ONNX artifact, Jetson action, commit, push, or PR occurred.
+- **Next action:** execute the notebook in audit-only mode on licensed source roots,
+  review/freeze all three training manifests, then run the five 50-step CUDA smokes.
 
-Planned, implemented, locally tested, remotely verified, Colab measured, Jetson measured,
-scientifically measured, and human accepted remain distinct states.
+Implemented, locally verified, externally executed, scientifically measured, and human
+accepted remain separate states.

@@ -1,5 +1,9 @@
 # EdgeGuard-Road Master Plan V2
 
+> **Experimental/legacy plan.** The human-approved rescue scope is now the
+> semantic-first path in `docs/SEMANTIC_FIRST_RUNBOOK.md`. Detection, temporal,
+> anomaly-head, broad HPO, depth, and fusion tasks below are not delivery-critical.
+
 ## Executive decision
 
 The expanded project is technically coherent and thesis-level if it remains staged,

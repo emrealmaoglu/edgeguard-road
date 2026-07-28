@@ -1,0 +1,49 @@
+schema_version: "1.0"
+seed: 20260728
+num_classes: 19
+ignore_index: 255
+crop_size: [512, 1024]
+base_scale: [2048, 1024]
+device_batch: 4
+gradient_accumulation: 1
+workers: 2
+optimizer:
+  name: AdamW
+  learning_rate: 0.00006
+  weight_decay: 0.01
+models:
+  - name: segformer_b0
+    upstream_config: configs/segformer/segformer_mit-b0_8xb1-160k_cityscapes-1024x1024.py
+  - name: fast_scnn
+    upstream_config: configs/fastscnn/fast_scnn_8xb4-160k_cityscapes-512x1024.py
+  - name: pidnet_s
+    upstream_config: configs/pidnet/pidnet-s_2xb6-120k_1024x1024-cityscapes.py
+  - name: ddrnet_23_slim
+    upstream_config: configs/ddrnet/ddrnet_23-slim_in1k-pre_2xb6-120k_cityscapes-1024x1024.py
+  - name: bisenetv2
+    upstream_config: configs/bisenetv2/bisenetv2_fcn_4xb4-160k_cityscapes-1024x1024.py
+stages:
+  smoke:
+    max_steps: 50
+  pilot:
+    max_steps: 2000
+  screening:
+    max_steps: 6000
+  hpo:
+    max_steps: 6000
+  final:
+    max_steps: 40000
+hpo:
+  trials_per_model: 12
+  max_steps: 6000
+  pruning_steps: [1500, 3000]
+  learning_rate: [0.00002, 0.0003]
+  weight_decay: [0.0001, 0.05]
+  schedulers: [poly, cosine]
+  warmup_ratios: [0.01, 0.03, 0.05]
+  sampler_seed: 20260728
+datasets:
+  training: [cityscapes, bdd100k, idd20k]
+  domain_sampling: uniform
+  external_sealed: [wilddash2, muses]
+  external_fallback: kitti

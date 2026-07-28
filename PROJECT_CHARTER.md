@@ -3,22 +3,18 @@
 ## Formal identity
 
 EdgeGuard-Road is a computer-engineering undergraduate thesis prototype for
-multi-model, open-set road-safety perception on resource-constrained edge devices.
-It combines known-object detection, semantic segmentation, uncertainty and OOD
-analysis, contextual and temporal processing, optional relative-depth evidence, and
-explainable operational-risk fusion over prerecorded road video.
+leakage-safe semantic road-scene segmentation, confidence calibration, adverse-domain
+evaluation, and deployment trade-off measurement on resource-constrained edge devices.
 
 The proposed thesis title, pending human and university approval, is:
 
-> **EdgeGuard-Road: Multi-Model Open-Set Road Safety Perception with Object
-> Detection, Semantic Segmentation, Uncertainty Calibration and Temporal Risk
-> Fusion on Resource-Constrained Edge Devices**
+> **EdgeGuard-Road: Lightweight Road-Scene Semantic Segmentation with Confidence
+> Calibration and Adverse-Condition Evaluation on Resource-Constrained Edge Devices**
 
 The proposed Turkish title is:
 
-> **Kaynak Kısıtlı Uç Cihazlarda Çok Modelli Açık Küme Yol Güvenliği Algısı:
-> Nesne Tespiti, Semantik Bölütleme, Belirsizlik Kalibrasyonu ve Zamansal Risk
-> Füzyonu**
+> **Kaynak Kısıtlı Uç Cihazlarda Hafif Yol Sahnesi Semantik Bölütleme:
+> Güven Kalibrasyonu ve Olumsuz Koşul Değerlendirmesi**
 
 The fallback title remains:
 
@@ -31,29 +27,31 @@ Nothing in this repository asserts that the university-approved title has change
 
 The project studies:
 
-1. How five edge-oriented semantic architectures compare under one leakage-safe
-   data, resolution, training, metric, and provenance protocol.
-2. How two known-object detector families complement semantic and open-set evidence.
-3. How MSP, MaxLogit, predictive entropy, Energy, calibration, synthetic outlier
-   exposure, and one trainable anomaly method compare under explicit dataset roles.
-4. How road context, connected components, lightweight temporal persistence, and an
-   optional relative-depth signal affect explainable risk decisions.
-5. What accuracy, OOD quality, latency, memory, power, energy, and thermal trade-offs
-   appear after ONNX/TensorRT deployment on Jetson Orin Nano Super.
+1. How SegFormer-B0, Fast-SCNN, PIDNet-S, DDRNet-23-Slim, and BiSeNetV2 compare under
+   one leakage-safe resolution, training, metric, initialization, and provenance protocol.
+2. Whether controlled Cityscapes + BDD100K + IDD20K training improves source-domain
+   macro mIoU and genuinely unseen-domain robustness over Cityscapes-only training.
+3. Whether train-fit-only median-frequency weighting improves rare-class IoU over
+   standard CrossEntropy without unacceptable overall degradation.
+4. How equal-domain scalar temperature calibration changes ECE, NLL, Brier,
+   confidence, and entropy.
+5. How frozen models degrade on ACDC and sealed WildDash 2/MUSES external domains.
+6. What accuracy, model-size, ONNX latency, and optional Jetson trade-offs appear for
+   the scientific and edge finalists.
 
 ## Scope
 
-- **Core:** five-model semantic screening, three final semantic checkpoints, limited
-  top-two HPO, two detector comparison with at least one final detector, zero-shot
-  OOD, calibration, one trainable anomaly method, context, lightweight temporal,
-  selected Jetson pipeline, and Streamlit prerecorded-stream dashboard.
-- **Aggressive:** second detector full HPO, coarse-to-fine semantic training, depth
-  integration, extra seeds, complete deployment profiles, and broader ablations.
-- **Stretch:** Mapillary, INT8, metric distance, learned risk fusion, and advanced
-  tracking.
+- **Core:** Cityscapes/BDD100K/IDD20K audit and source-role manifests; five random-init
+  pilots/screening; top-two bounded HPO; dataset-composition and loss ablations;
+  equal-domain calibration; ACDC plus sealed external evaluation; ONNX validation;
+  Streamlit, Colab, and thesis evidence tables.
+- **Conditional:** sustained Jetson Orin Nano Super benchmark when the approved device
+  is available.
+- **Experimental/legacy:** detection, temporal fusion, trainable
+  anomaly heads, relative depth, INT8, learned fusion, and advanced tracking.
 
-At least one final semantic checkpoint must be trained from random initialization.
-Pretrained initialization is permitted for other project-owned training runs.
+The five-architecture comparison starts from random initialization. The measured
+external pretrained PIDNet checkpoint remains a separately labeled reference.
 
 ## Claim and safety boundary
 
