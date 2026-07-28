@@ -16,9 +16,11 @@ from edgeguard.rescue.multidomain import (
     _bounded_mean_one_weights,
     audit_evaluation_dataset,
     audit_training_dataset,
+    domain_mixture_probabilities,
     freeze_candidate_manifest,
     load_semantic_ontology,
     map_source_mask,
+    power_domain_indices,
     uniform_domain_indices,
     verify_sealed_release,
     write_multidomain_statistics,
@@ -46,6 +48,20 @@ def test_uniform_domain_indices_do_not_follow_dataset_size() -> None:
     domains = [0 if value < 2 else 1 if value < 22 else 2 for value in indices]
     assert [domains.count(index) for index in range(3)] == [10, 10, 10]
     assert indices == uniform_domain_indices([2, 20, 200], total_size=30, seed=7)
+
+
+def test_size_power_domain_ablation_has_explicit_extremes() -> None:
+    lengths = [100, 400, 900]
+    assert domain_mixture_probabilities(lengths, alpha=0.0) == pytest.approx([1 / 3, 1 / 3, 1 / 3])
+    assert domain_mixture_probabilities(lengths, alpha=1.0) == pytest.approx(
+        [1 / 14, 4 / 14, 9 / 14]
+    )
+    indices = power_domain_indices(lengths, total_size=140, alpha=1.0, seed=17)
+    domains = [0 if value < 100 else 1 if value < 500 else 2 for value in indices]
+    assert [domains.count(index) for index in range(3)] == [10, 40, 90]
+    assert indices == power_domain_indices(lengths, total_size=140, alpha=1.0, seed=17)
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        domain_mixture_probabilities(lengths, alpha=1.1)
 
 
 def _write_bdd_fixture(root: Path, *, split: str = "train", offset: int = 0) -> None:

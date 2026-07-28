@@ -1,46 +1,50 @@
 # Agent Handoff
 
-- **Milestone:** multi-domain semantic rescue implementation ready for human diff review.
-- **Branch:** local `rescue/semantic-first`, uncommitted on base `a786522`.
-- **Classification:** implementation plus local engineering validation; no new
-  scientific result.
+- **Milestone:** official-source catalog and bounded public-data probe implemented.
+- **Branch:** `rescue/semantic-first`; baseline `cbef065` is on origin; current block is
+  uncommitted pending final all-tree verification.
+- **Classification:** implementation plus real public-source engineering evidence; no
+  scientific model result.
 
-## Completed
+## Completed in this block
 
-- Cityscapes19 ontology v2 with strict BDD train-ID and loss-aware IDD source-ID mapping.
-- BDD100K/IDD20K train and withheld official-validation audits, hash/provenance records,
-  group-atomic split candidates, explicit freeze, and source/external overlap gates.
-- Three approved dataset combinations, equal-domain sampler, pooled rare-five set, and
-  train-fit-only weighted CrossEntropy contract.
-- Common five-model, optimizer-step MMSeg path and separately verified classification
-  pretraining manifest for later finalist-only comparison.
-- Measured-screening-only top-two selection and resumable bounded Optuna HPO.
-- Equal-domain global temperature calibration and reliability/domain-shift tables.
-- Sealed WildDash/MUSES/KITTI release, prediction archive, and server-result binding.
-- ONNX validation/benchmark, letterboxed inference, Streamlit demo, Colab orchestration,
-  evidence report generator, and append-only Git-aware run ledger.
+- Replaced the stale mixed-task dataset catalog with a nine-dataset semantic portfolio.
+- Recorded official counts/splits, native label contracts, access/license state,
+  canonical merge policy, and protected stages.
+- Added a certificate-verified, byte-bounded public sample downloader that refuses
+  registered/sealed datasets and writes hash-bound external receipts.
+- Downloaded and inspected one official A2D2 RGB/semantic pair plus license, README and
+  class list under ignored cache; every file matched its pinned size and SHA-256.
+- Added the complete official 55-color A2D2 mapping proposal with unknown-color rejection
+  and explicit ignore reasons; verified the real sample has no undeclared colors.
+- Added deterministic size-power domain quotas for a future alpha ablation while keeping
+  uniform domains as the primary and only active sampler.
+- Documented merge, leakage, class-imbalance and HPO boundaries, plus the real probe.
+- Verified anonymous Hugging Face Viewer behavior for a tiny plumbing dataset and
+  recorded that inaccessible road candidates remain unavailable.
 
 ## Verification
 
-- Focused Ruff and mypy: passed for the rescue runtime and public scripts.
-- Focused pytest: `30 passed`.
-- Full pytest: `363 passed, 10 skipped`.
-- All-tree Ruff format/lint: passed for 248 files; mypy passed for 97 source files.
-- Five public CLI help smokes and `git diff --check`: passed.
-- Notebook JSON: valid; all eight code cells compile; stored outputs are empty.
-- Real MMSeg/CUDA multi-domain execution: not run on this host.
-- Real dataset audit/training/evaluation: not run; no scientific metric produced.
+- Nine of nine official landing pages reachable through certificate-verified HEAD probes.
+- A2D2 public bundle: five files, 3,892,400 bytes total, exact per-file SHA-256 verified;
+  image/mask 1208x1920; 55 declared colors, 21 present, zero unknown.
+- Focused catalog/multi-domain tests: `19 passed`.
+- All-tree Ruff format/lint: 253 files passed.
+- Mypy: 98 source files passed.
+- Full pytest: `369 passed, 10 skipped`.
+- Catalog regeneration, idempotent real sample probe, nine-source HTTPS probe and
+  `git diff --check` passed.
 
 ## External execution order
 
-1. Mount licensed Cityscapes, BDD100K, and IDD20K roots; run audits without fixture flags.
-2. Review audit/duplicate/mapping/split evidence and explicitly freeze all manifests.
-3. Run five-model 50-step smoke, 2,000-step pilot, and 6,000-step screening on CUDA.
-4. Produce three-domain evaluation + ONNX records, review top two, then run bounded HPO.
-5. Run dataset-composition and CE/weighted-CE ablations; freeze finalist checkpoints.
-6. Fit one global source calibration temperature; open official source validation and ACDC.
-7. Author the hash-bound sealed release and perform one WildDash/MUSES submission.
-8. Build final tables/demo; run Jetson only if approved hardware is available.
+1. Acquire licensed Cityscapes, BDD100K and IDD20K packages outside Git and bind hashes.
+2. Audit, review and explicitly freeze all three source manifests.
+3. Run the five-model smoke/pilot/screening path and validate ONNX feasibility.
+4. Run top-two HPO, dataset-composition and CE/weighted-CE ablations.
+5. Freeze finalists, fit source-only calibration, then open official source val and ACDC.
+6. Author the sealed release and perform one WildDash 2 or MUSES external evaluation.
+7. Consider A2D2 only after the primary thesis table is complete and its full mapping,
+   sequence grouping, duplicates and usable-pixel coverage are reviewed.
 
-No commit, push, PR, data acquisition, Drive mutation, model promotion, external
-submission, or device action was performed. Commit/push still requires explicit approval.
+No licensed corpus, GPU training, model promotion, ACDC/sealed inference, submission,
+ONNX artifact or Jetson action occurred.

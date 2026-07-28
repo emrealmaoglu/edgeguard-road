@@ -838,6 +838,58 @@ def iter_uniform_domain_indices(
     yield from uniform_domain_indices(lengths, total_size=total_size, seed=seed, epoch=epoch)
 
 
+def domain_mixture_probabilities(lengths: Sequence[int], *, alpha: float) -> list[float]:
+    """Return size-power domain probabilities for a controlled data ablation."""
+    if not lengths or any(length <= 0 for length in lengths):
+        raise ValueError("domain lengths must be positive")
+    if not np.isfinite(alpha) or not 0.0 <= alpha <= 1.0:
+        raise ValueError("domain mixture alpha must be finite and between 0 and 1")
+    weights = np.power(np.asarray(lengths, dtype=np.float64), alpha)
+    probabilities = weights / weights.sum()
+    return [float(value) for value in probabilities]
+
+
+def power_domain_indices(
+    lengths: Sequence[int],
+    *,
+    total_size: int,
+    alpha: float,
+    seed: int,
+    epoch: int = 0,
+) -> list[int]:
+    """Draw deterministic indices with exact largest-remainder size-power quotas."""
+    if total_size <= 0:
+        raise ValueError("domain mixture total_size must be positive")
+    probabilities = np.asarray(domain_mixture_probabilities(lengths, alpha=alpha), dtype=np.float64)
+    ideal = probabilities * total_size
+    quotas = np.floor(ideal).astype(np.int64)
+    remaining = int(total_size - int(quotas.sum()))
+    remainder_order = sorted(
+        range(len(lengths)), key=lambda index: (-(ideal[index] - quotas[index]), index)
+    )
+    for domain_id in remainder_order[:remaining]:
+        quotas[domain_id] += 1
+    rng = np.random.default_rng(seed + epoch)
+    domain_order = np.concatenate(
+        [np.full(int(quota), index, dtype=np.int64) for index, quota in enumerate(quotas)]
+    )
+    rng.shuffle(domain_order)
+    offsets = np.cumsum((0, *lengths[:-1]))
+    permutations = [rng.permutation(length).tolist() for length in lengths]
+    draws = [0] * len(lengths)
+    result: list[int] = []
+    for domain in domain_order:
+        domain_id = int(domain)
+        draw = draws[domain_id]
+        if draw and draw % lengths[domain_id] == 0:
+            permutations[domain_id] = rng.permutation(lengths[domain_id]).tolist()
+        result.append(
+            int(offsets[domain_id]) + int(permutations[domain_id][draw % lengths[domain_id]])
+        )
+        draws[domain_id] += 1
+    return result
+
+
 def verify_sealed_release(
     manifest_path: Path, checkpoint: Path, release_path: Path | None
 ) -> dict[str, Any]:

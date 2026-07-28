@@ -52,6 +52,17 @@ planning ranges until replaced by measurements.
   non-frozen manifest, external release mismatch, or any attempt to tune after sealed
   evaluation.
 
+### EG-DATA-SOURCES-001 — Official source and merge catalog
+
+- **Status:** implemented; public A2D2 sample and all official landing pages verified
+  on 2026-07-28; full licensed source acquisition remains external.
+- **Objective:** maintain one semantic-only catalog, reject inaccessible/mislabeled
+  mirrors, prove bounded public acquisition, and make every lossy merge explicit.
+- **Implemented:** nine-dataset catalog; source probe; size/SHA-256-gated A2D2 sample;
+  55-color exact/ignore proposal; merge/HPO protocol; size-power sampler ablation helper.
+- **Boundary:** the A2D2 sample is plumbing evidence only. Mapillary/A2D2 cannot enter
+  the primary experiment until separately reviewed full-corpus manifests are frozen.
+
 ## Immediate critical path
 
 ### EG-DATA-001 — Storage, access and ontology gate

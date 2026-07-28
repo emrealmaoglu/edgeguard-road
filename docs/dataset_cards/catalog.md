@@ -1,27 +1,28 @@
-# EdgeGuard-Road Dataset Cards
+# EdgeGuard semantic dataset catalog
 
-The machine-readable source of truth is `catalog.json`. Counts are never inferred
-from dataset names. `null` means that the required real artifact is unavailable in
-this checkout and the value remains `unavailable_pending_access`.
+`catalog.json` is authoritative. Counts describe official package contracts, not locally acquired evidence. `verified_local` remains false until a hash-bound receipt exists.
 
-| Dataset | Role | Access | Count evidence | Protected boundary |
-| --- | --- | --- | --- | --- |
-| Cityscapes Fine train | fit/select/calibration | External, not locally present | Human-provided measured evidence: 2,975 samples, 18 cities, 1,885 city+sequence groups, 19 train classes | Exact D/E selected split identity and class-frequency artifact still unavailable locally |
-| Cityscapes official val | common final-model evaluation | Historical external evaluation; data absent locally | 500 images/annotations, 19 classes | Not HPO, `train_select`, temperature fitting, sealed, or unseen |
-| Cityscapes Coarse/trainextra | aggressive coarse-to-fine candidate | unavailable pending access | Not recorded | No acquisition without a justified experiment |
-| BDD100K detection | detection train/development | unavailable pending access | Not recorded | Real package/source IDs must be inspected before mapping freeze |
-| Fishyscapes Static | OOD development/HPO | unavailable pending access | Not recorded | Development only |
-| Fishyscapes Lost & Found | one-time frozen holdout | unavailable pending access | Not recorded | No routine tuning, HPO, threshold selection, or debugging |
-| SMIYC RoadObstacle21 | sealed final | deliberately inaccessible | Not recorded | No development-time access |
-| SMIYC RoadAnomaly21 | sealed final | deliberately inaccessible | Not recorded | No development-time access |
-| Temporal dataset | role and dataset pending human selection | unavailable pending access | Not recorded | Synthetic fixtures validate only plumbing |
-| Approved demo assets | prerecorded demonstration | unavailable pending asset approval | Not recorded | No scientific metric claim |
+| Dataset | Portfolio role | Official count | Native labels | Canonical merge | Access |
+| --- | --- | ---: | --- | --- | --- |
+| Cityscapes Fine | `core_source_domain` | 5,000 | 34 semantic labels; 19 train/evaluation classes | `direct_canonical` | `registered_manual` |
+| BDD100K semantic segmentation | `core_source_domain` | 10,000 | Cityscapes-compatible 19-class semantic masks | `direct_canonical` | `account_manual` |
+| IDD20K | `controlled_lossy_source_ablation` | 20,000 | hierarchical ontology; 26 level-3 evaluation classes | `partial_exact_mapping` | `account_manual` |
+| ACDC | `public_adverse_domain_shift` | 4,006 | 19 Cityscapes semantic classes plus invalid masks | `evaluation_only_direct` | `registered_manual` |
+| WildDash 2 | `primary_sealed_external_test` | 5,032 | Cityscapes labels plus six WildDash-specific classes and negative/void policy | `sealed_server_only` | `public_server_submission` |
+| MUSES | `secondary_sealed_external_test` | 2,500 | 19 Cityscapes evaluation classes with panoptic and difficulty annotations | `sealed_evaluation_only` | `account_manual` |
+| KITTI semantic segmentation | `external_access_fallback` | 400 | Cityscapes-compatible semantic format | `fallback_evaluation_only` | `public_direct` |
+| Mapillary Vistas | `phase_two_broad_domain_candidate` | 25,000 | version-sensitive taxonomy; V1 paper reports 66 classes | `blocked_pending_versioned_mapping_review` | `account_manual` |
+| A2D2 semantic segmentation | `phase_two_geographic_source_candidate` | 41,277 | 55 official RGB colors representing 38 semantic concepts/variants | `phase2_partial_mapping_proposal` | `public_direct` |
 
-## Existing Cityscapes evidence boundary
+## Non-negotiable merge rules
 
-The repository records the human-provided measured Fine-train totals above and a
-historical 500-image PIDNet-S official-val baseline. The real Fine-train dataset
-manifest, its per-class pixel frequencies, image-level presence frequencies,
-ignored-pixel ratio, and the cryptographically selected D/E split are not available
-in this local checkout. They are therefore not fabricated or marked verified here.
-The historical official-val artifact identity remains unchanged.
+- Native masks are preserved; generated Cityscapes19 masks are separate artifacts.
+- Unknown or semantically ambiguous labels become `255`, never background.
+- Source domains are sampled uniformly in the primary experiment; physical file concatenation is not the sampling policy.
+- Official validation, adverse-domain, and sealed external records never enter training, calibration, preprocessing fitting, HPO, or debugging.
+- Dataset version, license receipt, source hash, mapping hash, split hash, exact hash, and perceptual-hash evidence are required before scientific use.
+
+## Engineering probes
+
+- `huggingface-nateraw-ade20k-tiny`: anonymous_viewer_verified_2026-07-28; engineering schema probe only; not road-domain evidence and not a training source.
+- `huggingface-segments-sidewalk-semantic`: viewer_returned_401_2026-07-28; unavailable without authentication; not accepted from catalog metadata alone.

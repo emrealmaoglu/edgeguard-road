@@ -65,3 +65,8 @@ sources:
   kitti:
     mapping_version: kitti-cityscapes19-v1
     mask_encoding: canonical_train_id
+  a2d2:
+    mapping_version: a2d2-rgb-to-cityscapes19-v1
+    mask_encoding: rgb_color
+    mapping_status: phase2_proposal_not_training_frozen
+    mapping_file: configs/dataset/a2d2_to_cityscapes19_v1.yaml
