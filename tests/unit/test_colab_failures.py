@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -8,7 +9,11 @@ from zipfile import ZipFile
 
 import pytest
 
-from edgeguard.rescue.colab_failures import ColabFailureReporter, redact_failure_text
+from edgeguard.rescue.colab_failures import (
+    ColabFailureReporter,
+    redact_failure_text,
+    run_logged_command,
+)
 
 
 def test_failure_report_is_redacted_hashed_and_downloadable(tmp_path: Path) -> None:
@@ -75,6 +80,26 @@ def test_redaction_preserves_actionable_text() -> None:
     assert "hunter2" not in rendered
     assert "github_pat_" not in rendered
     assert "pip failed" in rendered and "retry wheel" in rendered
+
+
+def test_logged_subprocess_preserves_redacted_actionable_tail(tmp_path: Path) -> None:
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; print('token=hidden useful context'); sys.exit(7)",
+    ]
+    with pytest.raises(RuntimeError, match="useful context") as captured:
+        run_logged_command(
+            command,
+            log_root=tmp_path / "logs",
+            stage="dataset audit",
+            env=os.environ,
+        )
+    assert "hidden" not in str(captured.value)
+    log = next((tmp_path / "logs").glob("dataset-audit-*.log")).read_text(encoding="utf-8")
+    assert "hidden" not in log
+    assert "useful context" in log
+    assert "RETURN_CODE: 7" in log
 
 
 def test_latest_failure_pointer_rejects_traversal(tmp_path: Path) -> None:

@@ -124,21 +124,39 @@ def persist_bootstrap_failure(notebook, stage, error):
             """
 import subprocess
 
+
+def run_bootstrap_command(command):
+    completed = subprocess.run(command, capture_output=True, text=True)
+    output = "\\n".join(
+        value.strip() for value in (completed.stdout, completed.stderr) if value.strip()
+    )
+    if output:
+        print(output)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"Bootstrap command failed with exit code {completed.returncode}: {command}\\n"
+            + output[-8000:]
+        )
+    return completed
+
+
 try:
     if LOCAL_TEST_MODE:
         print("LOCAL_TEST_MODE: Drive mount, clone ve paket kurulumu atlandı.")
     elif not (PROJECT_ROOT / ".git").is_dir():
-        subprocess.run(["git", "clone", "--branch", BRANCH, REPOSITORY, str(PROJECT_ROOT)], check=True)
+        run_bootstrap_command(["git", "clone", "--branch", BRANCH, REPOSITORY, str(PROJECT_ROOT)])
     else:
-        subprocess.run(["git", "-C", str(PROJECT_ROOT), "fetch", "origin", BRANCH], check=True)
-        subprocess.run(["git", "-C", str(PROJECT_ROOT), "checkout", BRANCH], check=True)
-        subprocess.run(["git", "-C", str(PROJECT_ROOT), "pull", "--ff-only"], check=True)
+        run_bootstrap_command(["git", "-C", str(PROJECT_ROOT), "fetch", "origin", BRANCH])
+        run_bootstrap_command(["git", "-C", str(PROJECT_ROOT), "checkout", BRANCH])
+        run_bootstrap_command(["git", "-C", str(PROJECT_ROOT), "pull", "--ff-only"])
 except BaseException as error:
     persist_bootstrap_failure("EdgeGuard_Data_Preflight_Colab.ipynb", "git-clone-or-update", error)
     raise
 if not LOCAL_TEST_MODE:
     if EXPECTED_PROJECT_COMMIT:
-        subprocess.run(["git", "-C", str(PROJECT_ROOT), "checkout", EXPECTED_PROJECT_COMMIT], check=True)
+        run_bootstrap_command(
+            ["git", "-C", str(PROJECT_ROOT), "checkout", EXPECTED_PROJECT_COMMIT]
+        )
 PROJECT_COMMIT = subprocess.run(
     ["git", "-C", str(PROJECT_ROOT), "rev-parse", "HEAD"],
     check=True,
@@ -146,7 +164,10 @@ PROJECT_COMMIT = subprocess.run(
     text=True,
 ).stdout.strip()
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
-from edgeguard.rescue.colab_failures import ColabFailureReporter  # noqa: E402
+from edgeguard.rescue.colab_failures import (  # noqa: E402
+    ColabFailureReporter,
+    run_logged_command,
+)
 
 FAILURE_REPORTER = ColabFailureReporter(
     DRIVE_ROOT / "EdgeGuard/failures/data-preflight" / PROJECT_COMMIT,
@@ -154,11 +175,28 @@ FAILURE_REPORTER = ColabFailureReporter(
     project_commit=PROJECT_COMMIT,
     context={"branch": BRANCH, "local_test_mode": LOCAL_TEST_MODE},
 )
+COMMAND_LOG_ROOT = Path(os.environ.get("EDGEGUARD_TEST_CONTENT_ROOT", "/content")) / "edgeguard-command-logs"
 FAILURE_REPORTER.add_diagnostic_root("manifests", DRIVE_ROOT / "EdgeGuard/manifests")
+FAILURE_REPORTER.add_diagnostic_root("command-logs", COMMAND_LOG_ROOT)
 FAILURE_REPORTER.install_ipython_hook()
+
+
+def run_colab_command(command, *, check=True):
+    command_env = os.environ.copy()
+    project_src = str(PROJECT_ROOT / "src")
+    command_env["PYTHONPATH"] = project_src + os.pathsep + command_env.get("PYTHONPATH", "")
+    return run_logged_command(
+        command,
+        log_root=COMMAND_LOG_ROOT,
+        stage=FAILURE_REPORTER.stage,
+        check=check,
+        env=command_env,
+    )
+
+
 if not LOCAL_TEST_MODE:
     FAILURE_REPORTER.set_stage("project-install")
-    subprocess.run([sys.executable, "-m", "pip", "install", "-e", str(PROJECT_ROOT)], check=True)
+    run_colab_command([sys.executable, "-m", "pip", "install", "-e", str(PROJECT_ROOT)])
 """,
         ),
         _cell(
@@ -183,7 +221,7 @@ inventory_command = [
 ]
 if VERIFY_ARCHIVE_HASHES:
     inventory_command.append("--hash-archives")
-subprocess.run(inventory_command, check=True)
+run_colab_command(inventory_command)
 inventory = json.loads(PREFLIGHT_REPORT.read_text())
 for row in inventory["datasets"]:
     print("\\n", row["dataset_id"], "=>", row["state"], "|", row["activation_phase"])
@@ -196,14 +234,20 @@ for row in inventory["datasets"]:
             "paket:", package["filename"],
             "Drive'da:", package["present"],
             "konum:", package["location_profile"],
+            "hash:", package["hash_status"],
         )
+        if package.get("hash_error"):
+            print("hash okuma uyarısı:", package["hash_error"])
     for package in row.get("engineering_packages", []):
         print(
             "mühendislik paketi:", package["filename"],
             "Drive'da:", package["present"],
             "profil:", package["source_profile"],
             "bilimsel:", package["scientific_eligible"],
+            "hash:", package["hash_status"],
         )
+        if package.get("hash_error"):
+            print("hash okuma uyarısı:", package["hash_error"])
     if row.get("legacy_compatibility"):
         print("legacy uyumluluk:", row["legacy_compatibility"])
 """,
@@ -226,7 +270,7 @@ IDD polygon JSON etiketleri pinned AutoNUE source-ID sözleşmesiyle maskeye çe
 # Arşivleri dataset bazında hazırla; büyük ağaçları Drive'a küçük dosyalar hâlinde yazma.
 import shutil
 
-from edgeguard.rescue.colab_data import preparation_disk_budget
+from edgeguard.rescue.colab_data import copy_archive_to_local, preparation_disk_budget
 
 FAILURE_REPORTER.set_stage("dataset-preparation-and-bundling")
 CONTENT_ROOT = Path(os.environ.get("EDGEGUARD_TEST_CONTENT_ROOT", "/content"))
@@ -275,7 +319,9 @@ if RUN_ARCHIVE_PREPARATION:
         local_archives = []
         for source in sources:
             local = dataset_cache / source.name
-            shutil.copyfile(source, local)
+            print("Drive arşivi /content alanına kopyalanıyor:", source.name)
+            copy_receipt = copy_archive_to_local(source, local, attempts=3)
+            print("Arşiv kopyası tamamlandı:", copy_receipt)
             local_archives.append(local)
         prepared = PREPARE_ROOT / dataset
         command = [
@@ -289,7 +335,7 @@ if RUN_ARCHIVE_PREPARATION:
             command.extend(["--archive", str(archive)])
         if dataset == "bdd100k":
             command.extend(["--source-profile", BDD_SOURCE_PROFILE])
-        subprocess.run(command, check=True)
+        run_colab_command(command)
         if CREATE_BUNDLES:
             bundle = [
                 sys.executable,
@@ -300,14 +346,14 @@ if RUN_ARCHIVE_PREPARATION:
             ]
             if REPLACE_BUNDLES:
                 bundle.append("--replace")
-            subprocess.run(bundle, check=True)
+            run_colab_command(bundle)
         shutil.rmtree(dataset_cache)
         shutil.rmtree(prepared)
     if CACHE_ROOT.is_dir():
         CACHE_ROOT.rmdir()
     if PREPARE_ROOT.is_dir():
         PREPARE_ROOT.rmdir()
-    subprocess.run(inventory_command, check=True)
+    run_colab_command(inventory_command)
     inventory = json.loads(PREFLIGHT_REPORT.read_text())
 else:
     print("RUN_ARCHIVE_PREPARATION=False: arşiv yükleme ve inventory incelemesi bekleniyor.")
@@ -372,6 +418,7 @@ def build_training_notebook() -> None:
         'zip(("cityscapes", "bdd100k", "idd20k"), DATA_MANIFESTS, strict=True)',
         "zip(SCIENTIFIC_SOURCE_DATASETS, DATA_MANIFESTS, strict=True)",
     )
+    protocol_text = protocol_text.replace("subprocess.run(", "run_colab_command(")
     final_protocol["source"] = _source(protocol_text)
     setup_text = """# Pinned compatibility cascade; runtime comes from the verified receipt.
 FAILURE_REPORTER.set_stage("runtime-compatibility-cascade")
@@ -418,12 +465,12 @@ else:
         "--execute",
     ]
     try:
-        subprocess.run(install, check=True)
+        run_colab_command(install)
     except BaseException:
         persist_compatibility_evidence()
         raise
     runtime_report = CONTENT_ROOT / "edgeguard-evidence/resolved-runtime.json"
-    subprocess.run(
+    run_colab_command(
         [
             sys.executable,
             str(PROJECT_ROOT / "scripts/resolve_colab_runtime.py"),
@@ -431,7 +478,6 @@ else:
             "--project-commit", PROJECT_COMMIT,
             "--output", str(runtime_report),
         ],
-        check=True,
     )
     runtime = json.loads(runtime_report.read_text())
     RUNTIME_PYTHON = Path(runtime["interpreter"])
@@ -493,6 +539,7 @@ else:
         'for dataset in ("bdd100k", "idd20k"):',
         "for dataset in SECONDARY_SCIENTIFIC_DATASETS:",
     )
+    audit_text = audit_text.replace("subprocess.run(", "run_colab_command(")
     audit["source"] = _source(audit_text)
 
     training_text = "".join(training["source"])
@@ -504,10 +551,11 @@ else:
     )
     if "sync_work_snapshot" not in training_text:
         training_text = training_text.replace(
-            "        subprocess.run(command, check=True)\n",
-            "        subprocess.run(command, check=True)\n"
+            "        run_colab_command(command)\n",
+            "        run_colab_command(command)\n"
             '        sync_work_snapshot(f"{RUN_STAGE}-{model}")\n',
         )
+    training_text = training_text.replace("subprocess.run(", "run_colab_command(")
     training["source"] = _source(training_text)
 
     evaluation_text = "".join(evaluation["source"])
@@ -523,6 +571,7 @@ else:
         "len(screening_evidence) >= 6",
         "len(screening_evidence) >= 2 * len(SCIENTIFIC_SOURCE_DATASETS)",
     )
+    evaluation_text = evaluation_text.replace("subprocess.run(", "run_colab_command(")
     evaluation["source"] = _source(evaluation_text)
 
     cells = [
@@ -633,21 +682,37 @@ def persist_bootstrap_failure(notebook, stage, error):
             """
 import subprocess
 
+
+def run_bootstrap_command(command):
+    completed = subprocess.run(command, capture_output=True, text=True)
+    output = "\\n".join(
+        value.strip() for value in (completed.stdout, completed.stderr) if value.strip()
+    )
+    if output:
+        print(output)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"Bootstrap command failed with exit code {completed.returncode}: {command}\\n"
+            + output[-8000:]
+        )
+    return completed
+
+
 try:
     if LOCAL_TEST_MODE:
         print("LOCAL_TEST_MODE: mount, clone ve kurulum atlandı.")
     elif not (PROJECT_ROOT / ".git").is_dir():
-        subprocess.run(["git", "clone", "--branch", BRANCH, REPOSITORY, str(PROJECT_ROOT)], check=True)
+        run_bootstrap_command(["git", "clone", "--branch", BRANCH, REPOSITORY, str(PROJECT_ROOT)])
     else:
-        subprocess.run(["git", "-C", str(PROJECT_ROOT), "fetch", "origin", BRANCH], check=True)
-        subprocess.run(["git", "-C", str(PROJECT_ROOT), "checkout", BRANCH], check=True)
-        subprocess.run(["git", "-C", str(PROJECT_ROOT), "pull", "--ff-only"], check=True)
+        run_bootstrap_command(["git", "-C", str(PROJECT_ROOT), "fetch", "origin", BRANCH])
+        run_bootstrap_command(["git", "-C", str(PROJECT_ROOT), "checkout", BRANCH])
+        run_bootstrap_command(["git", "-C", str(PROJECT_ROOT), "pull", "--ff-only"])
 except BaseException as error:
     persist_bootstrap_failure("EdgeGuard_Road_Colab.ipynb", "git-clone-or-update", error)
     raise
 if not LOCAL_TEST_MODE and EXPECTED_PROJECT_COMMIT:
-    subprocess.run(
-        ["git", "-C", str(PROJECT_ROOT), "checkout", EXPECTED_PROJECT_COMMIT], check=True
+    run_bootstrap_command(
+        ["git", "-C", str(PROJECT_ROOT), "checkout", EXPECTED_PROJECT_COMMIT]
     )
 PROJECT_COMMIT = subprocess.run(
     ["git", "-C", str(PROJECT_ROOT), "rev-parse", "HEAD"],
@@ -663,7 +728,10 @@ if EXPECTED_PROJECT_COMMIT and PROJECT_COMMIT != EXPECTED_PROJECT_COMMIT:
         f"yerel HEAD={PROJECT_COMMIT[:12]}, beklenen={EXPECTED_PROJECT_COMMIT[:12]}."
     )
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
-from edgeguard.rescue.colab_failures import ColabFailureReporter  # noqa: E402
+from edgeguard.rescue.colab_failures import (  # noqa: E402
+    ColabFailureReporter,
+    run_logged_command,
+)
 
 FAILURE_REPORTER = ColabFailureReporter(
     DRIVE_ROOT / "EdgeGuard/failures" / CAMPAIGN_ID / PROJECT_COMMIT,
@@ -673,11 +741,28 @@ FAILURE_REPORTER = ColabFailureReporter(
 )
 FAILURE_REPORTER.add_diagnostic_root("runtime-evidence", CONTENT_ROOT / "edgeguard-evidence")
 FAILURE_REPORTER.add_diagnostic_root("runtime-logs", CONTENT_ROOT / "edgeguard-logs")
+COMMAND_LOG_ROOT = CONTENT_ROOT / "edgeguard-command-logs"
+FAILURE_REPORTER.add_diagnostic_root("command-logs", COMMAND_LOG_ROOT)
 FAILURE_REPORTER.add_diagnostic_root("work", WORK_ROOT)
 FAILURE_REPORTER.install_ipython_hook()
+
+
+def run_colab_command(command, *, check=True):
+    command_env = os.environ.copy()
+    project_src = str(PROJECT_ROOT / "src")
+    command_env["PYTHONPATH"] = project_src + os.pathsep + command_env.get("PYTHONPATH", "")
+    return run_logged_command(
+        command,
+        log_root=COMMAND_LOG_ROOT,
+        stage=FAILURE_REPORTER.stage,
+        check=check,
+        env=command_env,
+    )
+
+
 if not LOCAL_TEST_MODE:
     FAILURE_REPORTER.set_stage("project-install")
-    subprocess.run([sys.executable, "-m", "pip", "install", "-e", f"{PROJECT_ROOT}[colab]"], check=True)
+    run_colab_command([sys.executable, "-m", "pip", "install", "-e", f"{PROJECT_ROOT}[colab]"])
 print({"project_commit": PROJECT_COMMIT, "python": sys.version})
 """,
         ),
@@ -703,7 +788,7 @@ if RUN_DATA_STAGING:
         command.extend(["--dataset", dataset])
     if ALLOW_INELIGIBLE_BDD_SMOKE:
         command.append("--allow-ineligible")
-    subprocess.run(command, check=True)
+    run_colab_command(command)
 
 SNAPSHOT_ROOT = DRIVE_ROOT / "EdgeGuard/campaigns" / CAMPAIGN_ID / PROJECT_COMMIT
 SNAPSHOT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -723,7 +808,7 @@ SNAPSHOT_INCLUDE = [
 ]
 
 if RESTORE_LATEST_SNAPSHOT and SNAPSHOT.is_file() and not WORK_ROOT.exists():
-    subprocess.run(
+    run_colab_command(
         [
             sys.executable,
             str(PROJECT_ROOT / "scripts/package_colab_outputs.py"),
@@ -731,7 +816,6 @@ if RESTORE_LATEST_SNAPSHOT and SNAPSHOT.is_file() and not WORK_ROOT.exists():
             "--snapshot", str(SNAPSHOT),
             "--destination", str(WORK_ROOT),
         ],
-        check=True,
     )
 
 
@@ -749,7 +833,7 @@ def sync_work_snapshot(label: str) -> None:
     ]
     for relative in SNAPSHOT_INCLUDE:
         command.extend(["--include", relative])
-    subprocess.run(command, check=True)
+    run_colab_command(command)
     print("Drive snapshot updated:", label, SNAPSHOT)
 """,
         ),
@@ -780,7 +864,7 @@ if RUN_SHIFT_CALIBRATION:
         for dataset, manifest in zip(SCIENTIFIC_SOURCE_DATASETS, DATA_MANIFESTS, strict=True):
             target = WORK_ROOT / "evaluation/shift-calibration" / model / dataset
             if not target.exists():
-                subprocess.run([str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/evaluate.py"), "run", "--resolved-config", str(run_dir / "resolved.py"), "--checkpoint", str(checkpoint), "--dataset", dataset, "--dataset-manifest", str(manifest), "--role", "train_calibration", "--temperature-file", str(temperature), "--output-dir", str(target)], check=True)
+                run_colab_command([str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/evaluate.py"), "run", "--resolved-config", str(run_dir / "resolved.py"), "--checkpoint", str(checkpoint), "--dataset", dataset, "--dataset-manifest", str(manifest), "--role", "train_calibration", "--temperature-file", str(temperature), "--output-dir", str(target)])
             source_summaries.append(target / "frame_uncertainty.json")
         shift_reference = WORK_ROOT / "calibration" / model / "source-shift-reference.json"
         if not shift_reference.exists():
@@ -789,7 +873,7 @@ if RUN_SHIFT_CALIBRATION:
                 command.extend(["--summary", str(summary)])
             for manifest in DATA_MANIFESTS:
                 command.extend(["--data-manifest", str(manifest)])
-            subprocess.run(command, check=True)
+            run_colab_command(command)
         if RUN_ACDC:
             source_final = [WORK_ROOT / "evaluation/final" / model / dataset / "frame_uncertainty.json" for dataset in SCIENTIFIC_SOURCE_DATASETS]
             for condition in ("fog", "night", "rain", "snow"):
@@ -799,14 +883,14 @@ if RUN_SHIFT_CALIBRATION:
                     command = [str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/evaluate.py"), "evaluate-shift", "--reference", str(shift_reference), "--external-summary", str(external_summary), "--output", str(output)]
                     for summary in source_final:
                         command.extend(["--source-summary", str(summary)])
-                    subprocess.run(command, check=True)
+                    run_colab_command(command)
         if RUN_PERCEPTION_PREVIEW:
             onnx_model = WORK_ROOT / "exports/final" / f"{model}.onnx"
             if not PREVIEW_IMAGE.is_file() or not onnx_model.is_file():
                 raise RuntimeError("Perception preview requires PREVIEW_IMAGE and final ONNX")
             preview = WORK_ROOT / "preview" / model
             if not preview.exists():
-                subprocess.run([str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/predict.py"), "--image", str(PREVIEW_IMAGE), "--model", str(onnx_model), "--output-dir", str(preview), "--emit-regions", "--emit-risk", "--shift-reference", str(shift_reference)], check=True)
+                run_colab_command([str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/predict.py"), "--image", str(PREVIEW_IMAGE), "--model", str(onnx_model), "--output-dir", str(preview), "--emit-regions", "--emit-risk", "--shift-reference", str(shift_reference)])
 """,
         ),
         _cell(
@@ -818,7 +902,7 @@ if CREATE_REVIEW_PACKAGE and WORK_ROOT.is_dir():
     review_root = DRIVE_ROOT / "EdgeGuard/downloads"
     review_root.mkdir(parents=True, exist_ok=True)
     review_zip = review_root / f"{CAMPAIGN_ID}-{PROJECT_COMMIT[:12]}-{RUN_STAGE}-review.zip"
-    subprocess.run(
+    run_colab_command(
         [
             sys.executable,
             str(PROJECT_ROOT / "scripts/package_colab_outputs.py"),
@@ -828,7 +912,6 @@ if CREATE_REVIEW_PACKAGE and WORK_ROOT.is_dir():
             "--campaign-id", CAMPAIGN_ID,
             "--project-commit", PROJECT_COMMIT,
         ],
-        check=True,
     )
     print("İnceleme paketi:", review_zip)
     if DOWNLOAD_REVIEW_PACKAGE and not LOCAL_TEST_MODE:

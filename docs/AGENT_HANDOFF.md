@@ -7,6 +7,9 @@
   Jetson measurement.
 - **Pin enforcement:** strict in Colab; the no-clone local harness only reports a later
   checkout so branch-tip CI can validate the immutable notebook payload.
+- **Observed Colab incident:** the first real Drive inventory failed while sequentially
+  hashing mounted large archives. Per-file best-effort inventory hashing, bounded-retry
+  local copies, mandatory post-copy verification and subprocess-tail logging are implemented.
 
 ## Delivered
 

@@ -6,9 +6,12 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 import sys
 import traceback
 import uuid
+from collections import deque
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
@@ -37,6 +40,57 @@ def redact_failure_text(value: str) -> str:
         else:
             redacted = pattern.sub("<redacted>", redacted)
     return redacted
+
+
+def run_logged_command(
+    command: Sequence[str | os.PathLike[str]],
+    *,
+    log_root: Path,
+    stage: str,
+    check: bool = True,
+    cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Stream a subprocess to the notebook and a bounded, redacted diagnostic log."""
+    rendered = [os.fspath(value) for value in command]
+    safe_stage = _safe_stage(stage)
+    log_root.mkdir(parents=True, exist_ok=True)
+    log_path = log_root / f"{safe_stage}-{uuid.uuid4().hex[:8]}.log"
+    tail: deque[str] = deque(maxlen=80)
+    with log_path.open("x", encoding="utf-8") as log:
+        header = redact_failure_text("COMMAND: " + " ".join(rendered))
+        print(header, flush=True)
+        log.write(header + "\n")
+        process = subprocess.Popen(
+            rendered,
+            cwd=str(cwd) if cwd is not None else None,
+            env=dict(env) if env is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            safe_line = redact_failure_text(line.rstrip("\n"))
+            print(safe_line, flush=True)
+            log.write(safe_line + "\n")
+            log.flush()
+            tail.append(safe_line)
+        return_code = process.wait()
+        footer = f"RETURN_CODE: {return_code}"
+        print(footer, flush=True)
+        log.write(footer + "\n")
+    completed = subprocess.CompletedProcess(rendered, return_code, "\n".join(tail), None)
+    if check and return_code != 0:
+        tail_text = "\n".join(tail)
+        raise RuntimeError(
+            f"Subprocess failed with exit code {return_code}; log={log_path}\n"
+            f"Last output lines:\n{tail_text}"
+        )
+    return completed
 
 
 def _safe_stage(value: str) -> str:

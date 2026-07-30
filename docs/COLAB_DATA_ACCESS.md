@@ -128,6 +128,9 @@ the project maps only exact ontology matches and sends ambiguous classes to igno
 1. Leave current uploads under `private_inputs/`; future official archives may use
    `archives/<dataset_id>/`. Do not move or extract source archives in Drive.
 2. Run the preflight notebook with archive hashing enabled. Preserve the JSON inventory.
+   Hashing a mounted Drive file is best-effort at this discovery stage: a transient read
+   failure is recorded per archive and no longer destroys the whole inventory. Full digest
+   verification remains mandatory after the bounded-retry copy into `/content`.
 3. Set `RUN_ARCHIVE_PREPARATION=True`; keep `CREATE_BUNDLES=True`. The notebook reuses
    Cityscapes, prepares BDD then IDD one at a time, enforces a conservative 3× archive
    working-space estimate plus 25 GiB reserve, bundles directly, and removes temporary

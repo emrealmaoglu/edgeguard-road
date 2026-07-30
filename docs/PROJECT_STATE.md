@@ -11,6 +11,12 @@ intentionally runs the current checkout without cloning, so it records a pin mis
 instead of rejecting a legitimate later documentation/CI commit. GitHub CI installs the
 `rescue` extras as well as development tools, keeping thesis-figure tests representative.
 
+The first real preflight exposed a mounted-Drive archive hashing interruption. Inventory
+now records per-file hash read errors without weakening the later integrity gate; archive
+copies use bounded retries and are verified locally before extraction. All post-bootstrap
+subprocesses stream redacted command logs into failure packages, eliminating the generic
+exit-code-only diagnostic gap.
+
 ## Implemented and locally verified
 
 - Five-model, two-source scientific training/evaluation/HPO contracts are active for

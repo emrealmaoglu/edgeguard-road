@@ -226,6 +226,37 @@ def _file_digests(path: Path) -> tuple[str, str]:
     return sha256.hexdigest(), md5.hexdigest()
 
 
+def copy_archive_to_local(source: Path, destination: Path, *, attempts: int = 3) -> dict[str, Any]:
+    """Copy one mounted-Drive archive with bounded retries and an atomic destination."""
+    if attempts <= 0:
+        raise ValueError("archive copy attempts must be positive")
+    if not source.is_file() or source.is_symlink():
+        raise FileNotFoundError(f"archive source is missing or unsafe: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(f".{destination.name}.partial")
+    if destination.exists():
+        raise FileExistsError(f"archive destination already exists: {destination}")
+    errors: list[str] = []
+    for attempt in range(1, attempts + 1):
+        partial.unlink(missing_ok=True)
+        try:
+            with source.open("rb") as input_stream, partial.open("xb") as output_stream:
+                shutil.copyfileobj(input_stream, output_stream, length=8 * 1024**2)
+            if partial.stat().st_size != source.stat().st_size:
+                raise OSError("archive copy size mismatch")
+            partial.replace(destination)
+            return {
+                "source": str(source),
+                "destination": str(destination),
+                "byte_size": destination.stat().st_size,
+                "attempts": attempt,
+            }
+        except OSError as error:
+            errors.append(f"attempt {attempt}: {type(error).__name__}: {error}")
+            partial.unlink(missing_ok=True)
+    raise OSError(f"archive copy failed after {attempts} attempts: {source}; " + " | ".join(errors))
+
+
 def inventory_colab_data(
     plan: dict[str, Any], drive_root: Path, *, hash_archives: bool = False
 ) -> dict[str, Any]:
@@ -262,8 +293,12 @@ def inventory_colab_data(
             published_sha256 = package.get("published_sha256")
             sha256_value: str | None = None
             md5_value: str | None = None
+            hash_error: str | None = None
             if present and hash_archives:
-                sha256_value, md5_value = _file_digests(candidate)
+                try:
+                    sha256_value, md5_value = _file_digests(candidate)
+                except OSError as error:
+                    hash_error = f"{type(error).__name__}: {error}"
             packages.append(
                 {
                     "filename": filename,
@@ -274,6 +309,16 @@ def inventory_colab_data(
                     "published_sha256": published_sha256,
                     "sha256": sha256_value,
                     "md5": md5_value,
+                    "hash_status": (
+                        "computed"
+                        if sha256_value is not None
+                        else "read_error"
+                        if hash_error is not None
+                        else "not_requested"
+                        if present
+                        else "missing"
+                    ),
+                    "hash_error": hash_error,
                     "published_md5_matches": (
                         md5_value == published_md5
                         if md5_value is not None and published_md5 is not None
@@ -299,8 +344,12 @@ def inventory_colab_data(
             present = candidate.is_file()
             engineering_sha256: str | None = None
             engineering_md5: str | None = None
+            engineering_hash_error: str | None = None
             if present and hash_archives:
-                engineering_sha256, engineering_md5 = _file_digests(candidate)
+                try:
+                    engineering_sha256, engineering_md5 = _file_digests(candidate)
+                except OSError as error:
+                    engineering_hash_error = f"{type(error).__name__}: {error}"
             engineering_packages.append(
                 {
                     **package,
@@ -309,6 +358,16 @@ def inventory_colab_data(
                     "byte_size": candidate.stat().st_size if present else None,
                     "sha256": engineering_sha256,
                     "md5": engineering_md5,
+                    "hash_status": (
+                        "computed"
+                        if engineering_sha256 is not None
+                        else "read_error"
+                        if engineering_hash_error is not None
+                        else "not_requested"
+                        if present
+                        else "missing"
+                    ),
+                    "hash_error": engineering_hash_error,
                     "location_profile": (
                         "private_inputs" if candidate.parent == private_input_root else "quarantine"
                     )

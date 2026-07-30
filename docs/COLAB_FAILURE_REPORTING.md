@@ -21,6 +21,17 @@ and hashes for included small diagnostic files. Dataset bytes, checkpoints, ONNX
 files, environment variables and files over the configured limits are excluded. Common
 token/password/API-key forms are redacted from both JSON and archived text logs.
 
+Every post-bootstrap subprocess is streamed through a project-owned command logger. Its
+redacted live output is also written under `/content/edgeguard-command-logs/` and included
+in the bounded failure ZIP. A non-zero exit therefore reports the actual final output lines,
+not only a generic `CalledProcessError`.
+
+Archive inventory hashing is observational. If mounted Drive interrupts a large sequential
+read, inventory records `hash_status=read_error` and continues. This does not waive archive
+integrity: preparation copies the archive to `/content` with bounded retries, and the
+dataset-specific preparation gate still verifies the complete local archive against its
+pinned digest before extraction.
+
 The failure folder is append-only. `LATEST.txt` is only a convenience pointer to the
 newest immutable report. Its value is path-validated before use.
 

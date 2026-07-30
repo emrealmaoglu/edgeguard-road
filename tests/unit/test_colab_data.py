@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tarfile
 from copy import deepcopy
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 import yaml
 
 from edgeguard.rescue.colab_data import (
+    copy_archive_to_local,
     create_dataset_bundle,
     initialize_drive_layout,
     inventory_colab_data,
@@ -143,9 +145,57 @@ def test_inventory_finds_all_current_private_inputs_without_moving_them(tmp_path
             "byte_size": len(b"bdd-kaggle-fixture"),
             "sha256": None,
             "md5": None,
+            "hash_status": "not_requested",
+            "hash_error": None,
             "location_profile": "private_inputs",
         }
     ]
+
+
+def test_inventory_records_drive_hash_read_error_without_losing_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, drive = _fixture_plan(tmp_path)
+    package = plan["datasets"]["cityscapes"]["packages"][0]
+    archive = drive / "EdgeGuard/private_inputs" / package["filename"]
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"mounted-drive-fixture")
+
+    def fail_digest(_path: Path) -> tuple[str, str]:
+        raise OSError("transient mounted Drive read failure")
+
+    monkeypatch.setattr("edgeguard.rescue.colab_data._file_digests", fail_digest)
+    inventory = inventory_colab_data(plan, drive, hash_archives=True)
+    cityscapes = next(row for row in inventory["datasets"] if row["dataset_id"] == "cityscapes")
+    row = cityscapes["packages"][0]
+    assert row["present"] is True
+    assert row["hash_status"] == "read_error"
+    assert "transient mounted Drive" in row["hash_error"]
+    assert row["sha256"] is None
+
+
+def test_archive_copy_retries_and_publishes_only_complete_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "drive/archive.zip"
+    source.parent.mkdir()
+    source.write_bytes(b"archive-payload")
+    destination = tmp_path / "content/archive.zip"
+    real_copy = shutil.copyfileobj
+    calls = 0
+
+    def flaky_copy(input_stream: object, output_stream: object, *, length: int) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("fixture Drive interruption")
+        real_copy(input_stream, output_stream, length=length)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("edgeguard.rescue.colab_data.shutil.copyfileobj", flaky_copy)
+    receipt = copy_archive_to_local(source, destination, attempts=3)
+    assert receipt["attempts"] == 2
+    assert destination.read_bytes() == source.read_bytes()
+    assert not (destination.parent / ".archive.zip.partial").exists()
 
 
 def test_preparation_budget_uses_archive_multiplier_and_reserved_space(
