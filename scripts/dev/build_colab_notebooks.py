@@ -80,7 +80,7 @@ else:
 
 REPOSITORY = "https://github.com/emrealmaoglu/edgeguard-road.git"
 BRANCH = "rescue/semantic-first"
-EXPECTED_PROJECT_COMMIT = "f25fc4faa6f6a55aae226aec9c269d8c5cf3102c"
+EXPECTED_PROJECT_COMMIT = "5fec521e4e495bccbc819198ca288ae47d96ed92"
 SCIENTIFIC_SOURCE_DATASETS = ["cityscapes", "idd20k"]
 PROVISIONAL_ENGINEERING_DATASETS = ["bdd100k"]
 OPTIONAL_FINAL_DATASETS = []  # Model/protokol freeze sonrası ör. ["acdc"]
@@ -608,7 +608,7 @@ else:
 
 REPOSITORY = "https://github.com/emrealmaoglu/edgeguard-road.git"
 BRANCH = "rescue/semantic-first"
-EXPECTED_PROJECT_COMMIT = "f25fc4faa6f6a55aae226aec9c269d8c5cf3102c"
+EXPECTED_PROJECT_COMMIT = "5fec521e4e495bccbc819198ca288ae47d96ed92"
 LOCAL_DATA_ROOT = CONTENT_ROOT / "edgeguard-data"
 CITYSCAPES_ROOT = LOCAL_DATA_ROOT / "cityscapes"
 BDD100K_ROOT = LOCAL_DATA_ROOT / "bdd100k"

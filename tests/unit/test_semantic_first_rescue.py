@@ -427,7 +427,7 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "ColabFailureReporter" in preflight_source
     assert "persist_bootstrap_failure" in preflight_source
     assert (
-        'EXPECTED_PROJECT_COMMIT = "f25fc4faa6f6a55aae226aec9c269d8c5cf3102c"' in preflight_source
+        'EXPECTED_PROJECT_COMMIT = "5fec521e4e495bccbc819198ca288ae47d96ed92"' in preflight_source
     )
     source = "\n".join("".join(cell.get("source", [])) for cell in payload["cells"])
     assert "scripts/audit_dataset.py" in source
@@ -446,7 +446,7 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "bdd100k.frozen.json" not in source
     assert "runtime-compatibility-cascade" in source
     assert "failure-report.zip" in source
-    assert 'EXPECTED_PROJECT_COMMIT = "f25fc4faa6f6a55aae226aec9c269d8c5cf3102c"' in source
+    assert 'EXPECTED_PROJECT_COMMIT = "5fec521e4e495bccbc819198ca288ae47d96ed92"' in source
 
 
 def test_synthetic_stress_fallback_preserves_labels_and_claim_boundary(tmp_path: Path) -> None:
