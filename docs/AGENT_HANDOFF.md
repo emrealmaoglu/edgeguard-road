@@ -5,6 +5,8 @@
 - **Pinned Colab implementation:** `f25fc4faa6f6a55aae226aec9c269d8c5cf3102c`.
 - **Classification:** locally tested engineering implementation; no new scientific or
   Jetson measurement.
+- **Pin enforcement:** strict in Colab; the no-clone local harness only reports a later
+  checkout so branch-tip CI can validate the immutable notebook payload.
 
 ## Delivered
 

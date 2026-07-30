@@ -6,6 +6,11 @@ The published delivery notebooks are pinned to implementation commit
 `f25fc4faa6f6a55aae226aec9c269d8c5cf3102c`; a later branch update cannot silently alter
 the Colab runtime code or scientific protocol.
 
+Colab enforces that pin after checkout. The external-action-free local notebook harness
+intentionally runs the current checkout without cloning, so it records a pin mismatch
+instead of rejecting a legitimate later documentation/CI commit. GitHub CI installs the
+`rescue` extras as well as development tools, keeping thesis-figure tests representative.
+
 ## Implemented and locally verified
 
 - Five-model, two-source scientific training/evaluation/HPO contracts are active for

@@ -656,7 +656,12 @@ PROJECT_COMMIT = subprocess.run(
     text=True,
 ).stdout.strip()
 if EXPECTED_PROJECT_COMMIT and PROJECT_COMMIT != EXPECTED_PROJECT_COMMIT:
-    raise RuntimeError("Project commit does not match EXPECTED_PROJECT_COMMIT")
+    if not LOCAL_TEST_MODE:
+        raise RuntimeError("Project commit does not match EXPECTED_PROJECT_COMMIT")
+    print(
+        "LOCAL_TEST_MODE: sabit Colab commit checkout edilmedi; "
+        f"yerel HEAD={PROJECT_COMMIT[:12]}, beklenen={EXPECTED_PROJECT_COMMIT[:12]}."
+    )
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from edgeguard.rescue.colab_failures import ColabFailureReporter  # noqa: E402
 
