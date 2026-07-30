@@ -1,64 +1,87 @@
 # Project State
 
-- **Repository/branch:** `rescue/semantic-first`; multi-domain rescue baseline `cbef065`,
-  dataset-source hardening `0df7801`, optional-integration CI fix `2828630`, and Node 24
-  action update `be66669` are committed and pushed.
-- **Active work package:** `EG-MULTIDOMAIN-001`, Drive acquisition and real-data audit gate.
-- **Research scope:** domain generalization for Cityscapes19 semantic segmentation with
-  Cityscapes, BDD100K, and IDD20K source data; five lightweight MMSeg models; bounded
-  HPO; class imbalance; reliability; ACDC; sealed WildDash 2/MUSES; ONNX/demo.
-- **Implemented source-data path:** strict versioned ontology; BDD100K/IDD20K native
-  adapters; official-count, corrupt, geometry, label, exact-hash and perceptual-hash
-  audit; group-atomic 80/15/5 candidates; explicit human freeze; cross-domain duplicate
-  evidence; domain-uniform distributed sampler; pooled train-fit rare classes and
-  bounded mean-one median-frequency weights.
-- **Source catalog:** semantic catalog v2 covers Cityscapes, BDD100K, IDD20K, ACDC,
-  WildDash 2, MUSES, KITTI Semantics, Mapillary Vistas and A2D2 with official counts,
-  native labels, access/license state, allowed roles and merge policy. A bounded HTTPS
-  probe reached all nine official landing pages on 2026-07-28.
-- **Public sample evidence:** an official A2D2 front-center image/mask pair, license,
-  README and 55-color class list were downloaded into ignored `data/cache/` with exact
-  byte/SHA-256 verification. Geometry was 1208x1920; the mask used 21 declared colors,
-  no unknown color; the phase-two exact-only mapping retained 96.7306% of this sample's
-  pixels. This is engineering evidence only and is not generalized to the full corpus.
-- **Phase-two A2D2 path:** complete 55-color fail-closed RGB mapping proposal; 31 colors
-  map to Cityscapes19 and 24 become ignore with explicit reasons. It is not a frozen
-  ontology decision and cannot enter training before full audit/split/duplicate review.
-- **Merge decision:** native trees remain separate; generated canonical masks are
-  separate; primary sampling is domain-uniform. Size-power sampling alpha `{0,0.5,1}`
-  is implemented/documented only as a post-baseline data ablation and is excluded from
-  HPO.
-- **Colab data path:** two ordered notebooks now separate manual/legal data preparation
-  from GPU execution. The Drive inventory hashes official archives, validates prepared
-  roots and creates deterministic one-file bundles. Staging verifies bundle/receipt
-  hashes and enforces 175 GiB staged data plus a 25 GiB runtime reserve under the user's
-  200 GiB session limit. Work snapshots are single files and restore by exact commit.
-- **Acquisition decision:** inaccessible Hugging Face road probes and all third-party
-  mirrors are removed. MUSES RGB+semantic packages are verified official direct access;
-  KITTI is corrected to registered access. ACDC/WildDash/MUSES/KITTI remain final-only.
-- **Local quality:** all-tree Ruff format/lint passed for 259 files, mypy passed for
-  99 source files, and the full suite passed with `374 passed, 10 skipped`. Both delivery
-  notebooks parse and all code cells compile; `git diff --check` passed.
-- **Remote quality:** GitHub CI run `30332310919` passed both Python 3.10 and 3.11 using
-  official `actions/checkout@v7` and `actions/setup-python@v7`. The preceding CI failure
-  was traced to one optional MMSeg test assuming `mmengine` in the core environment;
-  it now skips only when that optional integration is absent and still runs locally.
-- **Validation separation:** BDD100K/IDD20K official val remains final-only; ACDC is
-  domain-shift-only; WildDash 2/MUSES remain sealed even though MUSES files are public.
-- **Implemented experiment/deployment path:** five-model step protocol, measured-only
-  top-two Optuna HPO, equal-domain calibration, sealed release, static ONNX validation,
-  aspect-preserving inference, Streamlit demo, Colab notebook, evidence tables and
-  append-only run ledgers remain unchanged from `cbef065`.
-- **Scientific evidence:** no real multi-domain training, HPO, calibration, ACDC,
-  sealed external, ONNX model or GPU result exists. Local fixtures and the A2D2 public
-  sample are engineering evidence only.
-- **Local data/compute:** only the bounded public A2D2 probe is present under ignored
-  cache. No licensed Cityscapes/BDD100K/IDD20K/ACDC/WildDash/MUSES corpus is available;
-  this Apple M1 host has no CUDA training path.
-- **Next action:** run `EdgeGuard_Data_Preflight_Colab.ipynb`, manually acquire only the
-  approved Cityscapes/BDD100K/IDD20K packages, save archive hashes, prepare and bundle
-  native roots, then open the training notebook for the three real audits. Review/freeze
-  manifests before five 50-step CUDA smokes. A2D2 stays phase two.
+Updated 2026-07-30 on branch `rescue/semantic-first`.
 
-Implemented, locally verified, externally executed, scientifically measured and human
-accepted remain separate states.
+## Implemented and locally verified
+
+- Five-model, two-source scientific training/evaluation/HPO contracts are active for
+  Cityscapes + IDD20K. The available Kaggle BDD mirror is audit/smoke-only.
+- Safe dataset-specific preparation now consumes untouched Cityscapes, BDD100K, and
+  IDD20K archives. It verifies published identities where available, rejects unsafe
+  members/collisions/unknown labels, supports IDD Part II JPG, renders pinned AutoNUE
+  source masks, and never overwrites native annotations.
+- BDD `kaggle_mirror` is automatically marked scientifically ineligible. Only the two
+  official BDD 10K Semantic packages can support final scientific training.
+- The Colab preflight now prepares one dataset at a time in `/content`, streams it into
+  a hash-bound Drive bundle, and removes the temporary tree. Training staging retains
+  the 175 GiB dataset/25 GiB runtime reservation.
+- Prediction and Streamlit now expose road, ego-reachable corridor, confidence,
+  normalized entropy, unreliable pixels, semantic regions, deterministic attention
+  contributions, and optional source-frozen frame shift alerts.
+- Perception evaluation includes road IoU, boundary F1, false-drivable rate,
+  fragmentation, semantic-component coverage, merge and fragmentation. These are not
+  detection metrics.
+- Frame-shift evaluation reports source-vs-external AUROC/AP and alert rates without
+  external threshold tuning.
+- Target-only tools build a static TensorRT FP16 engine and run sustained Jetson
+  benchmarks. They never change power mode and refuse evidence overwrite. No target
+  action was executed during local implementation.
+- Delivery notebooks are regenerated, output-free, and syntactically validated.
+- The prior Colab failure mode is removed: the selected hosted/fallback environment is
+  resolved from its compatibility receipt instead of hard-coding fallback Python and
+  MMSeg paths. Both paths install the complete Colab project extras.
+- Drive now has explicit archive/quarantine/bundle/manifest/campaign/download/source
+  roots. Snapshots exclude staged datasets; a bounded review ZIP makes reports and thesis
+  figures downloadable without copying checkpoints or licensed data.
+- Frozen multi-domain statistics generate measured-only CSV plus 300-DPI PNG/PDF class
+  distribution, imbalance/weights, split-size and source-example figures with hashes.
+- Both delivery notebooks executed all 16 code cells locally in safe contract mode. This
+  verifies integration and control flow, not Colab CUDA or scientific execution.
+- A read-only connected-Drive audit corrected the storage assumption. Existing
+  `private_inputs`, prepared Cityscapes v1, its 6.99 GB verified bundle, real manifests,
+  historical compatibility evidence and `EG-REAL-001` are preserved. New staging reuses
+  the exact pinned Cityscapes bundle and adds BDD/IDD roots without migration.
+- A second read-only Drive audit confirmed IDD Part I/II and the Kaggle BDD ZIP now sit
+  beside Cityscapes in `private_inputs/`. Notebook discovery accepts that exact layout;
+  no upload, move, extraction, or reorganization is required.
+- Preparation now has a conservative archive-size multiplier plus 25 GiB disk reserve,
+  bounded same-session retry cleanup, idempotent bundle reuse, and post-build inventory
+  refresh. Runtime installation adds dependency checking and imports ONNX Runtime,
+  Optuna, Streamlit and reporting packages before accepting the five-model probe.
+- Both notebooks now persist clone/bootstrap failures and all later unhandled errors as
+  redacted, append-only JSON/ZIP evidence under `EdgeGuard/failures/`. Reports include
+  stage/commit/platform/disk context and bounded hashed logs, never datasets/checkpoints
+  or environment variables. The latest ZIP can be downloaded from the final cell.
+
+## Available external archives
+
+The connected Drive contains official Cityscapes packages, official IDD20K Part I/II,
+and a Kaggle BDD mirror under `private_inputs/`. Local archive directories now contain
+only metadata files because the user removed the large bytes to recover disk space. The
+BDD mirror is retained for preparation/catalog/audit but cannot enter HPO or main claims.
+Dataset bytes and machine-local paths are not tracked in Git.
+
+## Evidence boundary
+
+The historical pretrained PIDNet-S Cityscapes-val reference remains separately
+documented. No project-trained multi-domain checkpoint, current CUDA model comparison,
+HPO result, official source validation, ACDC/sealed-external result, ONNX finalist,
+TensorRT engine, or Jetson performance measurement exists yet. Fixture tests and dry
+runs are engineering evidence only.
+
+## Immediate external execution order
+
+1. Run `EdgeGuard_Data_Preflight_Colab.ipynb` from the existing `private_inputs/`
+   uploads with `RUN_ARCHIVE_PREPARATION=True`; retain hashes and bundle receipts.
+2. Stage/audit Cityscapes + IDD20K and review/freeze their group-safe manifests and rare
+   classes. Review BDD separately as provisional, non-scientific evidence.
+3. If official BDD packages are later obtained, add them as a new source ablation rather
+   than replacing the already recorded mirror evidence.
+4. Run one-batch, five 50-step smokes, pilots, screenings, and early ONNX checks.
+5. Freeze top two, then HPO/ablations/finals/calibration; only afterward open official
+   validation, ACDC, and sealed external evaluation.
+6. Build/benchmark TensorRT FP16 manually on Jetson, then decide whether the detection
+   phase gate passes.
+
+Implementation, local tests, Colab measurements, external results, Jetson measurements,
+and human acceptance remain distinct states.

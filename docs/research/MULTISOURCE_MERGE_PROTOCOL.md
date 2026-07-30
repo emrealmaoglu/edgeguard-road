@@ -10,12 +10,15 @@ source dataset, sequence/group, condition, source identity, mapping hash and spl
 The primary scientific comparison remains:
 
 1. Cityscapes;
-2. Cityscapes + BDD100K;
-3. Cityscapes + BDD100K + IDD20K.
+2. Cityscapes + IDD20K.
+
+The available BDD100K Kaggle mirror is prepared and audited only as provenance-limited
+engineering evidence. It cannot enter HPO, calibration, model selection or the primary
+comparison. Official BDD packages may later add a separately frozen third-source ablation.
 
 A2D2 and Mapillary are phase-two candidates, not silently added to this comparison.
 Their value is geographic and capture diversity; their cost is lossy ontology mapping.
-Adding them before the three primary rows are measured would confound the thesis result.
+Adding them before the two primary rows are measured would confound the thesis result.
 
 ## Label harmonization
 
@@ -38,7 +41,7 @@ canonical supervision cannot masquerade as a full source domain.
 
 The primary multi-domain sampler is domain-uniform (`alpha=0`): each source has equal
 expected optimizer-step mass regardless of image count. Physical `ConcatDataset`
-proportional sampling is rejected because IDD/BDD would dominate Cityscapes.
+proportional sampling is rejected because IDD would dominate Cityscapes.
 
 Dataset-size power sampling is reserved for a post-baseline data ablation:
 

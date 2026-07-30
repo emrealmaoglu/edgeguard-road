@@ -9,11 +9,19 @@ from pathlib import Path
 from edgeguard.rescue.config import load_rescue_config
 from edgeguard.rescue.external import package_external_predictions, record_external_server_result
 from edgeguard.rescue.mmseg_runtime import evaluate_model
+from edgeguard.rescue.multidomain import validate_dataset_manifest
 from edgeguard.rescue.reliability import fit_global_temperature_from_evidence
 from edgeguard.rescue.reporting import build_evidence_report
 from edgeguard.rescue.selection import select_top_two
+from edgeguard.rescue.shift import (
+    apply_shift_reference,
+    fit_shift_reference,
+    frame_shift_metrics,
+    load_shift_reference,
+    save_shift_reference,
+)
 from edgeguard.rescue.stress import build_stress_dataset
-from edgeguard.serialization import canonical_json
+from edgeguard.serialization import canonical_json, sha256_file
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -68,6 +76,21 @@ def _parser() -> argparse.ArgumentParser:
     global_calibration.add_argument("--evidence", type=Path, action="append", required=True)
     global_calibration.add_argument("--output", type=Path, required=True)
     global_calibration.add_argument("--seed", type=int, default=20260728)
+    shift_calibration = commands.add_parser(
+        "calibrate-shift", help="freeze source-only frame uncertainty thresholds"
+    )
+    shift_calibration.add_argument("--summary", type=Path, action="append", required=True)
+    shift_calibration.add_argument("--checkpoint", type=Path, required=True)
+    shift_calibration.add_argument("--data-manifest", type=Path, action="append", required=True)
+    shift_calibration.add_argument("--quantile", type=float, default=0.95)
+    shift_calibration.add_argument("--output", type=Path, required=True)
+    shift_evaluation = commands.add_parser(
+        "evaluate-shift", help="measure source-vs-external frame shift separation"
+    )
+    shift_evaluation.add_argument("--source-summary", type=Path, action="append", required=True)
+    shift_evaluation.add_argument("--external-summary", type=Path, action="append", required=True)
+    shift_evaluation.add_argument("--reference", type=Path, required=True)
+    shift_evaluation.add_argument("--output", type=Path, required=True)
     package = commands.add_parser(
         "package-external", help="create one hash-bound WildDash/MUSES submission package"
     )
@@ -118,6 +141,68 @@ def main() -> int:
             args.output.resolve(),
             seed=args.seed,
         )
+        print(canonical_json(result))
+        return 0
+    if args.command == "calibrate-shift":
+        summaries: list[dict[str, float | None]] = []
+        for path in args.summary:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            records = payload.get("frames") if isinstance(payload, dict) else None
+            if not isinstance(records, list):
+                raise ValueError("each shift summary file must contain a frames list")
+            summaries.extend(records)
+        manifest_hashes: dict[str, str] = {}
+        for path in args.data_manifest:
+            manifest = validate_dataset_manifest(path.resolve())
+            dataset_id = str(manifest["dataset_id"])
+            if dataset_id not in {"cityscapes", "bdd100k", "idd20k"}:
+                raise ValueError("shift calibration accepts only source-domain manifests")
+            if dataset_id in manifest_hashes:
+                raise ValueError("shift calibration repeats a source domain")
+            manifest_hashes[dataset_id] = sha256_file(path.resolve())
+        result = fit_shift_reference(
+            summaries,
+            checkpoint_sha256=sha256_file(args.checkpoint.resolve()),
+            dataset_manifest_sha256s=manifest_hashes,
+            quantile=args.quantile,
+        )
+        save_shift_reference(args.output.resolve(), result)
+        print(canonical_json(result))
+        return 0
+    if args.command == "evaluate-shift":
+
+        def load_frames(paths: list[Path]) -> list[dict[str, float | None]]:
+            frames: list[dict[str, float | None]] = []
+            for path in paths:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                records = payload.get("frames") if isinstance(payload, dict) else None
+                if not isinstance(records, list):
+                    raise ValueError("each shift summary file must contain a frames list")
+                frames.extend(records)
+            return frames
+
+        if args.output.exists():
+            raise FileExistsError(f"refusing to overwrite shift evidence: {args.output}")
+        reference = load_shift_reference(args.reference.resolve())
+        source_frames = load_frames(args.source_summary)
+        external_frames = load_frames(args.external_summary)
+        source_alerts = [
+            bool(apply_shift_reference(row, reference)["domain_shift_alert"])
+            for row in source_frames
+        ]
+        external_alerts = [
+            bool(apply_shift_reference(row, reference)["domain_shift_alert"])
+            for row in external_frames
+        ]
+        result = frame_shift_metrics(
+            source_frames,
+            external_frames,
+            source_alerts=source_alerts,
+            external_alerts=external_alerts,
+        )
+        result["shift_reference_sha256"] = sha256_file(args.reference.resolve())
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(canonical_json(result) + "\n", encoding="utf-8")
         print(canonical_json(result))
         return 0
     if args.command == "package-external":

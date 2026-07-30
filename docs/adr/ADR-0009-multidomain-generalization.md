@@ -2,13 +2,15 @@
 
 ## Status
 
-Accepted by the project owner on 2026-07-28 through the approved implementation plan.
+Accepted by the project owner on 2026-07-28 and acquisition-amended on 2026-07-30.
 
 ## Decision
 
 EdgeGuard-Road will study lightweight semantic segmentation under controlled
-multi-domain training. Cityscapes, BDD100K, and IDD20K are source domains mapped to
-Cityscapes19. ACDC is a frozen adverse-condition diagnostic. WildDash 2 and MUSES
+multi-domain training. The active scientific sources are Cityscapes and IDD20K mapped
+to Cityscapes19. The available Kaggle BDD100K mirror is provisional audit/smoke data and
+cannot enter scientific manifests; official BDD packages may later support a separate
+ablation. ACDC is a frozen adverse-condition diagnostic. WildDash 2 and MUSES
 remain sealed external evaluations; KITTI is the documented access fallback.
 
 Five existing MMSeg models use common random initialization, input geometry,

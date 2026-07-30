@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from edgeguard.rescue.mmseg_runtime import CITYSCAPES_PALETTE
 
@@ -116,3 +116,57 @@ def save_result(
         "confidence": confidence_path.name,
         "entropy": entropy_path.name,
     }
+
+
+def save_perception_result(
+    image: Image.Image,
+    perception: Any,
+    output_dir: Path,
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    """Persist derived drivable, reliability, attention, and region artifacts."""
+    required = (
+        "road_mask",
+        "drivable_corridor",
+        "unreliable_mask",
+        "attention_map",
+        "regions",
+    )
+    if any(not hasattr(perception, name) for name in required):
+        raise TypeError("perception result does not satisfy the EdgeGuard output contract")
+    paths = {
+        "road_mask": output_dir / "road_mask.png",
+        "drivable_mask": output_dir / "drivable_corridor.png",
+        "unreliable_mask": output_dir / "unreliable_mask.png",
+        "attention_map": output_dir / "attention_map.png",
+        "regions_overlay": output_dir / "regions_overlay.png",
+    }
+    Image.fromarray(perception.road_mask.astype(np.uint8) * 255, mode="L").save(paths["road_mask"])
+    Image.fromarray(perception.drivable_corridor.astype(np.uint8) * 255, mode="L").save(
+        paths["drivable_mask"]
+    )
+    Image.fromarray(perception.unreliable_mask.astype(np.uint8) * 255, mode="L").save(
+        paths["unreliable_mask"]
+    )
+    Image.fromarray(
+        np.clip(perception.attention_map * 255, 0, 255).astype(np.uint8), mode="L"
+    ).save(paths["attention_map"])
+    overlay = image.convert("RGB").copy()
+    drawer = ImageDraw.Draw(overlay)
+    colors = {"low": (0, 200, 0), "medium": (255, 180, 0), "high": (230, 0, 0)}
+    region_root = output_dir / "regions"
+    region_root.mkdir()
+    records: list[dict[str, Any]] = []
+    for region in perception.regions:
+        mask_name = f"region-{region.region_id:04d}-{region.class_name.replace(' ', '_')}.png"
+        Image.fromarray(region.mask.astype(np.uint8) * 255, mode="L").save(region_root / mask_name)
+        color = colors[region.attention_level]
+        x1, y1, x2, y2 = region.bbox_xyxy
+        drawer.rectangle((x1, y1, max(x1, x2 - 1), max(y1, y2 - 1)), outline=color, width=2)
+        drawer.text(
+            (x1, max(0, y1 - 12)),
+            f"{region.class_name} {region.attention_score:.2f}",
+            fill=color,
+        )
+        records.append(region.to_dict(mask_path=f"regions/{mask_name}"))
+    overlay.save(paths["regions_overlay"])
+    return ({key: path.name for key, path in paths.items()}, records)

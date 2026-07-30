@@ -418,16 +418,31 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
                 compile("".join(cell["source"]), f"colab-cell-{index}", "exec")
     preflight_source = "\n".join("".join(cell.get("source", [])) for cell in preflight["cells"])
     assert "scripts/prepare_colab_data.py" in preflight_source
+    assert "scripts/prepare_dataset.py" in preflight_source
     assert "VERIFY_ARCHIVE_HASHES = True" in preflight_source
-    assert "CREATE_BUNDLES = False" in preflight_source
+    assert "RUN_ARCHIVE_PREPARATION = False" in preflight_source
+    assert "CREATE_BUNDLES = True" in preflight_source
+    assert 'BDD_SOURCE_PROFILE = "kaggle_mirror"' in preflight_source
+    assert 'SCIENTIFIC_SOURCE_DATASETS = ["cityscapes", "idd20k"]' in preflight_source
+    assert "ColabFailureReporter" in preflight_source
+    assert "persist_bootstrap_failure" in preflight_source
     source = "\n".join("".join(cell.get("source", [])) for cell in payload["cells"])
     assert "scripts/audit_dataset.py" in source
     assert "scripts/train.py" in source
     assert "scripts/evaluate.py" in source
+    assert "scripts/predict.py" in source
     assert "scripts/export_onnx.py" in source
+    assert "calibrate-shift" in source
+    assert "evaluate-shift" in source
+    assert "--emit-regions" in source
+    assert "scripts/jetson/benchmark.py" in source
     assert "--local-root" in source
     assert "sync_work_snapshot" in source
     assert "RUN_TRAINING = False" in source
+    assert 'CAMPAIGN_ID = "semantic-first-cs-idd-v1"' in source
+    assert "bdd100k.frozen.json" not in source
+    assert "runtime-compatibility-cascade" in source
+    assert "failure-report.zip" in source
 
 
 def test_synthetic_stress_fallback_preserves_labels_and_claim_boundary(tmp_path: Path) -> None:

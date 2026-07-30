@@ -24,6 +24,7 @@ from edgeguard.training.config import load_semantic_framework_config
 from edgeguard.training.contracts import SemanticFrameworkConfig
 
 PURE_RUNTIME_PINS = (
+    "numpy==1.26.4",
     "addict==2.4.0",
     "packaging==24.2",
     "prettytable==3.16.0",
@@ -261,10 +262,10 @@ def build_path_a_commands(
             "install",
             "--python",
             str(interpreter),
-            "--no-deps",
             "-e",
-            str(project_root),
+            f"{project_root}[colab]",
         ),
+        (uv, "pip", "check", "--python", str(interpreter)),
     )
 
 
@@ -333,10 +334,10 @@ def build_path_b_commands(
             "install",
             "--python",
             str(interpreter),
-            "--no-deps",
             "-e",
-            str(project_root),
+            f"{project_root}[colab]",
         ),
+        (uv, "pip", "check", "--python", str(interpreter)),
     )
 
 
@@ -360,7 +361,8 @@ def _hosted_runtime_summary() -> dict[str, Any]:
 
 def _environment_probe(interpreter: Path, checkout: Path) -> dict[str, Any]:
     script = """
-import importlib.metadata, json, platform, subprocess, torch
+import importlib.metadata, json, platform, torch
+import matplotlib, onnx, onnxruntime, optuna, streamlit
 try:
     mmcv_distribution = 'mmcv'
     mmcv_version = importlib.metadata.version(mmcv_distribution)
@@ -378,6 +380,12 @@ payload = {
   'mmcv_distribution': mmcv_distribution,
   'mmcv_version': mmcv_version,
   'mmsegmentation_version': importlib.metadata.version('mmsegmentation'),
+  'onnx_version': importlib.metadata.version('onnx'),
+  'onnxruntime_version': importlib.metadata.version('onnxruntime'),
+  'optuna_version': importlib.metadata.version('optuna'),
+  'streamlit_version': importlib.metadata.version('streamlit'),
+  'matplotlib_version': importlib.metadata.version('matplotlib'),
+  'delivery_imports_verified': True,
 }
 print(json.dumps(payload, sort_keys=True))
 """
@@ -414,6 +422,8 @@ def _validate_identity(
         raise ValueError("MMCV distribution mismatch")
     if identity.get("cuda_available") is not True:
         raise ValueError("selected compatibility path has no CUDA")
+    if identity.get("delivery_imports_verified") is not True:
+        raise ValueError("Colab delivery dependency imports were not verified")
     if path_name == "isolated_py311" and identity.get("python_version", "").split(".")[:2] != [
         "3",
         "11",

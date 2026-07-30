@@ -279,6 +279,8 @@ def test_install_cascade_is_openmim_free_and_has_auditable_cuda_fallback(
     assert "download.openmmlab.com/mmcv/dist/cu121/torch2.1" in fallback
     assert "--only-binary=:all:" in fallback
     assert framework.commit in hosted and framework.commit in fallback
+    assert "pip check --python" in hosted
+    assert "pip check --python" in fallback
 
 
 def test_uv_resolution_uses_the_hosted_path_executable(

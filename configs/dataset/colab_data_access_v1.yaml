@@ -8,7 +8,34 @@ storage:
   drive_project_directory: EdgeGuard
   dataset_directory: datasets
   archive_directory: archives
+  private_input_directory: private_inputs
   bundle_directory: bundles
+  manifest_directory: manifests
+  campaign_directory: campaigns
+  download_directory: downloads
+  quarantine_directory: quarantine
+  source_directory: source
+  failure_directory: failures
+  preparation_archive_multiplier: 3.0
+  preparation_reserve_gib: 25
+  legacy_compatibility:
+    cityscapes:
+      archive_directory: private_inputs
+      prepared_directory: datasets/cityscapes/fine/v1
+      manifest_file: manifests/cityscapes/fine/v1/dataset_manifest.json
+      split_file: manifests/cityscapes/fine/v1/split-policy-v1/policy_selected_split.json
+      bundle_directory: datasets/cityscapes/fine/bundles
+      bundle_filename: cityscapes-fine-903a9059cb8c-988632a4f631.tar.gz
+      receipt_filename: cityscapes-fine-903a9059cb8c-988632a4f631.tar.gz.receipt.json
+      bundle_sha256: a96bb496c33ce52942cacba880d4f1381000d0417da3cb41b2eb08cee21eea04
+      dataset_manifest_sha256: 903a9059cb8c194ff204bff7f1bb87abdd22ca713efb4755acd99ea13377cedc
+      split_manifest_sha256: 988632a4f6314fe6543602d492294a2f82699656bf8987d13d69c45eea4bbc1f
+      byte_size: 6987575819
+      source_bytes: 6999755865
+      file_count: 5950
+      required_paths:
+        - leftImg8bit/train
+        - gtFine/train
 datasets:
   cityscapes:
     campaign_role: required_source
@@ -19,8 +46,10 @@ datasets:
     packages:
       - filename: leftImg8bit_trainvaltest.zip
         purpose: RGB images
+        published_sha256: 3ccff9ac1fa1d80a6a064407e589d747ed0657aac7dc495a4403ae1235a37525
       - filename: gtFine_trainvaltest.zip
         purpose: Fine semantic labels
+        published_sha256: 40461a50097844f400fef147ecaf58b18fd99e14e4917fb7c3bf9c0d87d95884
     prepared_subdirectory: cityscapes
     required_paths:
       - leftImg8bit/train
@@ -28,8 +57,8 @@ datasets:
       - gtFine/train
       - gtFine/val
   bdd100k:
-    campaign_role: required_source
-    activation_phase: source_training
+    campaign_role: provisional_engineering_source_until_official_archives
+    activation_phase: audit_and_smoke_only_currently
     access_method: official_direct_or_manual
     official_url: https://github.com/bdd100k/bdd100k/blob/master/doc/source/download.rst
     instructions: Download only 10K Images and Semantic Segmentation from the official ETH-hosted release; do not download the 100K detection/video corpus.
@@ -42,6 +71,11 @@ datasets:
         purpose: semantic train/validation masks
         published_size: 419 MB
         published_md5: 9a2968dde3345eeb689cffb1e26f9c78
+    engineering_packages:
+      - filename: bdd100k.zip
+        purpose: Kaggle mirror already uploaded for preparation/audit/smoke only
+        source_profile: kaggle_mirror
+        scientific_eligible: false
     prepared_subdirectory: bdd100k
     required_paths:
       - images/10k/train
@@ -53,12 +87,14 @@ datasets:
     activation_phase: source_training
     access_method: registered_manual
     official_url: https://idd.insaan.iiit.ac.in/evaluation/autonue19/
-    instructions: Register for the AutoNUE event, download IDD20K Part I and Part II, and extract both into the same folder.
+    instructions: Register for AutoNUE, place both official archives unchanged in Drive, then let prepare_dataset.py merge and render pinned source-ID masks.
     packages:
-      - filename: IDD20K_PART_I__KEEP_OFFICIAL_FILENAME
+      - filename: idd-20k-I.tar.gz
         purpose: IDD20K Part I
-      - filename: IDD20K_PART_II__KEEP_OFFICIAL_FILENAME
+        published_sha256: 49c0085eadd86d53d5b7ae0bfa98e3584d49a725aa58a2895e7c594a07b40802
+      - filename: idd-20k-II.tar.gz
         purpose: IDD20K Part II
+        published_sha256: 86e5b31ded2d096adfc40a2645abe640b7073b56131a7b95bbb52253d567516e
     prepared_subdirectory: idd20k
     required_paths:
       - leftImg8bit/train

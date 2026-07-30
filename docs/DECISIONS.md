@@ -18,8 +18,10 @@ results and transient implementation notes do not become ADRs.
 ## Active multi-domain semantic decision
 
 - ADR-0008 keeps semantic segmentation as the delivery-critical path.
-- ADR-0009 expands that path to three source domains, five models, bounded top-two
-  HPO, and sealed WildDash 2/MUSES evaluation without reopening detection/temporal work.
+- ADR-0009 originally expanded that path to three source domains, five models, bounded
+  top-two HPO, and sealed WildDash 2/MUSES evaluation without reopening temporal work.
+- The 2026-07-30 acquisition gate narrows active scientific training to Cityscapes +
+  IDD20K; the Kaggle BDD mirror remains a provenance-limited audit input.
 - `docs/SEMANTIC_FIRST_RUNBOOK.md` is canonical for execution and claim boundaries.
 - The expanded plan remains experimental/legacy; it may resume only after the
   semantic-first evidence package is safe.

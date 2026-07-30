@@ -129,31 +129,47 @@ def _idd_samples(root: Path, split: str) -> list[DomainSample]:
     if not image_root.is_dir() or not mask_root.is_dir():
         raise FileNotFoundError("IDD20K requires leftImg8bit and gtFine split directories")
     masks: dict[str, Path] = {}
+    canonical_masks: dict[str, Path] = {}
     for suffix in ("_gtFine_labelids.png", "_gtFine_labelIds.png"):
         for path in mask_root.glob(f"**/*{suffix}"):
             identifier = path.name.removesuffix(suffix)
             if identifier in masks:
                 raise ValueError(f"IDD sample has multiple raw source-ID masks: {identifier}")
             masks[identifier] = path
+    for path in mask_root.glob("**/*_gtFine_labelTrainIds.png"):
+        identifier = path.name.removesuffix("_gtFine_labelTrainIds.png")
+        if identifier in canonical_masks:
+            raise ValueError(f"IDD sample has multiple canonical masks: {identifier}")
+        canonical_masks[identifier] = path
     result: list[DomainSample] = []
-    for image in sorted(image_root.glob("**/*_leftImg8bit.png")):
-        identifier = image.name.removesuffix("_leftImg8bit.png")
+    images = sorted(
+        (
+            *image_root.glob("**/*_leftImg8bit.png"),
+            *image_root.glob("**/*_leftImg8bit.jpg"),
+            *image_root.glob("**/*_leftImg8bit.jpeg"),
+        )
+    )
+    for image in images:
+        identifier = image.stem.removesuffix("_leftImg8bit")
         mask = masks.get(identifier)
         if mask is None:
             raise ValueError(
                 f"IDD image lacks raw source-ID mask *_gtFine_labelids.png: {image.name}"
             )
-        parts = identifier.split("_")
-        sequence = "_".join(parts[:2]) if len(parts) >= 2 else identifier
+        sequence = image.parent.relative_to(image_root).as_posix()
         city = image.parent.name
         result.append(
             DomainSample(
                 sample_id=identifier,
                 dataset_id="idd20k",
-                group_id=f"idd20k:{city}:{sequence}",
+                group_id=f"idd20k:{sequence}",
                 image=_relative(image, root),
                 mask=_relative(mask, root),
-                canonical_mask=None,
+                canonical_mask=(
+                    _relative(canonical_masks[identifier], root)
+                    if identifier in canonical_masks
+                    else None
+                ),
                 city=city,
             )
         )
@@ -366,17 +382,36 @@ def audit_training_dataset(
     if source_split == "val" and not source_manifests:
         raise ValueError("official source validation audit requires frozen training manifests")
     ontology = load_semantic_ontology(ontology_path)
+    preparation_receipt_path = root / "preparation_receipt.json"
+    if preparation_receipt_path.is_file():
+        preparation_receipt = json.loads(preparation_receipt_path.read_text(encoding="utf-8"))
+        if preparation_receipt.get("dataset_id") != dataset_id:
+            raise ValueError("dataset preparation receipt names a different dataset")
+        preparation_scientific_eligible = bool(
+            preparation_receipt.get("scientific_eligible", False)
+        )
+        source_profile = str(preparation_receipt.get("source_profile", "unknown"))
+        preparation_receipt_sha256 = sha256_file(preparation_receipt_path)
+    else:
+        preparation_scientific_eligible = True
+        source_profile = "legacy_prepared_root_without_receipt"
+        preparation_receipt_sha256 = None
     samples = discover_domain_samples(root, dataset_id, split=source_split)
     suffix = "audit" if source_split == "train" else "val_audit"
     report_root = output_root / f"{dataset_id}_{suffix}"
     report_root.mkdir(parents=True, exist_ok=False)
     canonical_root = report_root / "canonical_masks"
+    canonical_masks_in_dataset = dataset_id == "idd20k" and all(
+        sample.canonical_mask is not None for sample in samples
+    )
     invalid: list[dict[str, Any]] = []
     exact_hashes: defaultdict[str, list[str]] = defaultdict(list)
     sample_hashes: dict[str, str] = {}
     sample_perceptual_hashes: dict[str, int] = {}
     perceptual: list[tuple[str, str, int]] = []
     pixel_counts = np.zeros(19, dtype=np.int64)
+    ignore_pixels = 0
+    total_pixels = 0
     audited: list[DomainSample] = []
     for sample in samples:
         assert sample.mask is not None
@@ -389,6 +424,8 @@ def audit_training_dataset(
             with Image.open(root / sample.mask) as mask_image:
                 native = np.asarray(mask_image)
             canonical = map_source_mask(native, dataset_id, ontology)
+            ignore_pixels += int(np.count_nonzero(canonical == 255))
+            total_pixels += int(canonical.size)
             if canonical.shape != (image_size[1], image_size[0]):
                 raise ValueError("image/mask geometry mismatch")
             valid_counts = np.bincount(canonical[canonical != 255], minlength=19)[:19]
@@ -398,7 +435,7 @@ def audit_training_dataset(
             image_sha = sha256_file(root / sample.image)
             exact_hashes[image_sha].append(sample.sample_id)
             sample_hashes[sample.sample_id] = image_sha
-            if dataset_id == "idd20k":
+            if dataset_id == "idd20k" and not canonical_masks_in_dataset:
                 canonical_path = canonical_root / f"{sample.sample_id}.png"
                 canonical_path.parent.mkdir(parents=True, exist_ok=True)
                 Image.fromarray(canonical, mode="L").save(canonical_path)
@@ -406,6 +443,10 @@ def audit_training_dataset(
             else:
                 existing_canonical = sample.canonical_mask
                 assert existing_canonical is not None
+                with Image.open(root / existing_canonical) as canonical_image:
+                    prepared_canonical = np.asarray(canonical_image, dtype=np.uint8)
+                if not np.array_equal(prepared_canonical, canonical):
+                    raise ValueError("prepared canonical mask differs from frozen ontology mapping")
                 canonical_relative = existing_canonical
             audited.append(DomainSample(**{**asdict(sample), "canonical_mask": canonical_relative}))
         except (OSError, UnidentifiedImageError, ValueError) as error:
@@ -469,9 +510,13 @@ def audit_training_dataset(
         "record_type": "edgeguard_dataset_manifest",
         "dataset_id": dataset_id,
         "dataset_root": str(root.resolve()),
-        "prepared_root": str(report_root.resolve()),
+        "prepared_root": str(
+            root.resolve() if canonical_masks_in_dataset else report_root.resolve()
+        ),
         "ontology_sha256": sha256_file(ontology_path),
         "mapping_version": ontology["sources"][dataset_id]["mapping_version"],
+        "source_profile": source_profile,
+        "preparation_receipt_sha256": preparation_receipt_sha256,
         "seed": seed,
         "source_split": source_split,
         "source_manifest_sha256s": sorted(sha256_file(path) for path in source_manifests),
@@ -479,7 +524,7 @@ def audit_training_dataset(
         "human_freeze_approved": False,
         "sealed": False,
         "audit_passed": audit_passed,
-        "scientific_eligible": audit_passed and strict_count,
+        "scientific_eligible": (audit_passed and strict_count and preparation_scientific_eligible),
         "official_train_count_required": expected,
         "roles": {
             role: [
@@ -507,6 +552,8 @@ def audit_training_dataset(
         "valid_pairs": len(audited),
         "expected_pairs": expected,
         "strict_count": strict_count,
+        "source_profile": source_profile,
+        "preparation_scientific_eligible": preparation_scientific_eligible,
         "invalid_count": len(invalid),
         "exact_duplicate_groups": len(duplicates),
         "perceptual_hashes_computed": len(perceptual),
@@ -516,6 +563,9 @@ def audit_training_dataset(
         "exact_source_overlap_count": len(exact_source_overlap),
         "near_source_overlap_count": len(cross_near_pairs),
         "class_pixel_counts": [int(value) for value in pixel_counts],
+        "ignore_pixels": ignore_pixels,
+        "total_pixels": total_pixels,
+        "ignore_pixel_ratio": (float(ignore_pixels / total_pixels) if total_pixels else None),
         "audit_passed": audit_passed,
         "candidate_manifest": manifest_path.name,
         "training_allowed": False,
@@ -791,6 +841,16 @@ def write_multidomain_statistics(
     (output_root / "rare_classes.json").write_text(
         canonical_json(rare_payload) + "\n", encoding="utf-8"
     )
+    from edgeguard.reporting.dataset_figures import build_dataset_figures
+
+    figure_report = build_dataset_figures(
+        manifests,
+        per_domain_counts=per_domain_counts,
+        pooled_counts=[int(value) for value in pixel_counts],
+        weights=weights,
+        rare_ids=rare_ids,
+        output_root=output_root,
+    )
     result = {
         "schema_version": "2.0",
         "record_type": "multi_domain_statistics",
@@ -799,6 +859,7 @@ def write_multidomain_statistics(
         "rare_class_ids": rare_ids,
         "duplicate_groups": 0,
         "near_duplicate_candidate_pairs": len(near_duplicates),
+        "figures_generated": figure_report["figures_generated"],
     }
     (output_root / "near_duplicates.json").write_text(
         canonical_json({"records": near_duplicates}) + "\n", encoding="utf-8"

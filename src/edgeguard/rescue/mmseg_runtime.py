@@ -29,6 +29,7 @@ from edgeguard.rescue.dataset import (
 from edgeguard.rescue.ledger import append_run_ledger
 from edgeguard.rescue.multidomain import validate_dataset_manifest, verify_sealed_release
 from edgeguard.rescue.reliability import confidence_entropy_summary, save_calibration_evidence
+from edgeguard.rescue.shift import frame_uncertainty_summary, uncertainty_maps
 from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
 
 CITYSCAPES_PALETTE = [
@@ -808,13 +809,14 @@ def _evaluation_dataset(
 
 
 def _collect_reporting_evidence(
-    runner: Any, *, max_pixels: int
-) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any]]:
+    runner: Any, *, max_pixels: int, temperature: float = 1.0
+) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any], list[dict[str, Any]]]:
     torch = __import__("torch")
     logits_parts: list[np.ndarray] = []
     target_parts: list[np.ndarray] = []
     collected = 0
     confusion = SemanticConfusionMatrix()
+    frame_summaries: list[dict[str, Any]] = []
     runner.model.eval()
     for data_batch in runner.test_dataloader:
         with torch.no_grad():
@@ -823,6 +825,22 @@ def _collect_reporting_evidence(
             if not hasattr(output, "seg_logits") or not hasattr(output, "gt_sem_seg"):
                 raise RuntimeError("MMSeg output must preserve seg_logits and gt_sem_seg")
             logits = output.seg_logits.data.detach().cpu().numpy()
+            maps = uncertainty_maps(logits / temperature)
+            frame_summary: dict[str, Any] = dict(
+                frame_uncertainty_summary(
+                    maps["maximum_softmax_probability"],
+                    maps["normalized_entropy"],
+                    energy=maps["energy"],
+                )
+            )
+            frame_summary["mean_maximum_logit"] = float(np.mean(maps["maximum_logit"]))
+            frame_summary["negative_mean_maximum_logit"] = -float(
+                frame_summary["mean_maximum_logit"]
+            )
+            metadata = getattr(output, "metainfo", {})
+            image_path = metadata.get("img_path") if isinstance(metadata, dict) else None
+            frame_summary["sample_id"] = Path(str(image_path)).stem if image_path else None
+            frame_summaries.append(frame_summary)
             target = output.gt_sem_seg.data.detach().cpu().numpy().squeeze(0)
             if logits.shape[1:] != target.shape:
                 resized = torch.nn.functional.interpolate(
@@ -851,10 +869,15 @@ def _collect_reporting_evidence(
             target_parts.append(flat_target[indices])
             collected += indices.size
     if not logits_parts:
-        return None, None, confusion.result()
+        return None, None, confusion.result(), frame_summaries
     logits_array = np.concatenate(logits_parts, axis=1)[None, :, None, :]
     targets_array = np.concatenate(target_parts, axis=0)[None, None, :]
-    return logits_array.astype(np.float32), targets_array.astype(np.int64), confusion.result()
+    return (
+        logits_array.astype(np.float32),
+        targets_array.astype(np.int64),
+        confusion.result(),
+        frame_summaries,
+    )
 
 
 def evaluate_model(
@@ -910,13 +933,23 @@ def evaluate_model(
     needs_logits = (
         fit_calibrator or temperature_file is not None or calibration_evidence_output is not None
     )
+    reporting_temperature = 1.0
+    if temperature_file is not None:
+        reporting_temperature = float(
+            json.loads(temperature_file.read_text(encoding="utf-8"))["final_temperature"]
+        )
+    if not np.isfinite(reporting_temperature) or reporting_temperature <= 0.0:
+        raise ValueError("reporting temperature must be finite and positive")
     if needs_logits or collect_classwise:
-        logits, targets, classwise = _collect_reporting_evidence(
-            runner, max_pixels=max_reliability_pixels if needs_logits else 0
+        logits, targets, classwise, frame_summaries = _collect_reporting_evidence(
+            runner,
+            max_pixels=max_reliability_pixels if needs_logits else 0,
+            temperature=reporting_temperature,
         )
     else:
         logits, targets = None, None
         classwise = {"per_class_iou": [None] * 19, "collection_skipped": True}
+        frame_summaries = []
     rare_class_miou: float | None = None
     if rare_classes_file is not None:
         rare_payload = json.loads(rare_classes_file.read_text(encoding="utf-8"))
@@ -1000,6 +1033,20 @@ def evaluate_model(
         ),
         "official_val_used_for_selection": False,
     }
+    shift_summary = {
+        "schema_version": "1.0",
+        "record_type": "edgeguard_frame_uncertainty_summaries",
+        "dataset": dataset,
+        "role": role,
+        "condition": condition,
+        "checkpoint_sha256": sha256_file(checkpoint),
+        "temperature": reporting_temperature,
+        "frames": frame_summaries,
+        "pixel_anomaly_segmentation": False,
+    }
+    (output_dir / "frame_uncertainty.json").write_text(
+        canonical_json(shift_summary) + "\n", encoding="utf-8"
+    )
     (output_dir / "evaluation.json").write_text(canonical_json(result) + "\n", encoding="utf-8")
     append_run_ledger(
         output_dir.parent / "run_ledger.jsonl", operation="semantic_evaluation", result=result

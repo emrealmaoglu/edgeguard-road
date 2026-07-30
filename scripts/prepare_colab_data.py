@@ -32,9 +32,19 @@ def _parser() -> argparse.ArgumentParser:
     bundle = subparsers.add_parser("bundle")
     bundle.add_argument("--dataset", action="append", required=True)
     bundle.add_argument("--replace", action="store_true")
+    bundle.add_argument(
+        "--source-root",
+        type=Path,
+        help="prepared local root; allowed only when bundling one dataset",
+    )
     stage = subparsers.add_parser("stage")
     stage.add_argument("--dataset", action="append", required=True)
     stage.add_argument("--local-root", type=Path, required=True)
+    stage.add_argument(
+        "--allow-ineligible",
+        action="store_true",
+        help="stage quarantined smoke data; scientific training remains blocked",
+    )
     return parser
 
 
@@ -46,9 +56,17 @@ def main() -> int:
     elif args.command == "inventory":
         result = inventory_colab_data(plan, args.drive_root, hash_archives=args.hash_archives)
     elif args.command == "bundle":
+        if args.source_root is not None and len(args.dataset) != 1:
+            raise ValueError("--source-root requires exactly one --dataset")
         result = {
             "bundles": [
-                create_dataset_bundle(plan, args.drive_root, dataset, replace=args.replace)
+                create_dataset_bundle(
+                    plan,
+                    args.drive_root,
+                    dataset,
+                    replace=args.replace,
+                    source_root=args.source_root,
+                )
                 for dataset in args.dataset
             ]
         }
@@ -58,6 +76,7 @@ def main() -> int:
             args.drive_root,
             args.local_root,
             tuple(args.dataset),
+            allow_ineligible=args.allow_ineligible,
         )
     rendered = canonical_json(result) + "\n"
     if args.output is not None:

@@ -1,22 +1,26 @@
 # EdgeGuard-Road
 
-EdgeGuard-Road is an undergraduate semantic-segmentation research prototype for
-comparing edge-oriented road-scene models under one leakage-safe protocol and
-preparing the selected model for ONNX/Jetson deployment.
+EdgeGuard-Road is an undergraduate road-perception research prototype that compares
+lightweight semantic models under one leakage-safe protocol and deploys the selected
+accuracy–speed–reliability trade-off on NVIDIA Jetson Orin Nano Super.
 
 The active delivery scope is multi-domain but deliberately single-task:
 
-- Cityscapes, BDD100K, and IDD20K audit/frozen manifests under Cityscapes19
+- Cityscapes + IDD20K scientific manifests under Cityscapes19, plus a provenance-limited
+  BDD100K mirror audit that is barred from HPO/main claims
 - SegFormer-B0, Fast-SCNN, PIDNet-S, DDRNet-23-Slim, and BiSeNetV2
 - domain-uniform source sampling and source-domain macro model selection
 - bounded top-two Optuna HPO at fixed `512×1024`
 - CrossEntropy versus train-fit-only median-frequency weighting
 - equal-domain temperature calibration, ACDC, and sealed WildDash 2/MUSES evaluation
-- static ONNX export, numerical agreement, Streamlit image demo, and optional Jetson benchmark
+- static ONNX/TensorRT FP16 validation and sustained 25W/MAXN SUPER Jetson measurement
+- road and ego-reachable drivable corridor extraction
+- semantic connected-component regions with confidence and entropy summaries
+- source-calibrated frame shift alerts and explainable operational-attention maps
 
-Detection, temporal fusion, learned anomaly heads, INT8, and
-advanced tracking remain experimental/legacy code. They are not dependencies of the
-scientific delivery path and their fixture results are not model-quality evidence.
+Detection, temporal fusion, learned anomaly heads, INT8, and advanced tracking remain
+experimental/legacy. RTMDet-Tiny is the only conditional phase-two detector and cannot
+start until every gate in `PROJECT_CHARTER.md` passes.
 
 ## Current evidence boundary
 
@@ -83,9 +87,13 @@ python scripts/train.py \
 The other public commands are:
 
 ```text
+python scripts/prepare_dataset.py --help
 python scripts/evaluate.py --help
-python scripts/predict.py --help
+python scripts/predict.py --emit-regions --emit-risk --help
 python scripts/export_onnx.py --help
+python scripts/jetson/build_tensorrt.py --help
+python scripts/jetson/benchmark.py --help
+python scripts/check_detection_gate.py --help
 streamlit run app.py
 ```
 
@@ -93,8 +101,9 @@ Use `notebooks/EdgeGuard_Road_Colab.ipynb` for the complete Drive-backed Colab
 workflow. It defaults to audit-only and will not start GPU training until
 `RUN_TRAINING` is explicitly enabled.
 
-See `docs/SEMANTIC_FIRST_RUNBOOK.md` for calibration, ACDC, weighted-loss, reporting,
-ONNX, and Jetson commands.
+Run `notebooks/EdgeGuard_Data_Preflight_Colab.ipynb` before the training notebook. See
+`docs/SEMANTIC_FIRST_RUNBOOK.md` for the ordered data, experiment, external-evaluation,
+ONNX, Jetson, and conditional detector gates.
 
 ## Scientific boundaries
 
@@ -112,3 +121,5 @@ ONNX, and Jetson commands.
   `run_ledger.jsonl`; generated ledgers are never committed.
 
 The prototype is not a safety-certified ADAS product or vehicle controller.
+Semantic connected components are not instance detections, and the deterministic
+attention score is not collision probability or learned physical risk.

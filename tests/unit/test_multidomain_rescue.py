@@ -134,6 +134,20 @@ def test_training_audits_freeze_and_pool_statistics(tmp_path: Path) -> None:
     assert len(rare["groups"]["rare"]) == 5
     assert min(weights) >= 0.5 and max(weights) <= 5.0
     assert np.mean(weights) == pytest.approx(1.0)
+    assert result["figures_generated"] is True
+    for relative in (
+        "class_distribution.csv",
+        "figures/class_distribution_by_domain.png",
+        "figures/class_distribution_by_domain.pdf",
+        "figures/pooled_imbalance_and_weights.png",
+        "figures/source_split_sizes.pdf",
+        "figures/source_domain_examples.png",
+        "thesis_figures.json",
+    ):
+        assert (tmp_path / "statistics" / relative).is_file()
+    report = json.loads((tmp_path / "statistics/thesis_figures.json").read_text())
+    assert report["dataset_redistribution_authorized"] is False
+    assert all(len(row["sha256"]) == 64 for row in report["files"])
 
 
 def test_official_source_validation_is_separate_and_overlap_checked(tmp_path: Path) -> None:

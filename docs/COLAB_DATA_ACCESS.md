@@ -1,6 +1,6 @@
 # Colab data access and storage runbook
 
-Verified on 2026-07-28. The machine-readable authority is
+Verified against the connected Drive on 2026-07-30. The machine-readable authority is
 `configs/dataset/colab_data_access_v1.yaml`; this page explains the human steps. Dataset
 files, login data, cookies, temporary signed URLs, and license receipts never enter Git.
 
@@ -21,12 +21,36 @@ Run `notebooks/EdgeGuard_Data_Preflight_Colab.ipynb` first. It creates this layo
 
 ```text
 MyDrive/EdgeGuard/
-├── archives/<dataset_id>/       # untouched official downloads
-├── datasets/<dataset_id>/       # manually extracted/prepared native trees
+├── archives/                    # untouched official downloads
+│   ├── cityscapes/
+│   ├── bdd100k/
+│   ├── idd20k/
+│   ├── acdc/
+│   ├── wilddash2/
+│   ├── muses/
+│   └── kitti/
+├── quarantine/kaggle/bdd100k/  # smoke-only BDD mirror; never final science
+├── private_inputs/              # current immutable uploads; no migration required
 ├── bundles/                     # *.prepared.tar + hash receipt
-├── manifests/                   # access/inventory evidence
-└── artifacts/                   # immutable experiment snapshots
+├── manifests/                   # acquisition and inventory evidence
+├── campaigns/<id>/<commit>/     # verified resumable campaign.latest.tar.gz
+├── downloads/                   # small review ZIPs for local inspection
+├── source/                      # optional immutable source-code handoff
+└── datasets/<dataset_id>/       # legacy prepared roots; not the default path
 ```
+
+The live read-only Drive audit found an older, valid project structure rather than an
+empty target. It is preserved in place. In particular, all current archives remain under
+`private_inputs/`, while Cityscapes prepared data and its 6.99 GB verified bundle remain under
+`datasets/cityscapes/fine/`, and `campaigns/EG-REAL-001` remains historical evidence.
+The notebook detects and reuses the exact hash-pinned Cityscapes bundle; it creates only
+missing BDD/IDD and review directories. See `DRIVE_LAYOUT_AUDIT_2026-07-30.md`.
+
+The campaign snapshot includes only named experiment-state roots. Staged datasets are
+never recompressed into it. The review ZIP additionally excludes datasets, canonical
+masks, checkpoints, ONNX and TensorRT payloads; it contains human-readable JSON/CSV/logs
+and thesis PNG/PDF figures. Set `DOWNLOAD_REVIEW_PACKAGE=True` in the training notebook
+to download that small ZIP through the browser. Full state remains in Drive.
 
 ## Phase-one source datasets
 
@@ -37,11 +61,11 @@ Register, accept the official terms, and download only:
 - `leftImg8bit_trainvaltest.zip`
 - `gtFine_trainvaltest.zip`
 
-Extract to `MyDrive/EdgeGuard/datasets/cityscapes/`. The required train and val paths
-are checked before a bundle can be created. Official page:
+Do not extract it manually. The preflight notebook prepares the required train/val tree
+in ephemeral Colab storage and writes a verified bundle. Official page:
 <https://www.cityscapes-dataset.com/downloads/>.
 
-### BDD100K semantic — required, official release
+### BDD100K semantic — provisional now; official packages required for scientific use
 
 Download only the 10K image and semantic-segmentation packages. Do not acquire the 100K
 image/video/detection corpus; it is irrelevant and wastes storage.
@@ -54,14 +78,22 @@ image/video/detection corpus; it is irrelevant and wastes storage.
 The source of record is the BDD100K repository's download documentation:
 <https://github.com/bdd100k/bdd100k/blob/master/doc/source/download.rst>. If the official
 ETH host is temporarily unreachable, wait or use the official browser flow; do not replace
-it with Kaggle, Hugging Face, Google Drive, or another mirror. Extract so the root contains
-`images/10k/{train,val}` and `labels/sem_seg/masks/{train,val}`.
+it with Kaggle, Hugging Face, Google Drive, or another mirror for final science. The
+uploaded `private_inputs/bdd100k.zip` is retained for audit/smoke only and is marked
+scientifically ineligible by code.
+
+Kaggle and official BDD can never share a bundle filename. The quarantined output is
+`bdd100k.kaggle_mirror.prepared.tar`; the official output is
+`bdd100k.prepared.tar`. Scientific staging refuses the mirror bundle. An explicit
+`ALLOW_INELIGIBLE_BDD_SMOKE=True` can stage it for plumbing and provisional audit, and
+its preparation receipt still prevents a scientific manifest. Main HPO/training uses
+Cityscapes + IDD20K. Official BDD may return later as a separately frozen ablation.
 
 ### IDD20K — required controlled ablation, manual account
 
 Register for the AutoNUE event, open Dataset → Download, acquire IDD20K Part I and Part II,
-and extract both archives into the same `MyDrive/EdgeGuard/datasets/idd20k/` root. The
-official instructions explicitly require the two-part merge:
+and leave both archives untouched. The notebook merges both into one ephemeral prepared
+root only after path-collision checks. The official instructions require the two-part merge:
 <https://idd.insaan.iiit.ac.in/evaluation/autonue19/>. Preserve native source-ID masks;
 the project maps only exact ontology matches and sends ambiguous classes to ignore `255`.
 
@@ -93,13 +125,38 @@ the project maps only exact ontology matches and sends ambiguous classes to igno
 
 ## Execution order
 
-1. Place official archives under `archives/<dataset_id>/` and keep their official names.
+1. Leave current uploads under `private_inputs/`; future official archives may use
+   `archives/<dataset_id>/`. Do not move or extract source archives in Drive.
 2. Run the preflight notebook with archive hashing enabled. Preserve the JSON inventory.
-3. Extract/normalize native trees under `datasets/<dataset_id>/`; never rewrite masks.
-4. Rerun inventory. Only a `prepared` state may enter bundling.
-5. Set `CREATE_BUNDLES=True` once. Do not replace a bundle unless its source tree changed
-   intentionally and the scientific manifests will be regenerated.
-6. Open `EdgeGuard_Road_Colab.ipynb`. Its stage command refuses missing receipts, altered
+3. Set `RUN_ARCHIVE_PREPARATION=True`; keep `CREATE_BUNDLES=True`. The notebook reuses
+   Cityscapes, prepares BDD then IDD one at a time, enforces a conservative 3× archive
+   working-space estimate plus 25 GiB reserve, bundles directly, and removes temporary
+   trees. Repeat runs reuse verified bundles.
+4. Do not replace a bundle unless its archives/source profile changed intentionally and
+   all scientific manifests will be regenerated.
+5. Open `EdgeGuard_Road_Colab.ipynb`. Its stage command refuses missing receipts, altered
    hashes, partial destinations, unsafe tar members, or storage plans over budget.
-7. Leave `RUN_TRAINING=False` until all three audit reports and candidate splits are
-   reviewed and frozen.
+6. Leave `RUN_TRAINING=False` until Cityscapes and IDD scientific candidate manifests
+   are reviewed and frozen. Review the BDD audit separately; it cannot be frozen for science.
+7. After each stage, inspect `downloads/*-review.zip`. Class distribution, pooled
+   imbalance/weights, split sizes and deterministic source examples are generated only
+   from measured `train_fit` manifests; fixture plots are never thesis evidence.
+
+## Colab runtime rule
+
+The current hosted Colab stack is not assumed. Colab announced Python 3.12 and Torch 2.8
+for the hosted image, while the pinned MMSeg stack predates that image. The notebook first
+attempts hosted Torch unchanged and then falls back to isolated Python 3.11, Torch 2.1.1
+and CUDA 12.1. Both paths run dependency checks, delivery-package imports, five-model
+forward/backward and checkpoint reload. Training no longer uses a hard-coded interpreter:
+it resolves the selected Python and MMSeg checkout from the verified compatibility
+receipt and rejects project/framework commit drift.
+
+References: <https://github.com/googlecolab/colabtools/issues/5483>,
+<https://mmsegmentation.readthedocs.io/en/main/notes/faq.html>, and
+<https://mmcv.readthedocs.io/en/2.x/get_started/installation.html>.
+
+Any unhandled notebook/subprocess error creates a redacted JSON and downloadable ZIP
+under `EdgeGuard/failures/`. Set `DOWNLOAD_LATEST_FAILURE_REPORT=True` and rerun the last
+notebook cell to download it. The exact contents and recovery procedure are defined in
+`docs/COLAB_FAILURE_REPORTING.md`.
