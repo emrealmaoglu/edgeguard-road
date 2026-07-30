@@ -10,10 +10,14 @@ from edgeguard.rescue.hpo_runtime import run_hpo_study, select_hpo_models
 from edgeguard.rescue.mmseg_runtime import default_mmseg_root, train_model
 from edgeguard.serialization import canonical_json
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=Path("configs/rescue/semantic_first.yaml"))
+    parser.add_argument(
+        "--config", type=Path, default=REPOSITORY_ROOT / "configs/rescue/semantic_first.yaml"
+    )
     parser.add_argument("--model")
     parser.add_argument(
         "--stage", choices=("smoke", "pilot", "screening", "hpo", "final"), required=True

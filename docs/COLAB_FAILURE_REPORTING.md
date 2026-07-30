@@ -26,6 +26,11 @@ redacted live output is also written under `/content/edgeguard-command-logs/` an
 in the bounded failure ZIP. A non-zero exit therefore reports the actual final output lines,
 not only a generic `CalledProcessError`.
 
+Notebook subprocesses execute with the exact checkout as their working directory and with
+the checkout's `src/` on `PYTHONPATH`. Active CLI config defaults are also anchored to the
+repository containing each script, so Colab's initial `/content` directory cannot redirect
+relative configuration lookup.
+
 Archive inventory hashing is observational. If mounted Drive interrupts a large sequential
 read, inventory records `hash_status=read_error` and continues. This does not waive archive
 integrity: preparation copies the archive to `/content` with bounded retries, and the

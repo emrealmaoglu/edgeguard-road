@@ -8,6 +8,8 @@ from pathlib import Path
 from edgeguard.data.preparation import prepare_dataset
 from edgeguard.serialization import canonical_json
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -17,7 +19,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ontology",
         type=Path,
-        default=Path("configs/dataset/semantic_ontology_v2.yaml"),
+        default=REPOSITORY_ROOT / "configs/dataset/semantic_ontology_v2.yaml",
     )
     parser.add_argument(
         "--source-profile", choices=("official", "kaggle_mirror"), default="official"

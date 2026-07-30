@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 import tarfile
 from copy import deepcopy
 from pathlib import Path
@@ -22,6 +24,30 @@ from edgeguard.rescue.colab_data import (
 from edgeguard.serialization import sha256_file
 
 PLAN = Path("configs/dataset/colab_data_access_v1.yaml")
+
+
+def test_colab_inventory_cli_default_plan_is_cwd_independent(tmp_path: Path) -> None:
+    script = Path("scripts/prepare_colab_data.py").resolve()
+    output = tmp_path / "inventory.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--drive-root",
+            str(tmp_path / "drive"),
+            "--output",
+            str(output),
+            "inventory",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["record_type"] == (
+        "edgeguard_colab_data_inventory"
+    )
 
 
 def _fixture_plan(tmp_path: Path) -> tuple[dict[str, object], Path]:

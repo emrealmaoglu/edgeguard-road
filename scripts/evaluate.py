@@ -23,12 +23,16 @@ from edgeguard.rescue.shift import (
 from edgeguard.rescue.stress import build_stress_dataset
 from edgeguard.serialization import canonical_json, sha256_file
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="evaluate one frozen model")
-    run.add_argument("--config", type=Path, default=Path("configs/rescue/semantic_first.yaml"))
+    run.add_argument(
+        "--config", type=Path, default=REPOSITORY_ROOT / "configs/rescue/semantic_first.yaml"
+    )
     run.add_argument("--resolved-config", type=Path, required=True)
     run.add_argument("--checkpoint", type=Path, required=True)
     run.add_argument(

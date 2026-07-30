@@ -11,11 +11,12 @@ intentionally runs the current checkout without cloning, so it records a pin mis
 instead of rejecting a legitimate later documentation/CI commit. GitHub CI installs the
 `rescue` extras as well as development tools, keeping thesis-figure tests representative.
 
-The first real preflight exposed a mounted-Drive archive hashing interruption. Inventory
-now records per-file hash read errors without weakening the later integrity gate; archive
-copies use bounded retries and are verified locally before extraction. All post-bootstrap
-subprocesses stream redacted command logs into failure packages, eliminating the generic
-exit-code-only diagnostic gap.
+The first real preflight initially exposed only an exit code. After command-tail logging
+was added, the rerun established the exact root cause: the child process started in
+`/content` and resolved a relative `configs/...` default outside the checkout. All notebook
+subprocesses now run from the exact repository root, and active CLI config defaults are
+anchored to their script checkout. Inventory also records mounted-Drive hash read errors
+without weakening mandatory post-copy verification.
 
 ## Implemented and locally verified
 

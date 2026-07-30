@@ -15,13 +15,15 @@ from edgeguard.rescue.colab_data import (
 )
 from edgeguard.serialization import canonical_json
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--plan",
         type=Path,
-        default=Path("configs/dataset/colab_data_access_v1.yaml"),
+        default=REPOSITORY_ROOT / "configs/dataset/colab_data_access_v1.yaml",
     )
     parser.add_argument("--drive-root", type=Path, required=True)
     parser.add_argument("--output", type=Path)

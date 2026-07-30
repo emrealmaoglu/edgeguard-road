@@ -190,6 +190,7 @@ def run_colab_command(command, *, check=True):
         log_root=COMMAND_LOG_ROOT,
         stage=FAILURE_REPORTER.stage,
         check=check,
+        cwd=PROJECT_ROOT,
         env=command_env,
     )
 
@@ -756,6 +757,7 @@ def run_colab_command(command, *, check=True):
         log_root=COMMAND_LOG_ROOT,
         stage=FAILURE_REPORTER.stage,
         check=check,
+        cwd=PROJECT_ROOT,
         env=command_env,
     )
 
