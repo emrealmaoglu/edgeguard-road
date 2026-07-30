@@ -2,6 +2,10 @@
 
 Updated 2026-07-30 on branch `rescue/semantic-first`.
 
+The published delivery notebooks are pinned to implementation commit
+`f25fc4faa6f6a55aae226aec9c269d8c5cf3102c`; a later branch update cannot silently alter
+the Colab runtime code or scientific protocol.
+
 ## Implemented and locally verified
 
 - Five-model, two-source scientific training/evaluation/HPO contracts are active for

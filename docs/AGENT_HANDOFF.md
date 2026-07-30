@@ -1,7 +1,8 @@
 # Agent Handoff
 
 - **Milestone:** updated phase-one road perception and pre-Colab implementation.
-- **Branch:** `rescue/semantic-first`; working tree intentionally uncommitted.
+- **Branch:** `rescue/semantic-first`; exact-commit Colab delivery publication.
+- **Pinned Colab implementation:** `f25fc4faa6f6a55aae226aec9c269d8c5cf3102c`.
 - **Classification:** locally tested engineering implementation; no new scientific or
   Jetson measurement.
 
@@ -64,5 +65,5 @@ audit BDD separately without promoting it into HPO or the main thesis table.
 
 Do not open ACDC or sealed external data before the final model/preprocessing/reliability
 freeze. Do not start RTMDet-Tiny unless `scripts/check_detection_gate.py` returns a
-fully evidenced pass. No commit, push, PR, dataset license acceptance, sealed submission,
-or privileged Jetson operation is implied by this handoff.
+fully evidenced pass. No dataset license acceptance, sealed submission, scientific-result
+approval or privileged Jetson operation is implied by this handoff.
