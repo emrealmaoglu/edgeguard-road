@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from edgeguard.rescue.colab_data import (
+    _load_idd_shard_index,
     copy_archive_to_local,
     create_dataset_bundle,
     initialize_drive_layout,
@@ -21,9 +22,33 @@ from edgeguard.rescue.colab_data import (
     preparation_disk_budget,
     stage_dataset_bundles,
 )
-from edgeguard.serialization import sha256_file
+from edgeguard.serialization import sha256_file, sha256_payload
 
 PLAN = Path("configs/dataset/colab_data_access_v1.yaml")
+
+
+def test_official_idd_shard_index_accepts_exact_16063_release_count(tmp_path: Path) -> None:
+    shard_root = tmp_path / "prepared/v2/idd20k/shards"
+    shard_root.mkdir(parents=True)
+    shard_counts = [500] * 32 + [63]
+    index = {
+        "schema_version": "2.0",
+        "record_type": "edgeguard_idd_shard_index",
+        "dataset_id": "idd20k",
+        "shard_size": 500,
+        "counts": {"train": 14_027, "val": 2_036},
+        "sample_count": 16_063,
+        "shards": [
+            {"filename": f"idd20k-{number:04d}.tar", "sample_count": count}
+            for number, count in enumerate(shard_counts)
+        ],
+        "scientific_eligible": True,
+    }
+    index["receipt_sha256"] = sha256_payload(index)
+    (shard_root / "idd20k.shards.json").write_text(json.dumps(index), encoding="utf-8")
+    loaded = _load_idd_shard_index(tmp_path)
+    assert loaded is not None
+    assert loaded[1]["sample_count"] == 16_063
 
 
 def test_colab_inventory_cli_default_plan_is_cwd_independent(tmp_path: Path) -> None:
