@@ -2,7 +2,7 @@
 
 - **Milestone:** updated phase-one road perception and pre-Colab implementation.
 - **Branch:** `rescue/semantic-first`; exact-commit Colab delivery publication.
-- **Pinned Colab implementation:** `3134d3f1e6d3bf23ede14f7a29b0adbeb51e0e89`.
+- **Pinned Colab implementation:** `3689880bc074befd326bc2831974f08f899ee42d`.
 - **Classification:** locally tested engineering implementation; no new scientific or
   Jetson measurement.
 - **Pin enforcement:** strict in Colab; the no-clone local harness only reports a later
@@ -13,8 +13,8 @@
   the exact cause; hash-read resilience and mandatory post-copy verification remain active.
 - **Observed IDD incident:** the official Part I/II preparation produced no output for over
   12 hours. The old gzip seek pattern, duplicate hash reads, serial dual-mask rendering,
-  missing liveness, and orphanable child process are corrected locally. Do not rerun the
-  old `6745106` payload; publish and pin this implementation first.
+  missing liveness, and orphanable child process are corrected. Do not rerun the old
+  `6745106` payload.
 
 ## Delivered
 
@@ -23,8 +23,13 @@
   pinned IDD polygon rendering, Part II JPG support, and immutable native labels.
 - Kaggle BDD is fail-closed as `scientific_eligible=false`; active scientific HPO and
   final training use Cityscapes + IDD20K.
-- Drive/Colab notebooks prepare and bundle one dataset at a time in ephemeral storage,
-  enforce the 175 GiB + 25 GiB policy, and avoid Mac/Drive small-file extraction.
+- Drive/Colab notebooks enforce the 175 GiB + 25 GiB policy; Cityscapes uses its verified
+  bundle and IDD publishes resumable 500-sample canonical shards.
+- Immutable content-addressed recovery retains current and previous generations. Full
+  optimizer, scheduler, AMP, sampler and RNG state is published every 500 optimizer steps
+  or ten minutes; incomplete incoming artifacts are never accepted.
+- HPO persists each rung and an atomic SQLite backup. Input/output hash completion receipts
+  make a second Run all a no-op for verified stages.
 - IDD preparation now reads each gzip TAR forward once, hashes archives once, renders
   canonical masks through a reviewed LUT with bounded workers, and reports extraction,
   mask, bundle, staging and disk progress. Verified archive cache survives a failed retry.
@@ -59,11 +64,11 @@
 
 ## Verification
 
-- `ruff format --check .`: 288 files formatted.
+- `ruff format --check .`: 293 files formatted.
 - `ruff check .`: passed.
-- `mypy src/edgeguard`: 108 source files passed.
-- `pytest -q`: 419 passed, 10 skipped.
-- Both delivery notebooks regenerate, contain no outputs, and all 16 code cells execute
+- `mypy src/edgeguard`: 110 source files passed.
+- `pytest -q`: 430 passed, 10 skipped.
+- Both delivery notebooks regenerate, contain no outputs, and all 17 code cells execute
   in the external-action-free local contract runner.
 - All active command help surfaces and Python compile-all passed.
 - `git diff --check` passed; no machine-local path or credential marker was found in

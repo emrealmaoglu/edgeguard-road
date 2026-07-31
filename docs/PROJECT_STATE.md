@@ -3,10 +3,10 @@
 Updated 2026-07-31 on branch `rescue/semantic-first`.
 
 The published delivery notebooks are pinned to implementation commit
-`3134d3f1e6d3bf23ede14f7a29b0adbeb51e0e89`; a later branch update cannot silently alter
+`3689880bc074befd326bc2831974f08f899ee42d`; a later branch update cannot silently alter
 the Colab runtime code or scientific protocol.
 
-The pending Colab-resilience revision replaces that snapshot model with content-addressed,
+The Colab-resilience revision replaces the previous snapshot model with content-addressed,
 current/previous-generation recovery. Training publishes full optimizer/scheduler/AMP/RNG
 state every 500 optimizer steps or ten minutes; HPO persists per rung with an atomic SQLite
 backup. IDD preparation publishes verified 500-sample shards, audit publishes 250-sample

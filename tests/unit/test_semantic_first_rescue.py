@@ -434,7 +434,7 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "Yerel cache SHA-256 doğrulanıyor" in preflight_source
     assert "shutil.rmtree(CACHE_ROOT)" not in preflight_source
     assert (
-        'EXPECTED_PROJECT_COMMIT = "3134d3f1e6d3bf23ede14f7a29b0adbeb51e0e89"' in preflight_source
+        'EXPECTED_PROJECT_COMMIT = "3689880bc074befd326bc2831974f08f899ee42d"' in preflight_source
     )
     source = "\n".join("".join(cell.get("source", [])) for cell in payload["cells"])
     assert "scripts/audit_dataset.py" in source
@@ -459,7 +459,7 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "failure-report.zip" in source
     assert "run_logged_command" in source
     assert "cwd=PROJECT_ROOT" in source
-    assert 'EXPECTED_PROJECT_COMMIT = "3134d3f1e6d3bf23ede14f7a29b0adbeb51e0e89"' in source
+    assert 'EXPECTED_PROJECT_COMMIT = "3689880bc074befd326bc2831974f08f899ee42d"' in source
 
 
 def test_synthetic_stress_fallback_preserves_labels_and_claim_boundary(tmp_path: Path) -> None:
