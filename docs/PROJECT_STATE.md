@@ -3,7 +3,7 @@
 Updated 2026-07-31 on branch `rescue/semantic-first`.
 
 The published delivery notebooks are pinned to implementation commit
-`6745106f0cb419dcc15b51cc3856eb87042086a6`; a later branch update cannot silently alter
+`3134d3f1e6d3bf23ede14f7a29b0adbeb51e0e89`; a later branch update cannot silently alter
 the Colab runtime code or scientific protocol.
 
 Colab enforces that pin after checkout. The external-action-free local notebook harness
