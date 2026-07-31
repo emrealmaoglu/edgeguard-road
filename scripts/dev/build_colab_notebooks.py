@@ -949,11 +949,40 @@ else:
                 command.extend([
                     "--checkpoint-root",
                     str(CAMPAIGN_ROOT / "state/audit-catalog"),
+                    "--quarantine-invalid-source-samples",
                 ])
-            run_colab_command(command)
+            audit_process = run_colab_command(command, check=False)
+            if audit_process.returncode not in {0, 2}:
+                raise RuntimeError(
+                    f"{dataset} audit infrastructure failed with exit code "
+                    f"{audit_process.returncode}"
+                )
+            if audit_process.returncode == 2:
+                review_root = CAMPAIGN_ROOT / "reports/data-review" / dataset
+                review_root.mkdir(parents=True, exist_ok=True)
+                for name in ("summary.json", "invalid_samples.json", "dataset_manifest.candidate.json"):
+                    source = report_root / name
+                    if source.is_file():
+                        shutil.copy2(source, review_root / name)
+                review_status = {
+                    "status": "data_review_required",
+                    "dataset": dataset,
+                    "report_root": str(review_root),
+                    "message": (
+                        "Audit found a fail-closed data contract violation. Training was not "
+                        "started; review artifacts are persistent on Drive."
+                    ),
+                }
+                (review_root / "status.json").write_text(
+                    canonical_json(review_status) + "\\n", encoding="utf-8"
+                )
+                sync_work_snapshot(f"audit-review-{dataset}")
+                raise RuntimeError(canonical_json(review_status))
             write_completion_receipt(
                 report_root, artifact_type="source_domain_audit",
-                required_paths=["summary.json", "dataset_manifest.candidate.json"],
+                required_paths=[
+                    "summary.json", "invalid_samples.json", "dataset_manifest.candidate.json"
+                ],
                 inputs=audit_inputs, metadata={"dataset": dataset},
             )
             sync_work_snapshot(f"audit-{dataset}")

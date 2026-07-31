@@ -63,6 +63,14 @@ def _parser() -> argparse.ArgumentParser:
         help="test-only escape hatch; scientific audits require official counts",
     )
     parser.add_argument(
+        "--quarantine-invalid-source-samples",
+        action="store_true",
+        help=(
+            "freeze a small, pre-model source-defect exclusion list; ontology, leakage, "
+            "duplicate, and integrity violations still fail closed"
+        ),
+    )
+    parser.add_argument(
         "--freeze-approved",
         action="store_true",
         help="freeze the reviewed --split-manifest instead of auditing data",
@@ -99,6 +107,7 @@ def main() -> int:
             source_split=args.source_split,
             source_manifests=tuple(path.resolve() for path in args.source_manifest),
             checkpoint_root=(args.checkpoint_root.resolve() if args.checkpoint_root else None),
+            quarantine_invalid_source_samples=args.quarantine_invalid_source_samples,
         )
         print(canonical_json(result))
         return 0 if result["audit_passed"] else 2

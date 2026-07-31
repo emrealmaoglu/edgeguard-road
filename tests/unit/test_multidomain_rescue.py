@@ -162,6 +162,77 @@ def test_idd_audit_keeps_repeated_short_ids_separate_by_sequence(tmp_path: Path)
     }
 
 
+def test_idd_audit_can_freeze_small_explainable_source_defect_quarantine(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "idd"
+    image_root = root / "leftImg8bit/train/city"
+    mask_root = root / "gtFine/train/city"
+    image_root.mkdir(parents=True)
+    mask_root.mkdir(parents=True)
+    for index, mask in enumerate(
+        (
+            np.tile(np.arange(19, dtype=np.uint8), (4, 1)),
+            np.full((4, 19), 255, dtype=np.uint8),
+        )
+    ):
+        identifier = f"city_{index:06d}_000019"
+        pixels = np.random.default_rng(index + 50).integers(
+            0, 256, size=(4, 19, 3), dtype=np.uint8
+        )
+        Image.fromarray(pixels, mode="RGB").save(
+            image_root / f"{identifier}_leftImg8bit.png"
+        )
+        Image.fromarray(mask, mode="L").save(
+            mask_root / f"{identifier}_gtFine_labelTrainIds.png"
+        )
+    result = audit_training_dataset(
+        root,
+        tmp_path / "audit",
+        dataset_id="idd20k",
+        ontology_path=ONTOLOGY,
+        seed=3,
+        strict_count=False,
+        quarantine_invalid_source_samples=True,
+    )
+    candidate = json.loads(
+        (tmp_path / "audit/idd20k_audit/dataset_manifest.candidate.json").read_text()
+    )
+    assert result["audit_passed"] is True
+    assert result["quarantine_accepted"] is True
+    assert result["invalid_error_codes"] == {"no_usable_canonical_class": 1}
+    assert sum(candidate["counts"].values()) == 1
+    assert candidate["excluded_samples"][0]["sample_id"].endswith("000001_000019")
+    assert candidate["data_quality_policy"]["policy_id"] == "source-defect-quarantine-v1"
+
+
+def test_idd_quarantine_never_hides_ontology_contract_violation(tmp_path: Path) -> None:
+    root = tmp_path / "idd"
+    image_root = root / "leftImg8bit/train/city"
+    mask_root = root / "gtFine/train/city"
+    image_root.mkdir(parents=True)
+    mask_root.mkdir(parents=True)
+    identifier = "city_000000_000019"
+    Image.new("RGB", (19, 4), color=(20, 30, 40)).save(
+        image_root / f"{identifier}_leftImg8bit.png"
+    )
+    Image.fromarray(np.full((4, 19), 40, dtype=np.uint8), mode="L").save(
+        mask_root / f"{identifier}_gtFine_labelids.png"
+    )
+    result = audit_training_dataset(
+        root,
+        tmp_path / "audit",
+        dataset_id="idd20k",
+        ontology_path=ONTOLOGY,
+        seed=3,
+        strict_count=False,
+        quarantine_invalid_source_samples=True,
+    )
+    assert result["audit_passed"] is False
+    assert result["quarantine_accepted"] is False
+    assert result["invalid_error_codes"] == {"contract_violation": 1}
+
+
 def test_training_audits_freeze_and_pool_statistics(tmp_path: Path) -> None:
     bdd = tmp_path / "bdd"
     idd = tmp_path / "idd"

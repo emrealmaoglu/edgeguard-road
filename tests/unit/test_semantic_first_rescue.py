@@ -455,6 +455,9 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "completion_is_valid" in source
     assert "package-interruption" in source
     assert "audit-catalog" in source
+    assert "--quarantine-invalid-source-samples" in source
+    assert '"status": "data_review_required"' in source
+    assert "audit_process.returncode not in {0, 2}" in source
     assert "resumable-final-training-and-export" in source
     assert "bdd100k.frozen.json" not in source
     assert "runtime-compatibility-cascade" in source

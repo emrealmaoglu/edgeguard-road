@@ -388,6 +388,8 @@ def audit_training_dataset(
     source_split: str = "train",
     source_manifests: Sequence[Path] = (),
     checkpoint_root: Path | None = None,
+    quarantine_invalid_source_samples: bool = False,
+    maximum_quarantine_rate: float = 0.001,
 ) -> dict[str, Any]:
     """Audit BDD/IDD train or withheld official validation data."""
     if dataset_id not in {"bdd100k", "idd20k"}:
@@ -460,6 +462,8 @@ def audit_training_dataset(
             if valid:
                 for row in rows:
                     cached_rows[str(row["sample_id"])] = row
+    if not 0.0 <= maximum_quarantine_rate <= 0.01:
+        raise ValueError("maximum quarantine rate must be between 0 and 0.01")
     invalid: list[dict[str, Any]] = []
     exact_hashes: defaultdict[str, list[str]] = defaultdict(list)
     sample_hashes: dict[str, str] = {}
@@ -542,7 +546,26 @@ def audit_training_dataset(
             new_rows[sample.sample_id] = row
             accept_row(sample, row)
         except (OSError, UnidentifiedImageError, ValueError) as error:
-            invalid.append({"sample_id": sample.sample_id, "error": str(error)})
+            message = str(error)
+            if message == "canonical mask contains no usable class":
+                error_code = "no_usable_canonical_class"
+            elif message == "image/mask geometry mismatch":
+                error_code = "geometry_mismatch"
+            elif isinstance(error, (OSError, UnidentifiedImageError)):
+                error_code = "decode_or_io_error"
+            else:
+                error_code = "contract_violation"
+            invalid.append(
+                {
+                    "sample_id": sample.sample_id,
+                    "group_id": sample.group_id,
+                    "image": sample.image,
+                    "mask": sample.mask,
+                    "error_type": type(error).__name__,
+                    "error_code": error_code,
+                    "error": message,
+                }
+            )
         chunk_end = (sample_index + 1) % catalog_chunk_size == 0 or sample_index + 1 == len(samples)
         if catalog_dir is not None and chunk_end:
             offset = (sample_index // catalog_chunk_size) * catalog_chunk_size
@@ -582,7 +605,25 @@ def audit_training_dataset(
         if source_split == "train"
         else EXPECTED_VAL_COUNTS[dataset_id]
     )
-    count_ok = len(audited) == expected if strict_count else bool(audited)
+    official_inventory_ok = len(samples) == expected if strict_count else bool(samples)
+    accounted_for = len(audited) + len(invalid) == len(samples)
+    allowed_quarantine_codes = {
+        "no_usable_canonical_class",
+        "geometry_mismatch",
+        "decode_or_io_error",
+    }
+    quarantine_limit = max(1, int(expected * maximum_quarantine_rate))
+    quarantine_accepted = bool(
+        quarantine_invalid_source_samples
+        and source_split == "train"
+        and invalid
+        and len(invalid) <= quarantine_limit
+        and all(row["error_code"] in allowed_quarantine_codes for row in invalid)
+        and official_inventory_ok
+        and accounted_for
+    )
+    invalid_gate_ok = not invalid or quarantine_accepted
+    count_ok = official_inventory_ok and accounted_for
     source_hashes: set[str] = set()
     source_perceptual: list[tuple[str, int]] = []
     for manifest_path in source_manifests:
@@ -619,7 +660,7 @@ def audit_training_dataset(
         == {"source", "audited"}
     ]
     audit_passed = (
-        not invalid
+        invalid_gate_ok
         and not duplicates
         and not exact_source_overlap
         and not cross_near_pairs
@@ -651,6 +692,21 @@ def audit_training_dataset(
         "audit_passed": audit_passed,
         "scientific_eligible": (audit_passed and strict_count and preparation_scientific_eligible),
         "official_train_count_required": expected,
+        "official_inventory_count": len(samples),
+        "valid_sample_count": len(audited),
+        "excluded_samples": invalid if quarantine_accepted else [],
+        "data_quality_policy": {
+            "policy_id": "source-defect-quarantine-v1",
+            "requested": quarantine_invalid_source_samples,
+            "accepted": quarantine_accepted,
+            "maximum_rate": maximum_quarantine_rate,
+            "maximum_count": quarantine_limit,
+            "allowed_error_codes": sorted(allowed_quarantine_codes),
+            "fail_closed_error_codes": sorted(
+                {str(row["error_code"]) for row in invalid}
+                - allowed_quarantine_codes
+            ),
+        },
         "roles": {
             role: [
                 {
@@ -681,6 +737,13 @@ def audit_training_dataset(
         "source_profile": source_profile,
         "preparation_scientific_eligible": preparation_scientific_eligible,
         "invalid_count": len(invalid),
+        "invalid_error_codes": {
+            code: sum(row["error_code"] == code for row in invalid)
+            for code in sorted({str(row["error_code"]) for row in invalid})
+        },
+        "quarantine_requested": quarantine_invalid_source_samples,
+        "quarantine_accepted": quarantine_accepted,
+        "quarantine_limit": quarantine_limit,
         "exact_duplicate_groups": len(duplicates),
         "perceptual_hashes_computed": len(perceptual),
         "near_duplicate_candidate_pairs": len(
