@@ -1,0 +1,22 @@
+schema_version: "1.0"
+record_type: semantic_campaign_phase_suite
+model_families: [fast_scnn, bisenetv2, pidnet_s, ddrnet_23_slim, segformer_b0]
+common_crop: [512, 1024]
+official_cityscapes_val_routine_tuning: false
+phases:
+  - id: smoke
+    candidates: 5
+    promotion: compatibility_only
+  - id: short_screening
+    candidates: 5
+    promotion: top_three_human_gate
+  - id: medium
+    candidates: 3
+    promotion: top_two_human_gate
+  - id: limited_hpo
+    candidates: 2
+    crop_fixed: true
+  - id: final
+    candidates: 3
+    minimum_random_initialization_runs: 1
+resolution_ablation: [[512, 1024], [768, 1536]]

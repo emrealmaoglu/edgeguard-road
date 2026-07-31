@@ -1,0 +1,66 @@
+schema_version: "1.0"
+mapping_version: a2d2-rgb-to-cityscapes19-v1
+source_dataset: a2d2
+target_ontology: edgeguard-semantic-cityscapes19-v2
+mapping_status: phase2_proposal_not_training_frozen
+mask_encoding: rgb_color
+unknown_color_policy: reject
+policy: >-
+  Map only exact semantic equivalents. Cityscapes-ignored surfaces, uncertain vehicle
+  superclasses, sensor artifacts, ego pixels and source-specific structures remain 255.
+classes:
+  - {color: "#ff0000", name: "Car 1", target_id: 13}
+  - {color: "#c80000", name: "Car 2", target_id: 13}
+  - {color: "#960000", name: "Car 3", target_id: 13}
+  - {color: "#800000", name: "Car 4", target_id: 13}
+  - {color: "#b65906", name: "Bicycle 1", target_id: 18}
+  - {color: "#963204", name: "Bicycle 2", target_id: 18}
+  - {color: "#5a1e01", name: "Bicycle 3", target_id: 18}
+  - {color: "#5a1e1e", name: "Bicycle 4", target_id: 18}
+  - {color: "#cc99ff", name: "Pedestrian 1", target_id: 11}
+  - {color: "#bd499b", name: "Pedestrian 2", target_id: 11}
+  - {color: "#ef59bf", name: "Pedestrian 3", target_id: 11}
+  - {color: "#ff8000", name: "Truck 1", target_id: 14}
+  - {color: "#c88000", name: "Truck 2", target_id: 14}
+  - {color: "#968000", name: "Truck 3", target_id: 14}
+  - {color: "#00ff00", name: "Small vehicles 1", target_id: null, reason: ambiguous_vehicle_superclass}
+  - {color: "#00c800", name: "Small vehicles 2", target_id: null, reason: ambiguous_vehicle_superclass}
+  - {color: "#009600", name: "Small vehicles 3", target_id: null, reason: ambiguous_vehicle_superclass}
+  - {color: "#0080ff", name: "Traffic signal 1", target_id: 6}
+  - {color: "#1e1c9e", name: "Traffic signal 2", target_id: 6}
+  - {color: "#3c1c64", name: "Traffic signal 3", target_id: 6}
+  - {color: "#00ffff", name: "Traffic sign 1", target_id: 7}
+  - {color: "#1edcdc", name: "Traffic sign 2", target_id: 7}
+  - {color: "#3c9dc7", name: "Traffic sign 3", target_id: 7}
+  - {color: "#ffff00", name: "Utility vehicle 1", target_id: null, reason: ambiguous_vehicle_superclass}
+  - {color: "#ffffc8", name: "Utility vehicle 2", target_id: null, reason: ambiguous_vehicle_superclass}
+  - {color: "#e96400", name: "Sidebars", target_id: null, reason: no_exact_cityscapes19_equivalent}
+  - {color: "#6e6e00", name: "Speed bumper", target_id: null, reason: road_modifier_not_road_surface}
+  - {color: "#808000", name: "Curbstone", target_id: null, reason: no_exact_cityscapes19_equivalent}
+  - {color: "#ffc125", name: "Solid line", target_id: 0}
+  - {color: "#400040", name: "Irrelevant signs", target_id: null, reason: source_void_semantics}
+  - {color: "#b97a57", name: "Road blocks", target_id: null, reason: no_exact_cityscapes19_equivalent}
+  - {color: "#000064", name: "Tractor", target_id: null, reason: no_exact_cityscapes19_vehicle_class}
+  - {color: "#8b636c", name: "Non-drivable street", target_id: null, reason: no_exact_cityscapes19_equivalent}
+  - {color: "#d23273", name: "Zebra crossing", target_id: 0}
+  - {color: "#ff0080", name: "Obstacles / trash", target_id: null, reason: no_exact_cityscapes19_equivalent}
+  - {color: "#fff68f", name: "Poles", target_id: 5}
+  - {color: "#960096", name: "RD restricted area", target_id: null, reason: cityscapes_parking_or_restricted_surface_is_ignored}
+  - {color: "#ccff99", name: "Animals", target_id: null, reason: no_cityscapes19_target}
+  - {color: "#eea2ad", name: "Grid structure", target_id: null, reason: ambiguous_structure}
+  - {color: "#212cb1", name: "Signal corpus", target_id: null, reason: ambiguous_signal_support}
+  - {color: "#b432b4", name: "Drivable cobblestone", target_id: 0}
+  - {color: "#ff46b9", name: "Electronic traffic", target_id: null, reason: ambiguous_electronic_object}
+  - {color: "#eee9bf", name: "Slow drive area", target_id: null, reason: ambiguous_road_surface}
+  - {color: "#93fdc2", name: "Nature object", target_id: 8}
+  - {color: "#9696c8", name: "Parking area", target_id: null, reason: cityscapes_parking_is_ignored}
+  - {color: "#b496c8", name: "Sidewalk", target_id: 1}
+  - {color: "#48d1cc", name: "Ego car", target_id: null, reason: ego_vehicle_is_ignored}
+  - {color: "#c87dd2", name: "Painted driv. instr.", target_id: 0}
+  - {color: "#9f79ee", name: "Traffic guide obj.", target_id: null, reason: ambiguous_traffic_object}
+  - {color: "#8000ff", name: "Dashed line", target_id: 0}
+  - {color: "#ff00ff", name: "RD normal street", target_id: 0}
+  - {color: "#87ceff", name: "Sky", target_id: 10}
+  - {color: "#f1e6ff", name: "Buildings", target_id: 2}
+  - {color: "#60458f", name: "Blurred area", target_id: null, reason: privacy_mask_is_ignored}
+  - {color: "#352e52", name: "Rain dirt", target_id: null, reason: sensor_artifact_is_ignored}

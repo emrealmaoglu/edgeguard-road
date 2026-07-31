@@ -1,0 +1,31 @@
+schema_version: "1.0"
+record_type: semantic_model_config
+experiment_id: EGX-SEG-STACK-SEGFORMERB0
+model_family: segformer_b0
+architecture: EncoderDecoder
+backbone: MixVisionTransformer-B0
+decode_head: SegformerHead
+auxiliary_heads: []
+mmseg_config_relative_path: configs/segformer/segformer_mit-b0_8xb1-160k_cityscapes-1024x1024.py
+num_classes: 19
+ignore_index: 255
+normalization: ImageNet RGB mean/std
+baseline_crop: [512, 1024]
+initialization:
+  stack_probe: random
+  project_training: pretrained
+  source:
+    status: unresolved_human_input
+  notes: Resolve an exact approved ImageNet model revision before project training.
+logits:
+  output_kind: native_logits
+  direct_pre_softmax: true
+  layout: NCHW
+  dtype: float32
+  class_count: 19
+  native_resolution: model_defined_record_at_runtime
+  alignment_mode: bilinear
+  alignment_target: edgeguard_common_grid
+  align_corners: false
+export_risk_notes: Transformer reshape and interpolation paths need early ONNX probing.
+expected_training_memory_notes: Heavier candidate; attention and multi-scale features need measurement.

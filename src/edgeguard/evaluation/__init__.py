@@ -1,1 +1,1 @@
-"""Evaluation modules are deferred to later work packages."""
+"""Semantic evaluation utilities for approved development splits."""

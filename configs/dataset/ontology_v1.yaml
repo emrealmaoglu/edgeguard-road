@@ -1,0 +1,167 @@
+schema_version: "1.0"
+ontology_version: edgeguard-ontology-v1
+ontology_status: provisional
+
+semantic_cityscapes19:
+  ignore_id: 255
+  classes:
+    - {id: 0, name: road}
+    - {id: 1, name: sidewalk}
+    - {id: 2, name: building}
+    - {id: 3, name: wall}
+    - {id: 4, name: fence}
+    - {id: 5, name: pole}
+    - {id: 6, name: traffic_light}
+    - {id: 7, name: traffic_sign}
+    - {id: 8, name: vegetation}
+    - {id: 9, name: terrain}
+    - {id: 10, name: sky}
+    - {id: 11, name: person}
+    - {id: 12, name: rider}
+    - {id: 13, name: car}
+    - {id: 14, name: truck}
+    - {id: 15, name: bus}
+    - {id: 16, name: train}
+    - {id: 17, name: motorcycle}
+    - {id: 18, name: bicycle}
+
+known_detection10:
+  ignore_id: null
+  classes:
+    - {id: 0, name: person}
+    - {id: 1, name: rider}
+    - {id: 2, name: car}
+    - {id: 3, name: truck}
+    - {id: 4, name: bus}
+    - {id: 5, name: train}
+    - {id: 6, name: motorcycle}
+    - {id: 7, name: bicycle}
+    - {id: 8, name: traffic_light}
+    - {id: 9, name: traffic_sign}
+
+ood_binary:
+  ignore_id: 255
+  classes:
+    - {id: 0, name: id}
+    - {id: 1, name: anomaly}
+
+risk_operational:
+  ignore_id: null
+  classes:
+    - {id: 0, name: low}
+    - {id: 1, name: medium}
+    - {id: 2, name: high}
+
+source_class_policy:
+  unmapped_action: reject
+  ignored_source_classes: []
+  unsupported_source_classes: []
+  reason: The reviewed BDD100K detection vocabulary maps all ten expected names; any unlisted runtime class is an error pending human review.
+
+source_mappings:
+  - source_dataset: BDD100K
+    source_task: object_detection
+    source_id: null
+    source_name: pedestrian
+    project_namespace: known_detection10
+    project_id: 0
+    project_name: person
+    action: map
+    reason: Canonicalize the BDD100K pedestrian category as person.
+    mapping_version: bdd100k-detection-to-known_detection10-v1
+  - source_dataset: BDD100K
+    source_task: object_detection
+    source_id: null
+    source_name: rider
+    project_namespace: known_detection10
+    project_id: 1
+    project_name: rider
+    action: map
+    reason: Preserve the rider category.
+    mapping_version: bdd100k-detection-to-known_detection10-v1
+  - source_dataset: BDD100K
+    source_task: object_detection
+    source_id: null
+    source_name: car
+    project_namespace: known_detection10
+    project_id: 2
+    project_name: car
+    action: map
+    reason: Preserve the car category.
+    mapping_version: bdd100k-detection-to-known_detection10-v1
+  - source_dataset: BDD100K
+    source_task: object_detection
+    source_id: null
+    source_name: truck
+    project_namespace: known_detection10
+    project_id: 3
+    project_name: truck
+    action: map
+    reason: Preserve the truck category.
+    mapping_version: bdd100k-detection-to-known_detection10-v1
+  - source_dataset: BDD100K
+    source_task: object_detection
+    source_id: null
+    source_name: bus
+    project_namespace: known_detection10
+    project_id: 4
+    project_name: bus
+    action: map
+    reason: Preserve the bus category.
+    mapping_version: bdd100k-detection-to-known_detection10-v1
+  - source_dataset: BDD100K
+    source_task: object_detection
+    source_id: null
+    source_name: train
+    project_namespace: known_detection10
+    project_id: 5
+    project_name: train
+    action: map
+    reason: Preserve the train category.
+    mapping_version: bdd100k-detection-to-known_detection10-v1
+  - source_dataset: BDD100K
+    source_task: object_detection
+    source_id: null
+    source_name: motor
+    project_namespace: known_detection10
+    project_id: 6
+    project_name: motorcycle
+    action: map
+    reason: Canonicalize the BDD100K motor category as motorcycle.
+    mapping_version: bdd100k-detection-to-known_detection10-v1
+  - source_dataset: BDD100K
+    source_task: object_detection
+    source_id: null
+    source_name: bike
+    project_namespace: known_detection10
+    project_id: 7
+    project_name: bicycle
+    action: map
+    reason: Canonicalize the BDD100K bike category as bicycle.
+    mapping_version: bdd100k-detection-to-known_detection10-v1
+  - source_dataset: BDD100K
+    source_task: object_detection
+    source_id: null
+    source_name: traffic light
+    project_namespace: known_detection10
+    project_id: 8
+    project_name: traffic_light
+    action: map
+    reason: Canonicalize whitespace in the traffic-light category name.
+    mapping_version: bdd100k-detection-to-known_detection10-v1
+  - source_dataset: BDD100K
+    source_task: object_detection
+    source_id: null
+    source_name: traffic sign
+    project_namespace: known_detection10
+    project_id: 9
+    project_name: traffic_sign
+    action: map
+    reason: Canonicalize whitespace in the traffic-sign category name.
+    mapping_version: bdd100k-detection-to-known_detection10-v1
+
+deferred_sources:
+  - source_dataset: Mapillary Vistas
+    source_task: semantic_segmentation
+    action: human_review_required
+    reason: Do not create a mapping until the exact label specification, version, role, and terms are reviewed.

@@ -1,0 +1,15 @@
+{
+  "schema_version": "2.0",
+  "submission_encoding": "cityscapes_label_ids",
+  "samples": [
+    {
+      "sample_id": "vendor-stable-id",
+      "group_id": "vendor-sequence-id",
+      "image": "root-relative/path/image.jpg",
+      "mask": null,
+      "condition": "night",
+      "city": null,
+      "submission_name": "official-server-filename.png"
+    }
+  ]
+}

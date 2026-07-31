@@ -138,6 +138,36 @@ def test_isolated_probe_uses_custom_subprocess_timeout(monkeypatch: Any) -> None
     assert result["probe_status"] == "timeout"
 
 
+def test_torch_isolated_probe_records_mps_capabilities(monkeypatch: Any) -> None:
+    def run(
+        command: list[str],
+        *,
+        capture_output: bool,
+        check: bool,
+        text: bool,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        assert "mps_built" in command[-1]
+        assert "mps_available" in command[-1]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                '{"module_version":"test","cuda_available":false,'
+                '"mps_built":true,"mps_available":true}\n'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(healthcheck.subprocess, "run", run)
+
+    result = healthcheck._isolated_probe("torch", include_cuda=True)
+
+    assert result["probe_status"] == "ok"
+    assert result["runtime"]["mps_built"] is True
+    assert result["runtime"]["mps_available"] is True
+
+
 @pytest.mark.parametrize("timeout", [0.0, -1.0, float("nan"), float("inf")])
 def test_doctor_report_rejects_invalid_timeout(timeout: float) -> None:
     with pytest.raises(ValueError, match="positive finite number"):

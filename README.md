@@ -1,46 +1,125 @@
 # EdgeGuard-Road
 
-EdgeGuard-Road is an offline academic research prototype for studying road-obstacle
-anomaly signals derived from semantic-segmentation logits. It is designed for a
-Local → GitHub → Colab → Artifact → Jetson workflow with explicit human approval
-gates.
+EdgeGuard-Road is an undergraduate road-perception research prototype that compares
+lightweight semantic models under one leakage-safe protocol and deploys the selected
+accuracy–speed–reliability trade-off on NVIDIA Jetson Orin Nano Super.
 
-It is **not** a safety-certified ADAS product, a braking controller, or a physical
-risk estimator.
+The active delivery scope is multi-domain but deliberately single-task:
 
-## WP-01 quick start
+- Cityscapes + IDD20K scientific manifests under Cityscapes19, plus a provenance-limited
+  BDD100K mirror audit that is barred from HPO/main claims
+- SegFormer-B0, Fast-SCNN, PIDNet-S, DDRNet-23-Slim, and BiSeNetV2
+- domain-uniform source sampling and source-domain macro model selection
+- bounded top-two Optuna HPO at fixed `512×1024`
+- CrossEntropy versus train-fit-only median-frequency weighting
+- equal-domain temperature calibration, ACDC, and sealed WildDash 2/MUSES evaluation
+- static ONNX/TensorRT FP16 validation and sustained 25W/MAXN SUPER Jetson measurement
+- road and ego-reachable drivable corridor extraction
+- semantic connected-component regions with confidence and entropy summaries
+- source-calibrated frame shift alerts and explainable operational-attention maps
 
-Python 3.10 or newer is required; Python 3.11 is used by CI.
+Detection, temporal fusion, learned anomaly heads, INT8, and advanced tracking remain
+experimental/legacy. RTMDet-Tiny is the only conditional phase-two detector and cannot
+start until every gate in `PROJECT_CHARTER.md` passes.
+
+## Current evidence boundary
+
+- The pre-rescue feature branch had passing local/remote engineering probes for five
+  random-weight semantic architectures, but those probes are non-scientific.
+- An external pretrained PIDNet-S reference completed a 500-image Cityscapes
+  validation run with measured mIoU `0.7875813077220126`; its claim boundary remains
+  in `docs/research/CITYSCAPES_FULL_VAL_EVIDENCE.md`.
+- No new rescue-path Cityscapes training, ACDC evaluation, final ONNX checkpoint, or
+  Jetson measurement is claimed until real external artifacts are supplied and the
+  corresponding commands complete.
+
+## Active commands
+
+Python 3.10 or newer is required. Install local development tools with:
 
 ```bash
-python -m pip install -e '.[dev]'
-python -m edgeguard doctor
-python -m edgeguard doctor --json
-python -m edgeguard smoke --config configs/smoke.yaml
-python -m edgeguard smoke --config configs/smoke.yaml --deterministic
+python -m pip install -e '.[dev,rescue]'
 ```
 
-Run the local quality gate from the repository root:
+Audit Cityscapes before any training:
 
 ```bash
-ruff check .
-ruff format --check .
-mypy src/edgeguard
-pytest -q
+python scripts/audit_dataset.py \
+  --dataset cityscapes \
+  --dataset-root /path/to/cityscapes \
+  --output-root /path/to/edgeguard-output/audit
 ```
 
-WP-01 uses synthetic CPU-only data. It does not download datasets or models and
-does not claim real accuracy, latency, energy, or safety performance.
+Run the first real-data gate after the audit passes and the split is reviewed:
 
-## Repository policy
+```bash
+python scripts/train.py \
+  --model segformer_b0 \
+  --stage smoke \
+  --dataset-root /path/to/cityscapes \
+  --split-manifest /path/to/edgeguard-output/audit/dataset_audit/CSF-SPLIT-D.json \
+  --output-root /path/to/edgeguard-output/runs \
+  --mmseg-root /path/to/mmsegmentation
+```
 
-- Scientific decisions and access to sealed test data remain with the human project
-  owner.
-- Datasets, checkpoints, logits, ONNX files, TensorRT engines, generated videos, and
-  runtime artifacts stay outside Git.
-- Colab notebooks are thin execution wrappers; implementation belongs in the package.
-- TensorRT engines are eventually built on the target Jetson, after environment
-  inventory and explicit human approval.
-- No public software license has been granted yet. See `LICENSES.md`.
+BDD100K and IDD20K use the same command with `--dataset bdd100k` or
+`--dataset idd20k`. Each generated candidate manifest must be reviewed and explicitly
+frozen with `--freeze-approved`. Multi-domain runs then receive one repeated
+`--data-manifest` argument per source domain; raw data roots are never combined or
+copied into Git. `--source-split val` creates a separate official-validation candidate
+that cannot appear in training/HPO roles. Test-only fixture-count manifests are
+explicitly non-scientific and rejected by training.
 
-Start with `PROJECT_CHARTER.md`, `AGENTS.md`, and `docs/PROJECT_STATE.md`.
+The HPO entry point selects its two models from a measured screening table:
+
+```bash
+python scripts/train.py \
+  --stage hpo \
+  --candidate-table /output/reports/screening/candidate_table.json \
+  --data-manifest /output/manifests/cityscapes.frozen.json \
+  --data-manifest /output/manifests/bdd100k.frozen.json \
+  --data-manifest /output/manifests/idd20k.frozen.json \
+  --rare-classes-file /output/statistics/rare_classes.json \
+  --output-root /output/runs \
+  --mmseg-root /runtime/mmsegmentation
+```
+
+The other public commands are:
+
+```text
+python scripts/prepare_dataset.py --help
+python scripts/evaluate.py --help
+python scripts/predict.py --emit-regions --emit-risk --help
+python scripts/export_onnx.py --help
+python scripts/jetson/build_tensorrt.py --help
+python scripts/jetson/benchmark.py --help
+python scripts/check_detection_gate.py --help
+streamlit run app.py
+```
+
+Use `notebooks/EdgeGuard_Road_Colab.ipynb` for the complete Drive-backed Colab
+workflow. It defaults to audit-only and will not start GPU training until
+`RUN_TRAINING` is explicitly enabled.
+
+Run `notebooks/EdgeGuard_Data_Preflight_Colab.ipynb` before the training notebook. See
+`docs/SEMANTIC_FIRST_RUNBOOK.md` for the ordered data, experiment, external-evaluation,
+ONNX, Jetson, and conditional detector gates.
+
+## Scientific boundaries
+
+- `train_fit`, `train_select`, `train_calibration`, and official validation are
+  disjoint inside every source domain; sequences cannot cross roles.
+- Official validation is final common evaluation only; it is never used for model
+  selection, loss design, or temperature fitting.
+- ACDC is domain-shift evaluation only. If unavailable, a synthetic stress test must
+  be labeled synthetic and cannot support an external-OOD claim.
+- WildDash 2, MUSES, and fallback KITTI manifests require a hash-bound human release
+  after checkpoint/model-selection freeze. Their results cannot be used for iteration.
+- Datasets, checkpoints, ONNX graphs, logs, and generated figures remain outside Git.
+- Failed runs and failed exports remain evidence; missing measurements are never estimated.
+- Scientific operations append Git-aware, hash-bound rows to external
+  `run_ledger.jsonl`; generated ledgers are never committed.
+
+The prototype is not a safety-certified ADAS product or vehicle controller.
+Semantic connected components are not instance detections, and the deterministic
+attention score is not collision probability or learned physical risk.

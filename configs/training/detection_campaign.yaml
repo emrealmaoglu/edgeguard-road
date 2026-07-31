@@ -1,0 +1,7 @@
+schema_version: "1.0"
+record_type: detection_campaign_suite
+detector_families: [yolo11n, rt_detr_r18]
+pretrained_weights_required_for_local_mini: false
+prediction_contract: original_grid_xyxy_class_confidence_image_identity
+primary_final_detector_required: true
+secondary_full_hpo_scope: aggressive

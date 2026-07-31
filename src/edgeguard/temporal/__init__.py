@@ -1,1 +1,5 @@
-"""Temporal processing is deferred to WP-08."""
+"""Lightweight temporal persistence."""
+
+from edgeguard.temporal.persistence import TemporalPersistence
+
+__all__ = ["TemporalPersistence"]

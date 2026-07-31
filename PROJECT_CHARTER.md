@@ -2,77 +2,73 @@
 
 ## Purpose
 
-EdgeGuard-Road is a computer-engineering undergraduate thesis prototype. It studies
-whether inexpensive anomaly signals derived from the raw logits of a real-time,
-closed-set semantic-segmentation model can mark previously unseen road obstacles.
-The intended pipeline combines those signals with soft drivable-area context,
-connected components, and lightweight temporal persistence, then evaluates the
-result offline on an NVIDIA Jetson Orin Nano Super.
+EdgeGuard-Road is an undergraduate research prototype that compares lightweight
+pixel-level road-scene models and deploys the best accuracy–latency–reliability
+trade-off on NVIDIA Jetson Orin Nano Super.
 
-The prototype is not a product, safety-certified ADAS, braking controller, collision
-probability estimator, or authorization for real-world autonomous operation.
+The core research question is whether controlled multi-domain training with
+Cityscapes and IDD20K improves accuracy, rare-class performance,
+calibration, and robustness on unseen road domains without losing edge real-time
+feasibility.
 
-## Research questions
+## Required phase-one outputs
 
-1. How can multiple segmentation candidates be compared fairly under the same data,
-   preprocessing, resolution, output, and evaluator contracts?
-2. How do MSP, MaxLogit, Entropy, and Energy compare when all are derived from the
-   same raw semantic logits and evaluated under one OOD protocol?
-3. How much do soft context, component filtering, and temporal persistence reduce
-   false alarms without hiding relevant anomaly events?
-4. How well does the selected method generalize to unseen datasets, and what
-   accuracy, latency, energy, memory, and thermal trade-offs appear on Jetson?
+For each image the system produces Cityscapes19 semantics, the road mask and
+ego-reachable drivable corridor, pixel confidence and normalized entropy, a
+source-calibrated frame shift alert, semantic connected-component regions, an
+explainable operational-attention map, and measured backend latency.
 
-## Core scope
+Connected components are not instance detections: touching objects of one class may
+merge. The attention value is not collision probability or learned physical risk.
+EdgeGuard is not a safety-certified ADAS or a vehicle controller.
 
-- Reproducible dataset lineage and leakage-safe split roles.
-- A fair primary-model and comparison-model protocol.
-- Raw-logit anomaly scoring with semantic calibration kept separate from OOD
-  normalization and threshold selection.
-- Context, component, and temporal post-processing with explicit ablations.
-- Task-level PyTorch/ONNX/TensorRT equivalence checks.
-- Offline Jetson benchmarking and a clearly separated demonstration mode.
-- Traceable runs, artifacts, decisions, limitations, and negative results.
+## Scientific protocol
 
-## Out of scope
+- Scientific source domains: Cityscapes Fine and official IDD20K.
+- Provisional engineering domain: the available Kaggle BDD100K semantic mirror; it is
+  audited separately and excluded from HPO/model selection until official packages exist.
+- Ontology: Cityscapes19 with `ignore=255`; uncertain IDD concepts are ignored.
+- Roles: group-atomic fit/select/calibration; official validation is final-only.
+- External evaluation: ACDC after checkpoint freeze; sealed MUSES/WildDash 2 after
+  model/protocol freeze; KITTI Semantic is the declared access fallback.
+- Models: SegFormer-B0, PIDNet-S, DDRNet-23-Slim, BiSeNetV2, and Fast-SCNN.
+- Fairness: random initialization in the primary table; fixed `512×1024`, AdamW,
+  effective batch four, augmentation family, seed, and optimizer-step budget.
+- Selection: domain-macro source-select mIoU, rare-class mIoU tie-break, followed by
+  measured ONNX/TensorRT deployment evidence.
+- HPO: top two only, 12 TPE trials/model, 6,000 steps/trial, fixed search space.
+- Reliability: equal-source global temperature scaling; ECE, NLL, Brier, confidence,
+  entropy, maximum logit, and energy. Shift thresholds are source-calibration 95th
+  quantiles frozen before external data.
+- Every measurement is bound to configuration, code state, seed, dataset/ontology
+  hashes, checkpoint hash, environment, and append-only run evidence.
 
-- Online vehicle control, braking, steering, or deployment on public roads.
-- Safety certification or claims of physical risk probability.
-- Agent-selected scientific conclusions, final thresholds, or sealed-test access.
-- Unbounded model search or HPO.
-- Training on Jetson or using Colab as an unreviewed source-code workspace.
+Synthetic fixtures prove only engineering behavior. Pretrained references, project
+training, source validation, public domain shift, sealed external, and Jetson results
+are always reported separately. Missing measurements are never estimated.
 
-## Human authority
+## Edge acceptance
 
-The human project owner approves dataset roles, split boundaries, model selection,
-HPO space and budget, thresholds, sealed-test opening, artifact promotion, scientific
-interpretation, branch integration, release, and all privileged Jetson operations.
+Deployment is PyTorch checkpoint → static ONNX FP32 → ONNX Runtime numerical check →
+Jetson TensorRT FP16 → sustained device benchmark. INT8 is outside phase one.
 
-## Research integrity
+The primary device claim uses 25W mode and requires end-to-end median at most 50 ms,
+p95 at most 66.7 ms, sustained throughput at least 20 FPS, complete telemetry, no OOM,
+and no sustained throttling. MAXN SUPER is a performance/thermal comparison only.
+The benchmark records pure-engine and end-to-end latency, memory, input power,
+joule/frame, temperatures, software versions, power mode, and engine hash.
 
-- No metric or performance value may be invented.
-- Train, calibration, development, and final-test roles must remain disjoint.
-- Sequence-level leakage is prohibited.
-- Test data may not influence training, HPO, normalization, or threshold selection.
-- Negative results and failed runs remain part of the evidence trail.
-- One primary and one comparison model are preferred; additional models must not
-  delay the core result.
+## Conditional phase two
 
-## Success definition
+RTMDet-Tiny detection may start only after phase-one scientific/external results are
+complete, the semantic TensorRT FP16 system is measured on Jetson, its 25W p95 is at
+most 40 ms, at least 2 GiB safe memory remains, at least 20 GPU-hours and two weeks
+remain, and official BDD100K detection labels/provenance exist. No second detector
+family is allowed. Failing this gate is a valid completion: phase one remains the thesis.
 
-Success means a reproducible and auditable research prototype whose claims are tied
-to run IDs, source state, configs, manifests, raw results, and environment records.
-Numerical scientific success thresholds are intentionally pending human decisions.
+## Authority and integrity
 
-## Execution path
-
-```text
-Local implementation and tests
-→ reviewed Git commit/tag
-→ Colab execution
-→ hash-addressed artifacts
-→ local validation and promotion
-→ device-built TensorRT engine
-→ Jetson equivalence, benchmark, and offline demo
-→ sealed final evaluation and thesis evidence package
-```
+The human owner controls licenses/accounts, sealed submissions, scientific
+interpretation, Git publication, and privileged Jetson operations. Automation may
+prepare commands and evidence contracts but cannot accept licenses, reveal secrets,
+open sealed tests early, invent metrics, change Jetson power state, or publish results.

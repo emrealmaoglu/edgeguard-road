@@ -10,7 +10,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "EdgeGuard-Road project" }]
 dependencies = [
+  "certifi>=2024,<2027",
   "numpy>=1.24,<3",
+  "Pillow>=10,<13",
   "pydantic>=2,<3",
   "PyYAML>=6,<7",
 ]
@@ -20,9 +22,23 @@ dev = [
   "mypy>=1.10,<2",
   "pytest>=8,<9",
   "ruff>=0.5,<1",
+  "types-Pillow>=10,<13",
   "types-PyYAML>=6,<7",
 ]
-colab = []
+rescue = [
+  "matplotlib>=3.8,<4",
+  "onnx>=1.16,<2",
+  "onnxruntime>=1.18,<2",
+  "optuna>=4,<5",
+  "streamlit>=1.40,<2",
+]
+colab = [
+  "matplotlib>=3.8,<4",
+  "onnx>=1.16,<2",
+  "onnxruntime>=1.18,<2",
+  "optuna>=4,<5",
+  "streamlit>=1.40,<2",
+]
 jetson = []
 
 [project.scripts]
@@ -52,3 +68,7 @@ pretty = true
 show_error_codes = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["mmengine.*", "mmseg.*", "streamlit", "transformers.*", "ultralytics.*"]
+ignore_missing_imports = true

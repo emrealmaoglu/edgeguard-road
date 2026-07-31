@@ -14,6 +14,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+.local/
 dist/
 build/
 
@@ -32,6 +33,9 @@ cache/
 logits/
 *.npy
 *.npz
+runs/
+reports/generated/
+run_ledger.jsonl
 
 # Models and deployment artifacts
 *.pt
@@ -51,6 +55,7 @@ logits/
 artifacts/**
 !artifacts/README.md
 !artifacts/manifest.example.json
+!artifacts/*.example.json
 
 # Colab scratch files
 .config/

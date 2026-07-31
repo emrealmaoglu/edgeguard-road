@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from edgeguard.config import config_sha256, load_base_config, load_smoke_config
+from edgeguard.config import (
+    config_sha256,
+    load_base_config,
+    load_pidnet_eval_config,
+    load_pidnet_spike_config,
+    load_smoke_config,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -24,6 +30,34 @@ def test_config_hash_is_stable() -> None:
 
     assert config_sha256(config) == config_sha256(config.model_copy(deep=True))
     assert len(config_sha256(config)) == 64
+
+
+def test_pidnet_spike_config_is_complete_and_pinned() -> None:
+    config = load_pidnet_spike_config(REPO_ROOT / "configs/pidnet_spike.yaml")
+
+    assert config.upstream.commit == "4c158cf24ce432f0a8cb43364fae38d93cee0dc3"
+    assert config.checkpoint.filename == "PIDNet_S_Cityscapes_val.pt"
+    assert config.checkpoint.sha256 == (
+        "b51aa935bdb64a0779d776f38267fd49f7cce59413910abbbf0a74934b3d7c01"
+    )
+    assert config.checkpoint.source_url.startswith("https://drive.google.com/drive/folders/")
+    assert config.checkpoint.license_status == "OPEN QUESTION"
+    assert config.sample.primary.relative_path == (
+        "samples/frankfurt_000000_002196_leftImg8bit.png"
+    )
+    assert config.sample.primary.sha256 == (
+        "78c65d3055fbd62e41d066813132c971a85dcdea4e5ef5459bad410bccead246"
+    )
+    assert config.sample.dataset_role == "plumbing_only"
+    assert config.input.model_dump() == {
+        "batch_size": 1,
+        "height": 512,
+        "width": 1024,
+        "channels": 3,
+        "color_space": "RGB",
+    }
+    assert config.model.augment is False
+    assert config.scorers == ("msp", "predictive_entropy")
 
 
 def test_smoke_config_rejects_duplicate_root_seed(tmp_path: Path) -> None:
@@ -75,3 +109,22 @@ def test_invalid_config_fails_fast(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError):
         load_smoke_config(invalid)
+
+
+def test_local_and_colab_eval_configs_are_independent_and_path_free() -> None:
+    local_path = REPO_ROOT / "configs/cityscapes_eval_local.yaml"
+    colab_path = REPO_ROOT / "configs/cityscapes_eval_colab.yaml"
+
+    local = load_pidnet_eval_config(local_path)
+    colab = load_pidnet_eval_config(colab_path)
+
+    assert (local.input.height, local.input.width) == (512, 1024)
+    assert local.metric_grid == "resized_model_input"
+    assert local.dataset_role == "official_val_common_eval"
+    assert (colab.input.height, colab.input.width) == (1024, 2048)
+    assert colab.metric_grid == "source_label"
+    assert colab.dataset_role == "official_val_common_eval"
+    assert local.scorers == ("msp", "predictive_entropy", "max_logit", "energy")
+    private_user_prefix = "/" + "Users/"
+    assert private_user_prefix not in local_path.read_text(encoding="utf-8")
+    assert "/content/" not in colab_path.read_text(encoding="utf-8")

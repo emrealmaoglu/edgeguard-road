@@ -1,0 +1,31 @@
+schema_version: "1.0"
+record_type: semantic_model_config
+experiment_id: EGX-SEG-STACK-PIDNETS
+model_family: pidnet_s
+architecture: EncoderDecoder
+backbone: PIDNet-S
+decode_head: PIDHead
+auxiliary_heads: [semantic_auxiliary, boundary_auxiliary]
+mmseg_config_relative_path: configs/pidnet/pidnet-s_2xb6-120k_1024x1024-cityscapes.py
+num_classes: 19
+ignore_index: 255
+normalization: ImageNet RGB mean/std
+baseline_crop: [512, 1024]
+initialization:
+  stack_probe: random
+  project_training: pretrained
+  source:
+    status: unresolved_human_input
+  notes: Resolve an approved ImageNet source; never reuse the historical Cityscapes-val checkpoint as a new project checkpoint.
+logits:
+  output_kind: native_logits
+  direct_pre_softmax: true
+  layout: NCHW
+  dtype: float32
+  class_count: 19
+  native_resolution: model_defined_record_at_runtime
+  alignment_mode: bilinear
+  alignment_target: edgeguard_common_grid
+  align_corners: true
+export_risk_notes: Multi-branch PID and boundary operations require early export probing.
+expected_training_memory_notes: Medium candidate; auxiliary branches increase training memory.
