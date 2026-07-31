@@ -3,13 +3,16 @@ from __future__ import annotations
 import io
 import json
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 from zipfile import ZipFile
 
 import numpy as np
 import pytest
 from PIL import Image
 
+import edgeguard.data.preparation as preparation
 from edgeguard.data.preparation import prepare_dataset, render_idd_source_mask
 from edgeguard.rescue.multidomain import discover_domain_samples
 
@@ -144,9 +147,22 @@ def test_bdd_kaggle_preparation_is_normalized_but_ineligible(tmp_path: Path) -> 
     assert (destination / "labels/sem_seg/masks/train/sequence-train.png").is_file()
 
 
-def test_idd_parts_render_source_ids_and_support_part_two_jpg(tmp_path: Path) -> None:
+def test_idd_parts_render_source_ids_and_support_part_two_jpg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     archives = _write_idd_archives(tmp_path)
     destination = tmp_path / "idd"
+    archive_modes: list[str | None] = []
+    original_tar_open = cast(Callable[..., tarfile.TarFile], tarfile.open)
+
+    def tracked_tar_open(*args: object, **kwargs: object) -> tarfile.TarFile:
+        mode = kwargs.get("mode")
+        if mode is None and len(args) > 1:
+            mode = args[1]
+        archive_modes.append(str(mode) if mode is not None else None)
+        return original_tar_open(*args, **kwargs)
+
+    monkeypatch.setattr(tarfile, "open", tracked_tar_open)
     result = prepare_dataset(
         "idd20k",
         archives,
@@ -170,6 +186,52 @@ def test_idd_parts_render_source_ids_and_support_part_two_jpg(tmp_path: Path) ->
     assert train[0].group_id == "idd20k:sequence-0"
     assert train[0].canonical_mask is not None
     assert val[0].image.endswith(".jpg")
+    assert archive_modes == ["r|gz", "r|gz"]
+    progress = capsys.readouterr().out
+    assert '"phase":"archive_hash"' in progress
+    assert '"phase":"idd_extract"' in progress
+    assert '"phase":"idd_mask_render"' in progress
+
+
+def test_archive_hashes_are_computed_without_second_archive_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archives = _write_idd_archives(tmp_path)
+    hashed_paths: list[Path] = []
+    original_sha256_file = preparation.sha256_file
+
+    def tracked_sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+        hashed_paths.append(path.resolve())
+        return original_sha256_file(path, chunk_size=chunk_size)
+
+    monkeypatch.setattr(preparation, "sha256_file", tracked_sha256_file)
+    prepare_dataset(
+        "idd20k",
+        archives,
+        tmp_path / "idd",
+        allow_fixture_count=True,
+        verify_archive_hashes=False,
+    )
+    assert not ({path.resolve() for path in archives} & set(hashed_paths))
+
+
+def test_idd_streaming_preparation_rejects_unsafe_member_and_cleans_staging(
+    tmp_path: Path,
+) -> None:
+    archives = _write_idd_archives(tmp_path)
+    with tarfile.open(archives[0], "w:gz") as archive:
+        _add_tar_file(archive, "../escape", b"unsafe")
+    destination = tmp_path / "idd"
+    with pytest.raises(ValueError, match="unsafe archive member"):
+        prepare_dataset(
+            "idd20k",
+            archives,
+            destination,
+            allow_fixture_count=True,
+            verify_archive_hashes=False,
+        )
+    assert not destination.exists()
+    assert not destination.with_name(".idd.incoming").exists()
 
 
 def test_idd_renderer_rejects_unknown_labels() -> None:

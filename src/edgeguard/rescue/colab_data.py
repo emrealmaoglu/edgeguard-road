@@ -8,7 +8,7 @@ import os
 import shutil
 import tarfile
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, BinaryIO, cast
 
 import yaml
 
@@ -226,6 +226,85 @@ def _file_digests(path: Path) -> tuple[str, str]:
     return sha256.hexdigest(), md5.hexdigest()
 
 
+class _HashingProgressWriter:
+    """Hash a sequential tar while periodically proving forward progress."""
+
+    def __init__(self, stream: BinaryIO, *, dataset_id: str, interval_bytes: int = 256 * 1024**2):
+        self.stream = stream
+        self.dataset_id = dataset_id
+        self.interval_bytes = interval_bytes
+        self.bytes_written = 0
+        self._next_report = interval_bytes
+        self._sha256 = hashlib.sha256()
+
+    def write(self, payload: bytes) -> int:
+        written = self.stream.write(payload)
+        if written != len(payload):
+            raise OSError("short write while creating dataset bundle")
+        self._sha256.update(payload)
+        self.bytes_written += written
+        if self.bytes_written >= self._next_report:
+            print(
+                canonical_json(
+                    {
+                        "phase": "bundle-write",
+                        "dataset_id": self.dataset_id,
+                        "bytes_written": self.bytes_written,
+                    }
+                ),
+                flush=True,
+            )
+            self._next_report = self.bytes_written + self.interval_bytes
+        return written
+
+    def hexdigest(self) -> str:
+        """Return the digest of bytes accepted by the underlying stream."""
+        return self._sha256.hexdigest()
+
+
+class _HashingProgressReader:
+    """Hash a sequential copy while periodically proving forward progress."""
+
+    def __init__(
+        self,
+        stream: BinaryIO,
+        *,
+        label: str,
+        phase: str,
+        interval_bytes: int = 256 * 1024**2,
+    ):
+        self.stream = stream
+        self.label = label
+        self.phase = phase
+        self.interval_bytes = interval_bytes
+        self.bytes_read = 0
+        self._next_report = interval_bytes
+        self._sha256 = hashlib.sha256()
+
+    def read(self, size: int = -1) -> bytes:
+        payload = self.stream.read(size)
+        if payload:
+            self._sha256.update(payload)
+            self.bytes_read += len(payload)
+            if self.bytes_read >= self._next_report:
+                print(
+                    canonical_json(
+                        {
+                            "phase": self.phase,
+                            "label": self.label,
+                            "bytes_read": self.bytes_read,
+                        }
+                    ),
+                    flush=True,
+                )
+                self._next_report = self.bytes_read + self.interval_bytes
+        return payload
+
+    def hexdigest(self) -> str:
+        """Return the digest of bytes returned by this reader."""
+        return self._sha256.hexdigest()
+
+
 def copy_archive_to_local(source: Path, destination: Path, *, attempts: int = 3) -> dict[str, Any]:
     """Copy one mounted-Drive archive with bounded retries and an atomic destination."""
     if attempts <= 0:
@@ -241,7 +320,12 @@ def copy_archive_to_local(source: Path, destination: Path, *, attempts: int = 3)
         partial.unlink(missing_ok=True)
         try:
             with source.open("rb") as input_stream, partial.open("xb") as output_stream:
-                shutil.copyfileobj(input_stream, output_stream, length=8 * 1024**2)
+                progress = _HashingProgressReader(
+                    input_stream,
+                    label=source.name,
+                    phase="archive-copy",
+                )
+                shutil.copyfileobj(progress, output_stream, length=8 * 1024**2)
             if partial.stat().st_size != source.stat().st_size:
                 raise OSError("archive copy size mismatch")
             partial.replace(destination)
@@ -249,6 +333,7 @@ def copy_archive_to_local(source: Path, destination: Path, *, attempts: int = 3)
                 "source": str(source),
                 "destination": str(destination),
                 "byte_size": destination.stat().st_size,
+                "sha256": progress.hexdigest(),
                 "attempts": attempt,
             }
         except OSError as error:
@@ -521,34 +606,55 @@ def create_dataset_bundle(
     if incoming.exists():
         raise ValueError(f"stale incoming bundle must be inspected: {incoming}")
     bundle.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(incoming, mode="x") as archive:
-        ordered_paths = sorted(
-            source.rglob("*"), key=lambda value: value.relative_to(source).as_posix()
-        )
-        for path in ordered_paths:
-            if path.is_symlink():
-                raise ValueError(f"dataset tree contains a symlink: {path}")
-            if not path.is_file():
-                continue
-            relative = path.relative_to(source).as_posix()
-            info = archive.gettarinfo(str(path), arcname=relative)
-            info.mtime = 0
-            info.uid = 0
-            info.gid = 0
-            info.uname = ""
-            info.gname = ""
-            with path.open("rb") as stream:
-                archive.addfile(info, stream)
-    file_count, source_bytes = _tree_inventory(source)
+    ordered_paths: list[Path] = []
+    source_bytes = 0
+    for path in sorted(source.rglob("*"), key=lambda value: value.relative_to(source).as_posix()):
+        if path.is_symlink():
+            raise ValueError(f"dataset tree contains a symlink: {path}")
+        if path.is_file():
+            ordered_paths.append(path)
+            source_bytes += path.stat().st_size
+    file_count = len(ordered_paths)
+    with incoming.open("xb") as raw_stream:
+        writer = _HashingProgressWriter(raw_stream, dataset_id=dataset_id)
+        with tarfile.open(fileobj=cast(Any, writer), mode="w|") as archive:
+            for file_index, path in enumerate(ordered_paths, start=1):
+                if file_index == 1 or file_index % 1000 == 0 or file_index == file_count:
+                    print(
+                        canonical_json(
+                            {
+                                "phase": "bundle-files",
+                                "dataset_id": dataset_id,
+                                "completed": file_index,
+                                "total": file_count,
+                            }
+                        ),
+                        flush=True,
+                    )
+                relative = path.relative_to(source).as_posix()
+                info = archive.gettarinfo(str(path), arcname=relative)
+                info.mtime = 0
+                info.uid = 0
+                info.gid = 0
+                info.uname = ""
+                info.gname = ""
+                with path.open("rb") as stream:
+                    archive.addfile(info, stream)
+        raw_stream.flush()
+        os.fsync(raw_stream.fileno())
+        bundle_sha256 = writer.hexdigest()
+        bundle_byte_size = writer.bytes_written
+    if incoming.stat().st_size != bundle_byte_size:
+        raise OSError("dataset bundle size changed after close")
     receipt: dict[str, Any] = {
         "schema_version": "1.0",
         "record_type": "edgeguard_prepared_dataset_bundle",
         "dataset_id": dataset_id,
         "filename": bundle.name,
-        "byte_size": incoming.stat().st_size,
+        "byte_size": bundle_byte_size,
         "source_bytes": source_bytes,
         "file_count": file_count,
-        "sha256": sha256_file(incoming),
+        "sha256": bundle_sha256,
         "plan_sha256": sha256_payload(plan),
         "required_paths": plan["datasets"][dataset_id]["required_paths"],
         "source_profile": source_profile,
@@ -721,8 +827,15 @@ def stage_dataset_bundles(
             raise ValueError(f"partial local dataset destination exists: {destination}")
         local_bundle = cache / drive_bundle.name
         partial = local_bundle.with_suffix(local_bundle.suffix + ".part")
-        shutil.copyfile(drive_bundle, partial)
-        if sha256_file(partial) != receipt["sha256"]:
+        partial.unlink(missing_ok=True)
+        with drive_bundle.open("rb") as input_stream, partial.open("xb") as output_stream:
+            progress = _HashingProgressReader(
+                input_stream,
+                label=dataset_id,
+                phase="stage-bundle-copy",
+            )
+            shutil.copyfileobj(progress, output_stream, length=8 * 1024**2)
+        if progress.hexdigest() != receipt["sha256"]:
             partial.unlink(missing_ok=True)
             raise ValueError(f"{dataset_id} local bundle SHA-256 mismatch")
         os.replace(partial, local_bundle)
@@ -734,7 +847,19 @@ def stage_dataset_bundles(
             members = _validate_tar_members(archive)
             if len(members) != int(receipt["file_count"]):
                 raise ValueError(f"{dataset_id} bundle file count mismatch")
-            for member in members:
+            for member_index, member in enumerate(members, start=1):
+                if member_index == 1 or member_index % 1000 == 0 or member_index == len(members):
+                    print(
+                        canonical_json(
+                            {
+                                "phase": "stage-bundle-extract",
+                                "dataset_id": dataset_id,
+                                "completed": member_index,
+                                "total": len(members),
+                            }
+                        ),
+                        flush=True,
+                    )
                 source_stream = archive.extractfile(member)
                 if source_stream is None:
                     raise ValueError(f"{dataset_id} bundle member has no file content")

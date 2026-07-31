@@ -1,6 +1,6 @@
 # Project State
 
-Updated 2026-07-30 on branch `rescue/semantic-first`.
+Updated 2026-07-31 on branch `rescue/semantic-first`.
 
 The published delivery notebooks are pinned to implementation commit
 `6745106f0cb419dcc15b51cc3856eb87042086a6`; a later branch update cannot silently alter
@@ -17,6 +17,17 @@ was added, the rerun established the exact root cause: the child process started
 subprocesses now run from the exact repository root, and active CLI config defaults are
 anchored to their script checkout. Inventory also records mounted-Drive hash read errors
 without weakening mandatory post-copy verification.
+
+The first official IDD20K preparation then remained silent for more than 12 hours after
+archive copy. This is not accepted as normal execution evidence. Inspection found a
+pathological gzip TAR access pattern (`getmembers` followed by name-sorted random access),
+two full archive reads for MD5/SHA-256, serial full-resolution dual-mask rendering, no
+heartbeat, and no reliable child-process cancellation. The preparation path now streams
+TAR members once in physical order, computes both hashes in one read, applies a vectorized
+ontology LUT with bounded mask workers, emits live progress, preserves verified ephemeral
+archive copies for retry, hashes bundles while writing, and terminates subprocess groups
+on notebook interruption. These corrections are locally verified but require a new exact
+Colab pin before the real IDD run is retried.
 
 ## Implemented and locally verified
 
@@ -68,6 +79,9 @@ without weakening mandatory post-copy verification.
   redacted, append-only JSON/ZIP evidence under `EdgeGuard/failures/`. Reports include
   stage/commit/platform/disk context and bounded hashed logs, never datasets/checkpoints
   or environment variables. The latest ZIP can be downloaded from the final cell.
+- Long IDD preparation and bundle/staging operations emit phase, file/byte progress and
+  periodic free-disk liveness. A failed retry does not recopy already verified `/content`
+  archives, while invalid or partial cache entries remain fail-closed.
 
 ## Available external archives
 

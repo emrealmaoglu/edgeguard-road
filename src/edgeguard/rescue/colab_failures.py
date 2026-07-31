@@ -6,6 +6,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import traceback
@@ -29,6 +30,7 @@ _SECRET_PATTERNS = (
     re.compile(r"\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{12,}\b"),
 )
 _ALLOWED_DIAGNOSTIC_SUFFIXES = {".json", ".log", ".txt", ".csv", ".yaml", ".yml"}
+_PROCESS_TERMINATION_GRACE_SECONDS = 5.0
 
 
 def redact_failure_text(value: str) -> str:
@@ -40,6 +42,63 @@ def redact_failure_text(value: str) -> str:
         else:
             redacted = pattern.sub("<redacted>", redacted)
     return redacted
+
+
+def _terminate_process_group(
+    process: subprocess.Popen[str], *, grace_seconds: float = _PROCESS_TERMINATION_GRACE_SECONDS
+) -> None:
+    """Stop a notebook subprocess and descendants without masking the caller's exception."""
+    if process.poll() is not None:
+        if os.name != "posix":
+            return
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM)
+        elif hasattr(signal, "CTRL_BREAK_EVENT"):
+            process.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            process.terminate()
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        process.wait(timeout=grace_seconds)
+        if os.name != "posix":
+            return
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL)
+        elif os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=max(1.0, grace_seconds),
+            )
+        else:
+            process.kill()
+    except (OSError, subprocess.SubprocessError):
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        # The OS may briefly retain a terminated process record. There is no
+        # stronger portable action after SIGKILL/taskkill, so preserve the
+        # original notebook exception instead of replacing it here.
+        pass
 
 
 def run_logged_command(
@@ -61,6 +120,11 @@ def run_logged_command(
         header = redact_failure_text("COMMAND: " + " ".join(rendered))
         print(header, flush=True)
         log.write(header + "\n")
+        popen_options: dict[str, Any] = {}
+        if os.name == "posix":
+            popen_options["start_new_session"] = True
+        elif os.name == "nt":
+            popen_options["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         process = subprocess.Popen(
             rendered,
             cwd=str(cwd) if cwd is not None else None,
@@ -71,15 +135,25 @@ def run_logged_command(
             encoding="utf-8",
             errors="replace",
             bufsize=1,
+            **popen_options,
         )
-        assert process.stdout is not None
-        for line in process.stdout:
-            safe_line = redact_failure_text(line.rstrip("\n"))
-            print(safe_line, flush=True)
-            log.write(safe_line + "\n")
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                safe_line = redact_failure_text(line.rstrip("\n"))
+                print(safe_line, flush=True)
+                log.write(safe_line + "\n")
+                log.flush()
+                tail.append(safe_line)
+            return_code = process.wait()
+        except BaseException:
+            _terminate_process_group(process)
+            log.write("CANCELLED: subprocess group terminated\n")
             log.flush()
-            tail.append(safe_line)
-        return_code = process.wait()
+            raise
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
         footer = f"RETURN_CODE: {return_code}"
         print(footer, flush=True)
         log.write(footer + "\n")

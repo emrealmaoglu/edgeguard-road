@@ -428,6 +428,11 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "run_logged_command" in preflight_source
     assert "cwd=PROJECT_ROOT" in preflight_source
     assert "persist_bootstrap_failure" in preflight_source
+    assert "live_preparation_progress" in preflight_source
+    assert "EDGEGUARD PROGRESS dataset=" in preflight_source
+    assert "reuse_or_copy_archive" in preflight_source
+    assert "Yerel cache SHA-256 doğrulanıyor" in preflight_source
+    assert "shutil.rmtree(CACHE_ROOT)" not in preflight_source
     assert (
         'EXPECTED_PROJECT_COMMIT = "6745106f0cb419dcc15b51cc3856eb87042086a6"' in preflight_source
     )

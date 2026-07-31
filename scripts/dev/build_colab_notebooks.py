@@ -269,9 +269,13 @@ IDD polygon JSON etiketleri pinned AutoNUE source-ID sözleşmesiyle maskeye çe
             "code",
             """
 # Arşivleri dataset bazında hazırla; büyük ağaçları Drive'a küçük dosyalar hâlinde yazma.
+import contextlib
 import shutil
+import threading
+import time
 
 from edgeguard.rescue.colab_data import copy_archive_to_local, preparation_disk_budget
+from edgeguard.serialization import canonical_json, sha256_file
 
 FAILURE_REPORTER.set_stage("dataset-preparation-and-bundling")
 CONTENT_ROOT = Path(os.environ.get("EDGEGUARD_TEST_CONTENT_ROOT", "/content"))
@@ -279,15 +283,124 @@ PREPARE_ROOT = CONTENT_ROOT / "edgeguard-prepare"
 CACHE_ROOT = CONTENT_ROOT / "edgeguard-archive-cache"
 archive_root = DRIVE_ROOT / "EdgeGuard/archives"
 
+
+def _tree_progress(roots):
+    files = 0
+    byte_size = 0
+    for root in roots:
+        if not root.exists():
+            continue
+        for directory, _subdirectories, filenames in os.walk(root):
+            for filename in filenames:
+                try:
+                    byte_size += (Path(directory) / filename).stat().st_size
+                    files += 1
+                except OSError:
+                    continue
+    return files, byte_size
+
+
+@contextlib.contextmanager
+def live_preparation_progress(dataset, phase, roots, interval_seconds=60):
+    # Print bounded liveness evidence while a quiet archive subprocess runs.
+    stopped = threading.Event()
+    started = time.monotonic()
+
+    def report():
+        while not stopped.wait(interval_seconds):
+            files, byte_size = _tree_progress(roots)
+            free = shutil.disk_usage(CONTENT_ROOT).free
+            print(
+                f"EDGEGUARD PROGRESS dataset={dataset} phase={phase['value']} "
+                f"elapsed_min={(time.monotonic() - started) / 60:.1f} "
+                f"files={files} bytes={byte_size} free_bytes={free}",
+                flush=True,
+            )
+
+    print(
+        f"{dataset}: otomatik canlı durum satırı her {interval_seconds} saniyede yazılacak. "
+        "Dosya/byte sayısı artmıyorsa aynı komutu yeniden başlatmayın.",
+        flush=True,
+    )
+    print(
+        "Gerekirse Colab terminalinde kontrol edin: "
+        "ps -eo pid,etime,%cpu,%mem,stat,cmd | grep '[p]repare_dataset.py'; "
+        f"du -sh {PREPARE_ROOT} {CACHE_ROOT}; df -h {CONTENT_ROOT}",
+        flush=True,
+    )
+    worker = threading.Thread(target=report, name=f"edgeguard-progress-{dataset}", daemon=True)
+    worker.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        worker.join(timeout=2)
+        files, byte_size = _tree_progress(roots)
+        print(
+            f"EDGEGUARD PROGRESS dataset={dataset} phase={phase['value']} "
+            f"elapsed_min={(time.monotonic() - started) / 60:.1f} "
+            f"files={files} bytes={byte_size} final=True",
+            flush=True,
+        )
+
+
+def _cache_receipt_path(local_archive):
+    return local_archive.with_name(local_archive.name + ".copy-receipt.json")
+
+
+def reuse_or_copy_archive(source, local, source_record):
+    # Reuse only a same-source, same-size, hash-verified ephemeral archive copy.
+    receipt_path = _cache_receipt_path(local)
+    expected_sha256 = source_record.get("sha256") or source_record.get("published_sha256")
+    reusable = False
+    if local.is_file() and not local.is_symlink():
+        try:
+            same_size = local.stat().st_size == source.stat().st_size
+            if receipt_path.is_file():
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                reusable = (
+                    receipt.get("source") == str(source.resolve())
+                    and int(receipt.get("byte_size", -1)) == source.stat().st_size
+                    and same_size
+                    and receipt.get("expected_sha256") == expected_sha256
+                    and receipt.get("copied_sha256") == expected_sha256
+                )
+            else:
+                # A cache produced by the previous notebook has no sidecar. A pinned
+                # or freshly inventoried digest is sufficient to adopt it safely.
+                reusable = same_size and expected_sha256 is not None
+            if reusable and expected_sha256 and not receipt_path.is_file():
+                print("Yerel cache SHA-256 doğrulanıyor:", local.name, flush=True)
+                reusable = sha256_file(local) == expected_sha256
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            reusable = False
+    if reusable:
+        print("Doğrulanmış /content arşiv cache'i yeniden kullanılıyor:", local.name)
+        return {"source": str(source), "destination": str(local), "byte_size": local.stat().st_size, "status": "reused"}
+    local.unlink(missing_ok=True)
+    receipt_path.unlink(missing_ok=True)
+    print("Drive arşivi /content alanına kopyalanıyor:", source.name)
+    copy_receipt = copy_archive_to_local(source, local, attempts=3)
+    cache_receipt = {
+        "source": str(source.resolve()),
+        "byte_size": source.stat().st_size,
+        "expected_sha256": expected_sha256,
+        "copied_sha256": copy_receipt["sha256"],
+    }
+    receipt_path.write_text(canonical_json(cache_receipt) + "\\n", encoding="utf-8")
+    return {**copy_receipt, "status": "copied"}
+
+
 if RUN_ARCHIVE_PREPARATION:
-    if PREPARE_ROOT.exists() or CACHE_ROOT.exists():
+    if PREPARE_ROOT.exists():
         if not REPAIR_STALE_EPHEMERAL_PREPARATION:
-            raise RuntimeError("Stale preparation/cache root found; inspect before retrying")
-        for owned in (PREPARE_ROOT, CACHE_ROOT):
-            if owned.is_symlink() or owned.name not in {"edgeguard-prepare", "edgeguard-archive-cache"}:
-                raise RuntimeError(f"Refusing unsafe preparation cleanup: {owned}")
-            if owned.exists():
-                shutil.rmtree(owned)
+            raise RuntimeError("Stale preparation root found; inspect before retrying")
+        if PREPARE_ROOT.is_symlink() or PREPARE_ROOT.name != "edgeguard-prepare":
+            raise RuntimeError(f"Refusing unsafe preparation cleanup: {PREPARE_ROOT}")
+        shutil.rmtree(PREPARE_ROOT)
+    if CACHE_ROOT.is_symlink() or CACHE_ROOT.name != "edgeguard-archive-cache":
+        raise RuntimeError(f"Refusing unsafe archive cache: {CACHE_ROOT}")
+    CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     for dataset in DATASETS_TO_BUNDLE:
         row = next(item for item in inventory["datasets"] if item["dataset_id"] == dataset)
         legacy = row.get("legacy_compatibility") or {}
@@ -307,21 +420,21 @@ if RUN_ARCHIVE_PREPARATION:
                 item for item in row["engineering_packages"]
                 if item["source_profile"] == "kaggle_mirror"
             ]
-            sources = [Path(item["path"]) for item in engineering]
+            source_records = engineering
         else:
-            sources = [Path(item["path"]) for item in row["packages"]]
+            source_records = row["packages"]
+        sources = [Path(item["path"]) for item in source_records]
         missing = [str(path) for path in sources if not path.is_file()]
         if missing:
             raise FileNotFoundError("Missing archives: " + ", ".join(missing))
         budget = preparation_disk_budget(inventory_plan, tuple(sources), CONTENT_ROOT)
         print(dataset, "hazırlık disk kapısı:", budget)
         dataset_cache = CACHE_ROOT / dataset
-        dataset_cache.mkdir(parents=True)
+        dataset_cache.mkdir(parents=True, exist_ok=True)
         local_archives = []
-        for source in sources:
+        for source, source_record in zip(sources, source_records, strict=True):
             local = dataset_cache / source.name
-            print("Drive arşivi /content alanına kopyalanıyor:", source.name)
-            copy_receipt = copy_archive_to_local(source, local, attempts=3)
+            copy_receipt = reuse_or_copy_archive(source, local, source_record)
             print("Arşiv kopyası tamamlandı:", copy_receipt)
             local_archives.append(local)
         prepared = PREPARE_ROOT / dataset
@@ -336,22 +449,30 @@ if RUN_ARCHIVE_PREPARATION:
             command.extend(["--archive", str(archive)])
         if dataset == "bdd100k":
             command.extend(["--source-profile", BDD_SOURCE_PROFILE])
-        run_colab_command(command)
-        if CREATE_BUNDLES:
-            bundle = [
-                sys.executable,
-                str(PROJECT_ROOT / "scripts/prepare_colab_data.py"),
-                "--drive-root", str(DRIVE_ROOT),
-                "bundle", "--dataset", dataset,
-                "--source-root", str(prepared),
-            ]
-            if REPLACE_BUNDLES:
-                bundle.append("--replace")
-            run_colab_command(bundle)
+        phase = {"value": "archive-verify-extract-map"}
+        progress_roots = (dataset_cache, PREPARE_ROOT / f".{dataset}.incoming", prepared)
+        with live_preparation_progress(dataset, phase, progress_roots):
+            run_colab_command(command)
+            if CREATE_BUNDLES:
+                phase["value"] = "bundle-write-and-hash"
+                bundle = [
+                    sys.executable,
+                    str(PROJECT_ROOT / "scripts/prepare_colab_data.py"),
+                    "--drive-root", str(DRIVE_ROOT),
+                    "bundle", "--dataset", dataset,
+                    "--source-root", str(prepared),
+                ]
+                if REPLACE_BUNDLES:
+                    bundle.append("--replace")
+                run_colab_command(bundle)
         shutil.rmtree(dataset_cache)
         shutil.rmtree(prepared)
     if CACHE_ROOT.is_dir():
-        CACHE_ROOT.rmdir()
+        remaining_cache = sorted(path.name for path in CACHE_ROOT.iterdir())
+        if remaining_cache:
+            print("Yeniden deneme için korunan yerel arşiv cache'leri:", remaining_cache)
+        else:
+            CACHE_ROOT.rmdir()
     if PREPARE_ROOT.is_dir():
         PREPARE_ROOT.rmdir()
     run_colab_command(inventory_command)

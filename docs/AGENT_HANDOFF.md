@@ -11,6 +11,10 @@
   config default from `/content`, not the checkout. Active CLI defaults and every notebook
   subprocess working directory are repository-root anchored. Subprocess-tail logging exposed
   the exact cause; hash-read resilience and mandatory post-copy verification remain active.
+- **Observed IDD incident:** the official Part I/II preparation produced no output for over
+  12 hours. The old gzip seek pattern, duplicate hash reads, serial dual-mask rendering,
+  missing liveness, and orphanable child process are corrected locally. Do not rerun the
+  old `6745106` payload; publish and pin this implementation first.
 
 ## Delivered
 
@@ -21,6 +25,11 @@
   final training use Cityscapes + IDD20K.
 - Drive/Colab notebooks prepare and bundle one dataset at a time in ephemeral storage,
   enforce the 175 GiB + 25 GiB policy, and avoid Mac/Drive small-file extraction.
+- IDD preparation now reads each gzip TAR forward once, hashes archives once, renders
+  canonical masks through a reviewed LUT with bounded workers, and reports extraction,
+  mask, bundle, staging and disk progress. Verified archive cache survives a failed retry.
+- Interrupting a notebook command now terminates its complete subprocess group with a
+  bounded TERM-to-KILL escalation, preventing hidden duplicate preparation processes.
 - Colab runtime selection is receipt-driven for both hosted-current and isolated-Python
   paths; the previous hard-coded fallback interpreter/checkout mismatch is removed.
 - Notebook-wide failure reporting captures bootstrap, Python and failed subprocess
@@ -53,7 +62,7 @@
 - `ruff format --check .`: 288 files formatted.
 - `ruff check .`: passed.
 - `mypy src/edgeguard`: 108 source files passed.
-- `pytest -q`: 411 passed, 10 skipped.
+- `pytest -q`: 419 passed, 10 skipped.
 - Both delivery notebooks regenerate, contain no outputs, and all 16 code cells execute
   in the external-action-free local contract runner.
 - All active command help surfaces and Python compile-all passed.

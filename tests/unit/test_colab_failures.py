@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 from zipfile import ZipFile
 
 import pytest
 
+import edgeguard.rescue.colab_failures as colab_failures
 from edgeguard.rescue.colab_failures import (
     ColabFailureReporter,
     redact_failure_text,
@@ -100,6 +103,82 @@ def test_logged_subprocess_preserves_redacted_actionable_tail(tmp_path: Path) ->
     assert "hidden" not in log
     assert "useful context" in log
     assert "RETURN_CODE: 7" in log
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group behavior")
+def test_logged_subprocess_interrupt_terminates_descendants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pid_file = tmp_path / "pids.txt"
+    child_code = (
+        "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"
+    )
+    command_code = (
+        "import os, pathlib, subprocess, sys, time; "
+        f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
+        f"pathlib.Path({str(pid_file)!r}).write_text(f'{{os.getpid()}} {{child.pid}}'); "
+        "print('READY', flush=True); time.sleep(60)"
+    )
+    original_print = print
+
+    def interrupt_on_ready(*values: object, **kwargs: object) -> None:
+        if values and values[0] == "READY":
+            raise KeyboardInterrupt
+        original_print(*values, **kwargs)
+
+    monkeypatch.setattr("builtins.print", interrupt_on_ready)
+    with pytest.raises(KeyboardInterrupt):
+        run_logged_command(
+            [sys.executable, "-c", command_code],
+            log_root=tmp_path / "logs",
+            stage="interrupt-fixture",
+        )
+
+    pids = [int(value) for value in pid_file.read_text(encoding="utf-8").split()]
+
+    def running(pid: int) -> bool:
+        stat_path = Path(f"/proc/{pid}/stat")
+        if stat_path.is_file() and stat_path.read_text(encoding="utf-8").split()[2] == "Z":
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and any(running(pid) for pid in pids):
+        time.sleep(0.05)
+    assert not any(running(pid) for pid in pids)
+    log = next((tmp_path / "logs").glob("interrupt-fixture-*.log")).read_text(encoding="utf-8")
+    assert "CANCELLED: subprocess group terminated" in log
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group behavior")
+def test_process_group_escalates_to_kill_after_bounded_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signals: list[int] = []
+
+    class ResistantProcess:
+        pid = 12345
+        waits = 0
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: float) -> int:
+            assert timeout == 0.01
+            self.waits += 1
+            if self.waits == 1:
+                raise colab_failures.subprocess.TimeoutExpired("fixture", timeout)
+            return -signal.SIGKILL
+
+    monkeypatch.setattr(colab_failures.os, "killpg", lambda _pid, value: signals.append(value))
+    process = ResistantProcess()
+    colab_failures._terminate_process_group(process, grace_seconds=0.01)  # type: ignore[arg-type]
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
+    assert process.waits == 2
 
 
 def test_latest_failure_pointer_rejects_traversal(tmp_path: Path) -> None:

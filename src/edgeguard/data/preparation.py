@@ -9,7 +9,9 @@ import shutil
 import stat
 import tarfile
 from collections.abc import Iterable, Sequence
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
+from itertools import islice
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
 from zipfile import BadZipFile, ZipFile, ZipInfo
@@ -115,19 +117,6 @@ def _validated_zip_members(archive: ZipFile) -> dict[str, ZipInfo]:
     return members
 
 
-def _validated_tar_members(archive: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
-    members: dict[str, tarfile.TarInfo] = {}
-    for info in archive.getmembers():
-        path = _safe_member_name(info.name)
-        if not (info.isfile() or info.isdir()) or info.issym() or info.islnk():
-            raise ValueError(f"unsafe archive member type: {info.name!r}")
-        name = path.as_posix()
-        if name in members:
-            raise ValueError(f"duplicate archive member: {name}")
-        members[name] = info
-    return members
-
-
 def _copy_stream(source: IO[bytes], destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("xb") as output:
@@ -140,18 +129,45 @@ def _archive_rows(archives: Sequence[Path]) -> list[dict[str, Any]]:
         if not path.is_file() or path.is_symlink():
             raise ValueError(f"archive must be a regular file: {path.name}")
         md5 = hashlib.md5(usedforsecurity=False)
+        sha256 = hashlib.sha256()
+        byte_size = path.stat().st_size
+        completed = 0
+        _emit_progress("archive_hash", completed=0, total=byte_size, item=path.name)
         with path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(8 * 1024**2), b""):
                 md5.update(chunk)
+                sha256.update(chunk)
+                completed += len(chunk)
+                if completed == byte_size or completed % (1024**3) < len(chunk):
+                    _emit_progress(
+                        "archive_hash", completed=completed, total=byte_size, item=path.name
+                    )
         rows.append(
             {
                 "filename": path.name,
-                "byte_size": path.stat().st_size,
-                "sha256": sha256_file(path),
+                "byte_size": byte_size,
+                "sha256": sha256.hexdigest(),
                 "md5": md5.hexdigest(),
             }
         )
     return rows
+
+
+def _emit_progress(
+    phase: str, *, completed: int, total: int | None, item: str | None = None
+) -> None:
+    """Emit one flushed, machine-readable progress event for long Colab operations."""
+    payload: dict[str, Any] = {
+        "record_type": "edgeguard_dataset_preparation_progress",
+        "phase": phase,
+        "completed": completed,
+        "total": total,
+    }
+    if total is not None and total > 0:
+        payload["percent"] = round(100.0 * completed / total, 2)
+    if item is not None:
+        payload["item"] = item
+    print(canonical_json(payload), flush=True)
 
 
 def _require_archive_set(
@@ -402,16 +418,61 @@ def render_idd_source_mask(annotation: dict[str, Any]) -> Image.Image:
     return output
 
 
+def _idd_lut(ontology: dict[str, Any]) -> tuple[int, ...]:
+    """Build the reviewed uint8 source-ID to Cityscapes19 lookup table."""
+    source = ontology["sources"]["idd20k"]
+    mapping = {int(key): int(value) for key, value in source["map"].items()}
+    ignored = {int(value) for value in source["ignore_source_ids"]}
+    reviewed = set(mapping) | ignored
+    if reviewed != set(range(40)) | {255} or set(mapping) & ignored:
+        raise ValueError("IDD ontology must review every source ID exactly once")
+    lut = np.full(256, 255, dtype=np.uint8)
+    for source_id, target_id in mapping.items():
+        lut[source_id] = target_id
+    return tuple(int(value) for value in lut)
+
+
+def _render_idd_mask_pair(polygon_path: Path, lut: tuple[int, ...]) -> None:
+    """Render native and canonical masks for one validated IDD polygon file."""
+    try:
+        payload = json.loads(polygon_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid IDD polygon JSON: {polygon_path.name}") from error
+    if not isinstance(payload, dict):
+        raise ValueError(f"invalid IDD polygon root: {polygon_path.name}")
+    mask = render_idd_source_mask(payload)
+    target = polygon_path.with_name(
+        polygon_path.name.replace("_gtFine_polygons.json", "_gtFine_labelids.png")
+    )
+    mask.save(target, compress_level=1)
+    canonical_target = polygon_path.with_name(
+        polygon_path.name.replace("_gtFine_polygons.json", "_gtFine_labelTrainIds.png")
+    )
+    mask.point(lut).save(canonical_target, compress_level=1)
+
+
 def _extract_idd(archives: Sequence[Path], staging: Path, ontology_path: Path) -> None:
-    from edgeguard.rescue.multidomain import load_semantic_ontology, map_source_mask
+    from edgeguard.rescue.multidomain import load_semantic_ontology
 
     ontology = load_semantic_ontology(ontology_path)
+    lut = _idd_lut(ontology)
     targets: set[str] = set()
     polygons: list[Path] = []
+    extracted = 0
     for archive_path in archives:
-        with tarfile.open(archive_path, mode="r:gz") as archive:
-            members = _validated_tar_members(archive)
-            for name, info in sorted(members.items()):
+        member_names: set[str] = set()
+        _emit_progress("idd_extract", completed=extracted, total=None, item=archive_path.name)
+        # Streaming mode preserves physical member order. In contrast, seeking through a
+        # gzip tar after sorting names can repeatedly decompress the archive from the start.
+        with tarfile.open(archive_path, mode="r|gz") as archive:
+            for info in archive:
+                member_path = _safe_member_name(info.name)
+                if not (info.isfile() or info.isdir()) or info.issym() or info.islnk():
+                    raise ValueError(f"unsafe archive member type: {info.name!r}")
+                name = member_path.as_posix()
+                if name in member_names:
+                    raise ValueError(f"duplicate archive member: {name}")
+                member_names.add(name)
                 if not info.isfile():
                     continue
                 selected = _idd_relative(name)
@@ -427,25 +488,35 @@ def _extract_idd(archives: Sequence[Path], staging: Path, ontology_path: Path) -
                     raise ValueError(f"IDD archive member has no content: {name}")
                 with stream:
                     _copy_stream(stream, staging / target)
+                extracted += 1
                 if kind == "polygon":
                     polygons.append(staging / target)
-    for polygon_path in polygons:
-        try:
-            payload = json.loads(polygon_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise ValueError(f"invalid IDD polygon JSON: {polygon_path.name}") from error
-        if not isinstance(payload, dict):
-            raise ValueError(f"invalid IDD polygon root: {polygon_path.name}")
-        mask = render_idd_source_mask(payload)
-        target = polygon_path.with_name(
-            polygon_path.name.replace("_gtFine_polygons.json", "_gtFine_labelids.png")
-        )
-        mask.save(target)
-        canonical = map_source_mask(np.asarray(mask, dtype=np.uint8), "idd20k", ontology)
-        canonical_target = polygon_path.with_name(
-            polygon_path.name.replace("_gtFine_polygons.json", "_gtFine_labelTrainIds.png")
-        )
-        Image.fromarray(canonical, mode="L").save(canonical_target)
+                if extracted % 250 == 0:
+                    _emit_progress(
+                        "idd_extract", completed=extracted, total=None, item=archive_path.name
+                    )
+        _emit_progress("idd_extract", completed=extracted, total=None, item=archive_path.name)
+
+    total_polygons = len(polygons)
+    workers = min(4, max(1, os.cpu_count() or 1))
+    _emit_progress("idd_mask_render", completed=0, total=total_polygons)
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="idd-mask") as executor:
+        polygon_iterator = iter(polygons)
+        pending = {
+            executor.submit(_render_idd_mask_pair, polygon_path, lut)
+            for polygon_path in islice(polygon_iterator, workers)
+        }
+        completed = 0
+        while pending:
+            finished, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in finished:
+                future.result()
+                completed += 1
+                next_polygon = next(polygon_iterator, None)
+                if next_polygon is not None:
+                    pending.add(executor.submit(_render_idd_mask_pair, next_polygon, lut))
+                if completed == total_polygons or completed % 100 == 0:
+                    _emit_progress("idd_mask_render", completed=completed, total=total_polygons)
 
 
 def prepare_dataset(
