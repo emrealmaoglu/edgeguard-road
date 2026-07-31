@@ -378,6 +378,26 @@ def test_uv_unexpected_version_and_non_executable_are_rejected(tmp_path: Path) -
     assert executable_error.value.classification == "uv_executable_invalid"
 
 
+def test_uv_colab_newer_compatible_version_with_platform_suffix_is_accepted(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "uv"
+    executable.write_text("placeholder", encoding="utf-8")
+    executable.chmod(0o755)
+
+    class NoBootstrapRunner:
+        pass
+
+    resolved, version, receipts = _resolve_uv_executable(  # type: ignore[arg-type]
+        NoBootstrapRunner(),
+        which=lambda _name: str(executable),
+        version_probe=lambda _path: "uv 0.11.19 (x86_64-unknown-linux-gnu)",
+    )
+    assert resolved == executable.resolve()
+    assert version == "0.11.19"
+    assert receipts == []
+
+
 def test_bootstrap_failure_writes_terminal_receipt_and_logs(tmp_path: Path) -> None:
     paths = RuntimePathContract.from_workspace(tmp_path / "workspace")
     status = LongRunStatus(paths.evidence_root / "run_status.json")

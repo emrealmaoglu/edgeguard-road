@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+
+from packaging.version import InvalidVersion, Version
 
 from edgeguard.runtime import RuntimePathContract
 from edgeguard.serialization import canonical_json, sha256_file
@@ -42,6 +45,8 @@ PURE_RUNTIME_PINS = (
     "regex==2024.11.6",
 )
 UV_VERSION = "0.8.8"
+UV_MIN_VERSION = Version(UV_VERSION)
+UV_MAX_VERSION = Version("1.0.0")
 OWNED_RUNTIME_NAMES = {
     "edgeguard-runtime-current",
     "edgeguard-runtime-py311",
@@ -128,13 +133,22 @@ def _resolve_uv_executable(
             "uv_version_probe_failed",
             "uv version probe failed",
         ) from error
-    if version_output != f"uv {UV_VERSION}":
+    match = re.fullmatch(r"uv\s+([^\s]+)(?:\s+.*)?", version_output)
+    try:
+        actual_version = Version(match.group(1)) if match else None
+    except InvalidVersion:
+        actual_version = None
+    if (
+        actual_version is None
+        or actual_version < UV_MIN_VERSION
+        or actual_version >= UV_MAX_VERSION
+    ):
         raise BootstrapError(
             "uv_version_validation",
             "uv_version_mismatch",
             f"unexpected uv version: {version_output}",
         )
-    return executable, UV_VERSION, receipts
+    return executable, str(actual_version), receipts
 
 
 def _checkout_head(checkout: Path) -> str | None:
