@@ -28,6 +28,9 @@ STORAGE_DIRECTORIES = {
     "source": "source_directory",
     "private_inputs": "private_input_directory",
     "failures": "failure_directory",
+    "prepared": "prepared_directory",
+    "runtime_cache": "runtime_cache_directory",
+    "review_packages": "review_package_directory",
 }
 
 
@@ -163,6 +166,8 @@ def initialize_drive_layout(plan: dict[str, Any], drive_root: Path) -> dict[str,
         directory.mkdir(parents=True, exist_ok=True)
     for dataset_id in plan["datasets"]:
         (directories["archives"] / dataset_id).mkdir(parents=True, exist_ok=True)
+    for versioned in (directories["prepared"], directories["manifests"]):
+        (versioned / "v2").mkdir(parents=True, exist_ok=True)
     (directories["quarantine"] / "kaggle" / "bdd100k").mkdir(parents=True, exist_ok=True)
     return {key: str(value) for key, value in directories.items()}
 
@@ -224,6 +229,42 @@ def _file_digests(path: Path) -> tuple[str, str]:
             sha256.update(chunk)
             md5.update(chunk)
     return sha256.hexdigest(), md5.hexdigest()
+
+
+def _cached_file_digests(path: Path, receipt_path: Path) -> tuple[str, str, str]:
+    """Hash a Drive archive once and reuse the receipt while its stat identity is stable."""
+    stat = path.stat()
+    if receipt_path.is_file():
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt_hash = receipt.pop("receipt_sha256", None)
+            valid = (
+                receipt_hash == sha256_payload(receipt)
+                and receipt.get("byte_size") == stat.st_size
+                and receipt.get("mtime_ns") == stat.st_mtime_ns
+                and isinstance(receipt.get("sha256"), str)
+                and isinstance(receipt.get("md5"), str)
+            )
+            if valid:
+                return str(receipt["sha256"]), str(receipt["md5"]), "cached"
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+    sha256_value, md5_value = _file_digests(path)
+    receipt = {
+        "schema_version": "2.0",
+        "record_type": "edgeguard_archive_digest",
+        "filename": path.name,
+        "byte_size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "sha256": sha256_value,
+        "md5": md5_value,
+    }
+    receipt["receipt_sha256"] = sha256_payload(receipt)
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    incoming = receipt_path.with_name(f".{receipt_path.name}.incoming")
+    incoming.write_text(canonical_json(receipt) + "\n", encoding="utf-8")
+    os.replace(incoming, receipt_path)
+    return sha256_value, md5_value, "computed"
 
 
 class _HashingProgressWriter:
@@ -351,6 +392,7 @@ def inventory_colab_data(
     archive_root = Path(paths["archives"])
     private_input_root = Path(paths["private_inputs"])
     project_root = Path(paths["project"])
+    digest_root = Path(paths["manifests"]) / "archive-digests"
     legacy_contracts = plan["storage"].get("legacy_compatibility", {})
     rows: list[dict[str, Any]] = []
     for dataset_id, record in plan["datasets"].items():
@@ -379,11 +421,15 @@ def inventory_colab_data(
             sha256_value: str | None = None
             md5_value: str | None = None
             hash_error: str | None = None
+            hash_status = "not_requested" if present else "missing"
             if present and hash_archives:
                 try:
-                    sha256_value, md5_value = _file_digests(candidate)
+                    sha256_value, md5_value, hash_status = _cached_file_digests(
+                        candidate, digest_root / f"{dataset_id}-{filename}.json"
+                    )
                 except OSError as error:
                     hash_error = f"{type(error).__name__}: {error}"
+                    hash_status = "read_error"
             packages.append(
                 {
                     "filename": filename,
@@ -394,15 +440,7 @@ def inventory_colab_data(
                     "published_sha256": published_sha256,
                     "sha256": sha256_value,
                     "md5": md5_value,
-                    "hash_status": (
-                        "computed"
-                        if sha256_value is not None
-                        else "read_error"
-                        if hash_error is not None
-                        else "not_requested"
-                        if present
-                        else "missing"
-                    ),
+                    "hash_status": hash_status,
                     "hash_error": hash_error,
                     "published_md5_matches": (
                         md5_value == published_md5
@@ -430,11 +468,19 @@ def inventory_colab_data(
             engineering_sha256: str | None = None
             engineering_md5: str | None = None
             engineering_hash_error: str | None = None
+            engineering_hash_status = "not_requested" if present else "missing"
             if present and hash_archives:
                 try:
-                    engineering_sha256, engineering_md5 = _file_digests(candidate)
+                    (
+                        engineering_sha256,
+                        engineering_md5,
+                        engineering_hash_status,
+                    ) = _cached_file_digests(
+                        candidate, digest_root / f"{dataset_id}-{filename}.engineering.json"
+                    )
                 except OSError as error:
                     engineering_hash_error = f"{type(error).__name__}: {error}"
+                    engineering_hash_status = "read_error"
             engineering_packages.append(
                 {
                     **package,
@@ -443,15 +489,7 @@ def inventory_colab_data(
                     "byte_size": candidate.stat().st_size if present else None,
                     "sha256": engineering_sha256,
                     "md5": engineering_md5,
-                    "hash_status": (
-                        "computed"
-                        if engineering_sha256 is not None
-                        else "read_error"
-                        if engineering_hash_error is not None
-                        else "not_requested"
-                        if present
-                        else "missing"
-                    ),
+                    "hash_status": engineering_hash_status,
                     "hash_error": engineering_hash_error,
                     "location_profile": (
                         "private_inputs" if candidate.parent == private_input_root else "quarantine"
@@ -597,8 +635,8 @@ def create_dataset_bundle(
             if receipt_hash != sha256_payload(existing_receipt):
                 raise ValueError(f"{dataset_id} existing bundle receipt hash mismatch")
             existing_receipt["receipt_sha256"] = receipt_hash
-            if existing_receipt.get("sha256") != sha256_file(bundle):
-                raise ValueError(f"{dataset_id} existing bundle hash mismatch")
+            if bundle.stat().st_size != int(existing_receipt.get("byte_size", -1)):
+                raise ValueError(f"{dataset_id} existing bundle size mismatch")
             return {**existing_receipt, "status": "reused"}
         bundle.unlink(missing_ok=True)
         receipt_path.unlink(missing_ok=True)
@@ -687,6 +725,138 @@ def _validate_tar_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
             raise ValueError(f"unsafe or duplicate dataset bundle member: {member.name}")
         names.add(member.name)
     return members
+
+
+def _load_idd_shard_index(project: Path) -> tuple[Path, dict[str, Any]] | None:
+    shard_root = project / "prepared/v2/idd20k/shards"
+    index_path = shard_root / "idd20k.shards.json"
+    if not index_path.is_file():
+        return None
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError("IDD shard index is malformed") from error
+    receipt_hash = index.pop("receipt_sha256", None)
+    if (
+        receipt_hash != sha256_payload(index)
+        or index.get("record_type") != "edgeguard_idd_shard_index"
+        or index.get("dataset_id") != "idd20k"
+        or index.get("counts") != {"train": 14_000, "val": 2_000}
+        or int(index.get("sample_count", -1)) != 16_000
+        or sum(int(row.get("sample_count", -1)) for row in index.get("shards", [])) != 16_000
+        or index.get("scientific_eligible") is not True
+    ):
+        raise ValueError("IDD shard index identity/count contract failed")
+    index["receipt_sha256"] = receipt_hash
+    return shard_root, index
+
+
+def _stage_idd_shards(plan: dict[str, Any], project: Path, local_root: Path) -> dict[str, Any]:
+    loaded = _load_idd_shard_index(project)
+    if loaded is None:
+        raise ValueError("IDD shard staging requested without a shard index")
+    shard_root, index = loaded
+    destination = local_root / str(plan["datasets"]["idd20k"]["prepared_subdirectory"])
+    required = [str(value) for value in plan["datasets"]["idd20k"]["required_paths"]]
+    if destination.is_dir() and all((destination / value).exists() for value in required):
+        return {"dataset_id": "idd20k", "status": "already_staged_shards"}
+    if destination.exists():
+        raise ValueError(f"partial local IDD destination exists: {destination}")
+    reserve = int(plan["storage"]["reserve_gib"]) * GIB
+    source_bytes = sum(int(row["source_bytes"]) for row in index["shards"])
+    if source_bytes + reserve > shutil.disk_usage(local_root.parent).free:
+        raise OSError("IDD shards and required reserve exceed current Colab free space")
+    incoming = destination.with_name(f".{destination.name}.incoming")
+    if incoming.exists():
+        raise ValueError(f"stale IDD shard extraction exists: {incoming}")
+    incoming.mkdir(parents=True)
+    cache = local_root.parent / ".edgeguard-bundle-cache/idd20k-shards"
+    cache.mkdir(parents=True, exist_ok=True)
+    total = len(index["shards"])
+    extracted_files = 0
+    for shard_number, row in enumerate(index["shards"], start=1):
+        shard = shard_root / str(row["filename"])
+        receipt_path = shard_root / Path(str(row["filename"])).with_suffix(".receipt.json")
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"IDD shard receipt missing: {receipt_path.name}") from error
+        receipt_hash = receipt.pop("receipt_sha256", None)
+        if (
+            receipt_hash != sha256_payload(receipt)
+            or receipt.get("sha256") != row["sha256"]
+            or shard.stat().st_size != int(row["byte_size"])
+        ):
+            raise ValueError(f"IDD shard identity mismatch: {shard.name}")
+        local_shard = cache / shard.name
+        partial = local_shard.with_suffix(".part")
+        partial.unlink(missing_ok=True)
+        with shard.open("rb") as input_stream, partial.open("xb") as output_stream:
+            progress = _HashingProgressReader(
+                input_stream, label=shard.name, phase="stage-idd-shard-copy"
+            )
+            shutil.copyfileobj(progress, output_stream, length=8 * 1024**2)
+        if progress.hexdigest() != row["sha256"]:
+            partial.unlink(missing_ok=True)
+            raise ValueError(f"IDD shard copy hash mismatch: {shard.name}")
+        os.replace(partial, local_shard)
+        with tarfile.open(local_shard, "r:") as archive:
+            members = _validate_tar_members(archive)
+            if len(members) != int(row["file_count"]):
+                raise ValueError(f"IDD shard file-count mismatch: {shard.name}")
+            for member in members:
+                target = incoming / member.name
+                if target.exists():
+                    raise ValueError(
+                        f"IDD shards contain a normalized-path collision: {member.name}"
+                    )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source = archive.extractfile(member)
+                if source is None:
+                    raise ValueError(f"IDD shard member has no content: {member.name}")
+                with source, target.open("xb") as output_stream:
+                    shutil.copyfileobj(source, output_stream, length=8 * 1024**2)
+                extracted_files += 1
+        local_shard.unlink()
+        print(
+            canonical_json(
+                {
+                    "phase": "stage-idd-shards",
+                    "completed": shard_number,
+                    "total": total,
+                    "files": extracted_files,
+                }
+            ),
+            flush=True,
+        )
+    if not all((incoming / value).exists() for value in required):
+        raise ValueError("staged IDD shards failed required-path validation")
+    preparation: dict[str, Any] = {
+        "schema_version": "2.0",
+        "record_type": "edgeguard_dataset_preparation_receipt",
+        "dataset_id": "idd20k",
+        "source_profile": "official",
+        "source_archives": index["source_archives"],
+        "counts": index["counts"],
+        "mapping_version": "autonue-polygon-to-cityscapes19-canonical-shards-v2",
+        "ontology_sha256": index["ontology_sha256"],
+        "native_labels_preserved": True,
+        "prepared_payload": "images_and_cityscapes19_canonical_masks_only",
+        "scientific_eligible": True,
+        "shard_index_sha256": sha256_file(shard_root / "idd20k.shards.json"),
+    }
+    preparation["receipt_sha256"] = sha256_payload(preparation)
+    (incoming / "preparation_receipt.json").write_text(
+        canonical_json(preparation) + "\n", encoding="utf-8"
+    )
+    os.replace(incoming, destination)
+    return {
+        "dataset_id": "idd20k",
+        "status": "staged_verified_shards",
+        "shard_count": total,
+        "sample_count": int(index["sample_count"]),
+        "file_count": extracted_files + 1,
+    }
 
 
 def _canonical_bundle_receipt(
@@ -782,6 +952,27 @@ def stage_dataset_bundles(
     if unknown:
         raise ValueError(f"unknown dataset ids: {sorted(unknown)}")
     paths = initialize_drive_layout(plan, drive_root)
+    shard_index = _load_idd_shard_index(Path(paths["project"]))
+    if "idd20k" in dataset_ids and shard_index is not None:
+        other_ids = tuple(value for value in dataset_ids if value != "idd20k")
+        shard_results: list[dict[str, Any]] = []
+        if other_ids:
+            shard_results.extend(
+                stage_dataset_bundles(
+                    plan,
+                    drive_root,
+                    local_root,
+                    other_ids,
+                    allow_ineligible=allow_ineligible,
+                )["datasets"]
+            )
+        shard_results.append(_stage_idd_shards(plan, Path(paths["project"]), local_root))
+        return {
+            "schema_version": "2.0",
+            "record_type": "edgeguard_colab_dataset_staging",
+            "datasets": shard_results,
+            "local_root": str(local_root),
+        }
     receipts: list[dict[str, Any]] = []
     drive_bundles: list[Path] = []
     bundle_profiles: list[str] = []

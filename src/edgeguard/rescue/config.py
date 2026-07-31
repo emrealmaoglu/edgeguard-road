@@ -167,8 +167,11 @@ def load_rescue_config(path: Path) -> RescueConfig:
         raise ValueError("HPO scheduler choices must be poly and cosine")
     if config.datasets.domain_sampling != "uniform":
         raise ValueError("multi-domain sampling must remain domain-uniform")
-    if config.datasets.training != ("cityscapes", "bdd100k", "idd20k"):
-        raise ValueError("approved training domains are Cityscapes, BDD100K, and IDD20K")
+    if config.datasets.training != ("cityscapes", "idd20k"):
+        raise ValueError(
+            "the active scientific campaign is frozen to Cityscapes and IDD20K; "
+            "provisional BDD100K cannot enter model selection"
+        )
     return config
 
 

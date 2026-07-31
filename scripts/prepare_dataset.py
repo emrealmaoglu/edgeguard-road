@@ -1,4 +1,4 @@
-"""Prepare Cityscapes, BDD100K, or IDD20K from immutable source archives."""
+"""Prepare approved semantic datasets from immutable source archives."""
 
 from __future__ import annotations
 
@@ -13,7 +13,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", choices=("cityscapes", "bdd100k", "idd20k"), required=True)
+    parser.add_argument(
+        "--dataset", choices=("cityscapes", "bdd100k", "idd20k", "acdc"), required=True
+    )
     parser.add_argument("--archive", action="append", type=Path, required=True)
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument(
@@ -35,6 +37,8 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="fixtures only; official execution must retain pinned SHA-256 checks",
     )
+    parser.add_argument("--idd-shard-root", type=Path)
+    parser.add_argument("--idd-shard-size", type=int, default=500)
     return parser
 
 
@@ -50,6 +54,8 @@ def main() -> int:
         verify_only=args.verify_only,
         verify_archive_hashes=not args.skip_pinned_archive_hash,
         ontology_path=args.ontology,
+        idd_shard_root=args.idd_shard_root,
+        idd_shard_size=args.idd_shard_size,
     )
     print(canonical_json(result))
     return 0

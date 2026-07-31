@@ -62,6 +62,20 @@ def _write_bdd_kaggle(root: Path) -> Path:
     return archive_path
 
 
+def _write_acdc_archives(root: Path) -> tuple[Path, Path]:
+    images = root / "rgb_anon_trainvaltest.zip"
+    labels = root / "gt_trainval.zip"
+    rgb = np.zeros((4, 8, 3), dtype=np.uint8)
+    mask = np.arange(32, dtype=np.uint8).reshape(4, 8) % 19
+    with ZipFile(images, "w") as archive:
+        archive.writestr("ACDC/rgb_anon/fog/val/GOPR/scene_rgb_anon.png", _png_bytes(rgb))
+        archive.writestr("ACDC/rgb_anon/fog/train/GOPR/train_rgb_anon.png", _png_bytes(rgb))
+    with ZipFile(labels, "w") as archive:
+        archive.writestr("ACDC/gt/fog/val/GOPR/scene_gt_labelTrainIds.png", _png_bytes(mask))
+        archive.writestr("ACDC/gt/fog/val/GOPR/scene_gt_invIds.png", _png_bytes(mask))
+    return images, labels
+
+
 def _add_tar_file(archive: tarfile.TarFile, name: str, contents: bytes) -> None:
     info = tarfile.TarInfo(name)
     info.size = len(contents)
@@ -147,6 +161,23 @@ def test_bdd_kaggle_preparation_is_normalized_but_ineligible(tmp_path: Path) -> 
     assert (destination / "labels/sem_seg/masks/train/sequence-train.png").is_file()
 
 
+def test_acdc_preparation_extracts_only_paired_adverse_validation(tmp_path: Path) -> None:
+    archives = _write_acdc_archives(tmp_path)
+    destination = tmp_path / "acdc"
+    result = prepare_dataset(
+        "acdc",
+        archives,
+        destination,
+        allow_fixture_count=True,
+    )
+    assert result["counts"] == {"val": 1}
+    assert result["scientific_eligible"] is False
+    assert (destination / "rgb_anon/fog/val/GOPR/scene_rgb_anon.png").is_file()
+    assert (destination / "gt/fog/val/GOPR/scene_gt_labelTrainIds.png").is_file()
+    assert not (destination / "rgb_anon/fog/train").exists()
+    assert not list(destination.rglob("*_gt_invIds.png"))
+
+
 def test_idd_parts_render_source_ids_and_support_part_two_jpg(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -213,6 +244,41 @@ def test_archive_hashes_are_computed_without_second_archive_read(
         verify_archive_hashes=False,
     )
     assert not ({path.resolve() for path in archives} & set(hashed_paths))
+
+
+def test_idd_shards_are_atomic_and_reused_after_local_runtime_loss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archives = _write_idd_archives(tmp_path)
+    shard_root = tmp_path / "drive/prepared/v2/idd20k/shards"
+    monkeypatch.setitem(preparation.EXPECTED_COUNTS, "idd20k", {"train": 1, "val": 1})
+    first = prepare_dataset(
+        "idd20k",
+        archives,
+        tmp_path / "content-first",
+        verify_archive_hashes=False,
+        idd_shard_root=shard_root,
+        idd_shard_size=1,
+    )
+    assert Path(first["shard_index"]).is_file()
+    shard_mtimes = {path.name: path.stat().st_mtime_ns for path in shard_root.glob("*.tar")}
+    assert len(shard_mtimes) == 2
+    assert not list(shard_root.glob("*.incoming"))
+
+    def unexpected_render(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a completed IDD shard must not be rendered again")
+
+    monkeypatch.setattr(preparation, "_render_idd_mask_pair", unexpected_render)
+    second = prepare_dataset(
+        "idd20k",
+        archives,
+        tmp_path / "content-after-reset",
+        verify_archive_hashes=False,
+        idd_shard_root=shard_root,
+        idd_shard_size=1,
+    )
+    assert Path(second["shard_index"]).is_file()
+    assert shard_mtimes == {path.name: path.stat().st_mtime_ns for path in shard_root.glob("*.tar")}
 
 
 def test_idd_streaming_preparation_rejects_unsafe_member_and_cleans_staging(

@@ -65,9 +65,9 @@ def save_calibration_evidence(
 def fit_global_temperature_from_evidence(
     evidence_paths: Sequence[Path], output_path: Path, *, seed: int
 ) -> dict[str, Any]:
-    """Fit one scalar from equal pixel counts across three source domains."""
-    if len(evidence_paths) != 3:
-        raise ValueError("global calibration requires exactly three source-domain evidence files")
+    """Fit one scalar from equal pixel counts across frozen source domains."""
+    if len(evidence_paths) < 2:
+        raise ValueError("global calibration requires at least two source-domain evidence files")
     loaded: list[tuple[np.ndarray, np.ndarray, dict[str, Any]]] = []
     checkpoint_hashes: set[str] = set()
     dataset_ids: set[str] = set()
@@ -89,8 +89,10 @@ def fit_global_temperature_from_evidence(
         manifest_hashes[dataset_id] = manifest_sha256
         dataset_ids.add(dataset_id)
         loaded.append((logits, targets, metadata))
-    if dataset_ids != {"cityscapes", "bdd100k", "idd20k"}:
-        raise ValueError("global calibration evidence must cover the three source domains")
+    if dataset_ids != {"cityscapes", "idd20k"}:
+        raise ValueError(
+            "global calibration evidence must cover the frozen Cityscapes and IDD20K domains"
+        )
     if len(checkpoint_hashes) != 1:
         raise ValueError("global calibration evidence must come from one frozen checkpoint")
     equal_count = min(int(targets.size) for _, targets, _ in loaded)

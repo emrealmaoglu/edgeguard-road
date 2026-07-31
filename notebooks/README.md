@@ -8,7 +8,8 @@ The semantic-first delivery has two ordered notebooks:
    tar per source dataset.
 2. `EdgeGuard_Road_Colab.ipynb` enforces the 175 GiB staging plus 25 GiB reserve policy,
    stages bundles to `/content`, then owns audit → training → evaluation → ONNX →
-   bounded Drive snapshots and review ZIP creation. It defaults to audit-only. Set
+   immutable checkpoint recovery, HPO rung resume, and review ZIP creation. It defaults to
+   `CAMPAIGN_TARGET="audit"`; later targets run only missing prerequisites. Set
    `DOWNLOAD_REVIEW_PACKAGE=True` only when a stage has finished and you want the small
    reports/figures package downloaded to your computer.
 
@@ -19,7 +20,7 @@ evaluation. This catches notebook syntax/order/name-integration regressions; it 
 substitute for the real Colab CUDA and dataset gates.
 
 Current scientific source manifests are Cityscapes + IDD20K. The uploaded Kaggle BDD
-archive is still prepared and audited, but cannot enter HPO or the main scientific table
+archive is optional engineering evidence, but cannot enter HPO or the main scientific table
 unless replaced by the two official BDD semantic packages.
 
 Both notebooks install an append-only, secret-redacting Drive failure reporter. After an

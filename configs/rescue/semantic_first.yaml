@@ -43,7 +43,7 @@ hpo:
   warmup_ratios: [0.01, 0.03, 0.05]
   sampler_seed: 20260728
 datasets:
-  training: [cityscapes, bdd100k, idd20k]
+  training: [cityscapes, idd20k]
   domain_sampling: uniform
   external_sealed: [wilddash2, muses]
   external_fallback: kitti

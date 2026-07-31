@@ -51,6 +51,7 @@ class SemanticSample:
     group_id: str
     image: str
     mask: str
+    class_pixel_counts: tuple[int, ...] | None = None
 
 
 def _sample_id(path: Path) -> str:
@@ -175,25 +176,35 @@ def _difference_hash(image: Image.Image) -> int:
 def _near_duplicate_candidates(
     hashes: list[tuple[str, str, int]], *, maximum_rows: int = 5_000
 ) -> tuple[int, list[dict[str, Any]]]:
-    """Find close dHash pairs; candidates are evidence for review, not proof."""
-    rows: list[dict[str, Any]] = []
-    count = 0
-    for index, (left_id, left_group, left_hash) in enumerate(hashes):
-        for right_id, right_group, right_hash in hashes[index + 1 :]:
-            distance = (left_hash ^ right_hash).bit_count()
-            if distance > NEAR_DUPLICATE_HAMMING_DISTANCE:
-                continue
-            count += 1
-            if len(rows) < maximum_rows:
-                rows.append(
-                    {
-                        "sample_id_a": left_id,
-                        "sample_id_b": right_id,
-                        "hamming_distance": distance,
-                        "same_sequence_group": left_group == right_group,
-                    }
-                )
-    return count, rows
+    """Find all Hamming<=2 dHash pairs through bounded-memory pigeonhole bands."""
+    bands = ((0, 22), (22, 43), (43, 64))
+    buckets: defaultdict[tuple[int, int], list[tuple[str, str, int]]] = defaultdict(list)
+    pairs: dict[tuple[str, str], tuple[int, bool]] = {}
+    for sample_id, group_id, value in hashes:
+        candidates: dict[str, tuple[str, int]] = {}
+        for band_id, (start, end) in enumerate(bands):
+            key = (band_id, (value >> start) & ((1 << (end - start)) - 1))
+            for other_id, other_group, other_value in buckets[key]:
+                candidates[other_id] = (other_group, other_value)
+        for other_id, (other_group, other_value) in candidates.items():
+            distance = (value ^ other_value).bit_count()
+            if distance <= NEAR_DUPLICATE_HAMMING_DISTANCE:
+                left, right = sorted((sample_id, other_id))
+                pair = (left, right)
+                pairs[pair] = (distance, group_id == other_group)
+        for band_id, (start, end) in enumerate(bands):
+            key = (band_id, (value >> start) & ((1 << (end - start)) - 1))
+            buckets[key].append((sample_id, group_id, value))
+    rows = [
+        {
+            "sample_id_a": left,
+            "sample_id_b": right,
+            "hamming_distance": evidence[0],
+            "same_sequence_group": evidence[1],
+        }
+        for (left, right), evidence in sorted(pairs.items())[:maximum_rows]
+    ]
+    return len(pairs), rows
 
 
 def _crop_survival_presence(
@@ -344,7 +355,16 @@ def audit_cityscapes(root: Path, output_root: Path) -> dict[str, Any]:
             before, after = _crop_survival_presence(mask, sample.sample_id)
             crop_present_before += before
             crop_present_after += after
-            valid_samples.append(sample)
+            valid_samples.append(
+                SemanticSample(
+                    sample_id=sample.sample_id,
+                    city=sample.city,
+                    group_id=sample.group_id,
+                    image=sample.image,
+                    mask=sample.mask,
+                    class_pixel_counts=tuple(int(value) for value in counts),
+                )
+            )
         except (OSError, UnidentifiedImageError, ValueError) as error:
             corrupt.append({"sample_id": sample.sample_id, "error": str(error)})
     duplicates = [
@@ -677,13 +697,19 @@ def write_train_fit_statistics(
         pixels = np.zeros(19, dtype=np.int64)
         images = np.zeros(19, dtype=np.int64)
         for record in records:
-            mask_path = dataset_root / str(record["mask"])
-            with Image.open(mask_path) as image:
-                mask = np.asarray(image, dtype=np.uint8)
-            invalid = np.unique(mask[(mask > 18) & (mask != 255)])
-            if invalid.size:
-                raise ValueError(f"invalid {role} labels in {record['sample_id']}: {invalid}")
-            sample_counts = np.bincount(mask[mask != 255], minlength=19)[:19]
+            cached_counts = record.get("class_pixel_counts")
+            if isinstance(cached_counts, list) and len(cached_counts) == 19:
+                sample_counts = np.asarray(cached_counts, dtype=np.int64)
+                if bool((sample_counts < 0).any()):
+                    raise ValueError(f"negative cached counts in {record['sample_id']}")
+            else:
+                mask_path = dataset_root / str(record["mask"])
+                with Image.open(mask_path) as image:
+                    mask = np.asarray(image, dtype=np.uint8)
+                invalid = np.unique(mask[(mask > 18) & (mask != 255)])
+                if invalid.size:
+                    raise ValueError(f"invalid {role} labels in {record['sample_id']}: {invalid}")
+                sample_counts = np.bincount(mask[mask != 255], minlength=19)[:19]
             pixels += sample_counts
             images += sample_counts > 0
         role_pixel_counts[role] = pixels

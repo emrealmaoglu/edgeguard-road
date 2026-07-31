@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from edgeguard.rescue.colab_recovery import (
+    latest_checkpoint,
+    publish_recovery_file,
+    restore_recovery_file,
+)
 from edgeguard.rescue.config import RescueConfig
 from edgeguard.rescue.ledger import append_run_ledger
 from edgeguard.rescue.mmseg_runtime import evaluate_model, train_model
@@ -14,12 +20,17 @@ from edgeguard.rescue.multidomain import validate_dataset_manifest
 from edgeguard.serialization import canonical_json, sha256_file
 
 
-def select_hpo_models(candidate_table: Path) -> tuple[str, str]:
+def select_hpo_models(
+    candidate_table: Path, expected_domains: Sequence[str] | None = None
+) -> tuple[str, str]:
     """Select the two highest domain-macro screening candidates deterministically."""
     payload = json.loads(candidate_table.read_text(encoding="utf-8"))
     candidates = payload.get("candidates")
     if not isinstance(candidates, list):
         raise ValueError("HPO candidate table must contain a candidates list")
+    frozen_domains = set(expected_domains or ("cityscapes", "idd20k"))
+    if "cityscapes" not in frozen_domains or len(frozen_domains) < 2:
+        raise ValueError("HPO selection requires Cityscapes and at least one source domain")
     ranked: list[tuple[float, float, str]] = []
     for record in candidates:
         model = str(record.get("model"))
@@ -30,12 +41,12 @@ def select_hpo_models(candidate_table: Path) -> tuple[str, str]:
             or record.get("screening_valid") is not True
             or record.get("onnx_validated") is not True
             or not isinstance(domain_values, dict)
-            or set(domain_values) != {"cityscapes", "bdd100k", "idd20k"}
+            or set(domain_values) != frozen_domains
         ):
             continue
-        domain_macro = sum(float(value) for value in domain_values.values()) / 3.0
+        domain_macro = sum(float(value) for value in domain_values.values()) / len(frozen_domains)
         if abs(float(metric) - domain_macro) > 1.0e-12:
-            raise ValueError("candidate domain-macro mIoU does not match its three domains")
+            raise ValueError("candidate domain-macro mIoU does not match frozen source domains")
         rare = float(record.get("rare_class_mIoU") or -1.0)
         ranked.append((float(metric), rare, model))
     selected: list[str] = []
@@ -109,6 +120,12 @@ def run_hpo_study(
     mmseg_root: Path,
     output_root: Path,
     rare_classes_file: Path | None = None,
+    recovery_root: Path | None = None,
+    campaign_id: str | None = None,
+    project_commit: str | None = None,
+    device_batch: int | None = None,
+    workers: int | None = None,
+    precision: str = "auto",
 ) -> dict[str, Any]:
     """Run/resume one 12-trial TPE study with 1.5k/3k successive-halving rungs."""
     try:
@@ -117,7 +134,7 @@ def run_hpo_study(
         raise RuntimeError("HPO requires the rescue/colab Optuna dependency") from error
     manifest_payloads = [validate_dataset_manifest(path) for path in manifests]
     if {item["dataset_id"] for item in manifest_payloads} != set(protocol.datasets.training):
-        raise ValueError("HPO requires all three frozen source-domain manifests")
+        raise ValueError("HPO manifests do not match the frozen scientific source domains")
     if rare_classes_file is None:
         raise ValueError("HPO requires the frozen pooled rare-classes artifact")
     rare_payload = json.loads(rare_classes_file.read_text(encoding="utf-8"))
@@ -126,10 +143,21 @@ def run_hpo_study(
         sorted(rare_payload.get("dataset_manifest_sha256s", [])) != expected_manifest_hashes
         or len(rare_payload.get("groups", {}).get("rare", [])) != 5
     ):
-        raise ValueError("rare-classes artifact does not match the three HPO manifests")
+        raise ValueError("rare-classes artifact does not match the frozen HPO manifests")
     study_root = output_root / "hpo" / model
     study_root.mkdir(parents=True, exist_ok=True)
-    storage = f"sqlite:///{study_root / 'study.sqlite3'}"
+    database_path = study_root / "study.sqlite3"
+    study_artifact_id = f"hpo-{model.replace('_', '-')}-study"
+    if recovery_root is not None and not database_path.is_file():
+        try:
+            restore_recovery_file(
+                recovery_root,
+                artifact_id=study_artifact_id,
+                destination=database_path,
+            )
+        except ValueError:
+            pass
+    storage = f"sqlite:///{database_path}"
     study = optuna.create_study(
         study_name=f"edgeguard-{model}-multidomain-v1",
         storage=storage,
@@ -143,18 +171,45 @@ def run_hpo_study(
     study.set_user_attr("search_space", hpo_search_space(protocol))
     study.set_user_attr("dataset_manifest_sha256s", [sha256_file(path) for path in manifests])
     for stale in [trial for trial in study.trials if trial.state.name == "RUNNING"]:
+        if stale.params:
+            study.enqueue_trial(
+                stale.params,
+                user_attrs={"resume_from_trial": stale.number},
+                skip_if_exists=False,
+            )
         study.tell(stale.number, state=optuna.trial.TrialState.FAIL)
+
+    def backup_study() -> None:
+        if recovery_root is None:
+            return
+        if not campaign_id or not project_commit:
+            raise ValueError("HPO recovery requires campaign_id and project_commit")
+        backup = study_root / ".study.backup.sqlite3"
+        backup.unlink(missing_ok=True)
+        with sqlite3.connect(database_path) as source, sqlite3.connect(backup) as target:
+            source.backup(target)
+        publish_recovery_file(
+            backup,
+            recovery_root,
+            artifact_id=study_artifact_id,
+            campaign_id=campaign_id,
+            project_commit=project_commit,
+            metadata={"model": model, "trial_count": len(study.trials)},
+        )
+        backup.unlink(missing_ok=True)
 
     def objective(trial: Any) -> float:
         learning_rate = trial.suggest_float("learning_rate", *protocol.hpo.learning_rate, log=True)
         weight_decay = trial.suggest_float("weight_decay", *protocol.hpo.weight_decay, log=True)
         scheduler = trial.suggest_categorical("scheduler", list(protocol.hpo.schedulers))
         warmup_ratio = trial.suggest_categorical("warmup_ratio", list(protocol.hpo.warmup_ratios))
+        resumed_trial = trial.user_attrs.get("resume_from_trial")
         duplicate = next(
             (
                 previous
                 for previous in study.trials
                 if previous.number != trial.number
+                and previous.number != resumed_trial
                 and previous.state.name != "RUNNING"
                 and previous.params == trial.params
             ),
@@ -163,10 +218,19 @@ def run_hpo_study(
         if duplicate is not None:
             trial.set_user_attr("duplicate_of_trial", duplicate.number)
             raise optuna.TrialPruned(f"duplicate of trial {duplicate.number}")
-        run_name = f"trial-{trial.number:03d}"
+        run_number = int(resumed_trial) if resumed_trial is not None else trial.number
+        run_name = f"trial-{run_number:03d}"
         rungs = (*protocol.hpo.pruning_steps, protocol.hpo.max_steps)
         last_macro = 0.0
         for rung_index, rung in enumerate(rungs):
+            previous = study.trials[int(resumed_trial)] if resumed_trial is not None else None
+            completed_key = f"domain_scores_{rung}"
+            if previous is not None and completed_key in previous.user_attrs:
+                resumed_scores = [float(value) for value in previous.user_attrs[completed_key]]
+                last_macro = sum(resumed_scores) / len(resumed_scores)
+                trial.set_user_attr(completed_key, resumed_scores)
+                trial.report(last_macro, step=rung)
+                continue
             train_model(
                 protocol,
                 model_name=model,
@@ -177,7 +241,7 @@ def run_hpo_study(
                 output_root=output_root,
                 loss="ce",
                 audit_report=None,
-                resume=rung_index > 0,
+                resume=rung_index > 0 or resumed_trial is not None,
                 data_manifests=manifests,
                 learning_rate=learning_rate,
                 weight_decay=weight_decay,
@@ -186,12 +250,16 @@ def run_hpo_study(
                 run_name=run_name,
                 max_steps_override=rung,
                 scheduler_steps_override=protocol.hpo.max_steps,
+                recovery_root=recovery_root,
+                campaign_id=campaign_id,
+                project_commit=project_commit,
+                device_batch=device_batch,
+                workers=workers,
+                precision=precision,
             )
             run_dir = output_root / "hpo" / model / run_name
-            checkpoints = sorted(run_dir.glob("*.pth"), key=lambda path: path.stat().st_mtime)
-            if not checkpoints:
-                raise RuntimeError("HPO rung produced no checkpoint")
-            scores: list[float] = []
+            checkpoint = latest_checkpoint(run_dir)
+            domain_scores: list[float] = []
             rare_scores: list[float] = []
             for manifest, payload in zip(manifests, manifest_payloads, strict=True):
                 evaluation_dir = (
@@ -200,7 +268,7 @@ def run_hpo_study(
                 result = evaluate_model(
                     protocol,
                     resolved_config=run_dir / "resolved.py",
-                    checkpoint=checkpoints[-1],
+                    checkpoint=checkpoint,
                     dataset=str(payload["dataset_id"]),
                     dataset_root=None,
                     split_manifest=None,
@@ -216,24 +284,36 @@ def run_hpo_study(
                     dataset_manifest=manifest,
                     collect_classwise=rung == protocol.hpo.max_steps,
                 )
-                scores.append(_metric(result["metrics"], "mIoU"))
+                domain_scores.append(_metric(result["metrics"], "mIoU"))
                 if result["rare_class_mIoU"] is not None:
                     rare_scores.append(float(result["rare_class_mIoU"]))
-            last_macro = sum(scores) / len(scores)
-            trial.set_user_attr(f"domain_scores_{rung}", scores)
+            last_macro = sum(domain_scores) / len(domain_scores)
+            trial.set_user_attr(f"domain_scores_{rung}", domain_scores)
             if rare_scores:
                 trial.set_user_attr(f"rare_macro_{rung}", sum(rare_scores) / len(rare_scores))
             trial.report(last_macro, step=rung)
             _snapshot(study, study_root / "trials.snapshot.json", model=model, manifests=manifests)
+            backup_study()
             if rung != protocol.hpo.max_steps and trial.should_prune():
                 raise optuna.TrialPruned(f"pruned at {rung} optimizer steps")
         return last_macro
 
-    terminal = [trial for trial in study.trials if trial.state.name != "RUNNING"]
-    remaining = max(0, protocol.hpo.trials_per_model - len(terminal))
-    if remaining:
-        study.optimize(objective, n_trials=remaining, catch=(RuntimeError, ValueError, OSError))
+    target_trials = protocol.hpo.trials_per_model
+    attempt_budget = target_trials * 2
+    attempts = 0
+    terminal = [trial for trial in study.trials if trial.state.name in {"COMPLETE", "PRUNED"}]
+    while len(terminal) < target_trials and attempts < attempt_budget:
+        study.optimize(objective, n_trials=1, catch=(RuntimeError, ValueError, OSError))
+        attempts += 1
+        terminal = [trial for trial in study.trials if trial.state.name in {"COMPLETE", "PRUNED"}]
+        _snapshot(study, study_root / "trials.snapshot.json", model=model, manifests=manifests)
+        backup_study()
+    if len(terminal) < target_trials:
+        raise RuntimeError(
+            f"HPO exhausted {attempt_budget} attempts before {target_trials} terminal trials"
+        )
     _snapshot(study, study_root / "trials.snapshot.json", model=model, manifests=manifests)
+    backup_study()
     complete = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
     if not complete:
         raise RuntimeError("HPO finished without a complete trial")

@@ -40,6 +40,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-root", type=Path)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--split-manifest", type=Path)
+    parser.add_argument(
+        "--checkpoint-root",
+        type=Path,
+        help="persistent catalog chunks used to resume long canonical-data audits",
+    )
     parser.add_argument("--seed", type=int, default=20260728)
     parser.add_argument(
         "--source-split",
@@ -93,6 +98,7 @@ def main() -> int:
             strict_count=not args.allow_fixture_count,
             source_split=args.source_split,
             source_manifests=tuple(path.resolve() for path in args.source_manifest),
+            checkpoint_root=(args.checkpoint_root.resolve() if args.checkpoint_root else None),
         )
         print(canonical_json(result))
         return 0 if result["audit_passed"] else 2

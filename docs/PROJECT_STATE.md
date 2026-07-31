@@ -6,6 +6,13 @@ The published delivery notebooks are pinned to implementation commit
 `3134d3f1e6d3bf23ede14f7a29b0adbeb51e0e89`; a later branch update cannot silently alter
 the Colab runtime code or scientific protocol.
 
+The pending Colab-resilience revision replaces that snapshot model with content-addressed,
+current/previous-generation recovery. Training publishes full optimizer/scheduler/AMP/RNG
+state every 500 optimizer steps or ten minutes; HPO persists per rung with an atomic SQLite
+backup. IDD preparation publishes verified 500-sample shards, audit publishes 250-sample
+catalog chunks, archive hashes use stable receipts, and stage completion is accepted only
+through output/input hash receipts. The active source contract is Cityscapes + IDD20K.
+
 Colab enforces that pin after checkout. The external-action-free local notebook harness
 intentionally runs the current checkout without cloning, so it records a pin mismatch
 instead of rejecting a legitimate later documentation/CI commit. GitHub CI installs the
@@ -101,15 +108,16 @@ runs are engineering evidence only.
 
 ## Immediate external execution order
 
-1. Run `EdgeGuard_Data_Preflight_Colab.ipynb` from the existing `private_inputs/`
-   uploads with `RUN_ARCHIVE_PREPARATION=True`; retain hashes and bundle receipts.
+1. Run `EdgeGuard_Data_Preflight_Colab.ipynb` from the existing `private_inputs/` uploads
+   with Run all; retain digest, Cityscapes bundle and IDD shard receipts.
 2. Stage/audit Cityscapes + IDD20K and review/freeze their group-safe manifests and rare
    classes. Review BDD separately as provisional, non-scientific evidence.
 3. If official BDD packages are later obtained, add them as a new source ablation rather
    than replacing the already recorded mirror evidence.
-4. Run one-batch, five 50-step smokes, pilots, screenings, and early ONNX checks.
-5. Freeze top two, then HPO/ablations/finals/calibration; only afterward open official
-   validation, ACDC, and sealed external evaluation.
+4. Advance `CAMPAIGN_TARGET` through smoke, pilot, screening, HPO and final. Reset recovery
+   is automatic; do not delete campaign recovery objects.
+5. Only after final completes, set `source_eval` plus `ALLOW_FINAL_DATA=True`; prepare/open
+   ACDC separately and never use its result to change model or preprocessing.
 6. Build/benchmark TensorRT FP16 manually on Jetson, then decide whether the detection
    phase gate passes.
 

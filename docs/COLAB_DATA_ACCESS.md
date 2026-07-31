@@ -32,9 +32,11 @@ MyDrive/EdgeGuard/
 ├── quarantine/kaggle/bdd100k/  # smoke-only BDD mirror; never final science
 ├── private_inputs/              # current immutable uploads; no migration required
 ├── bundles/                     # *.prepared.tar + hash receipt
-├── manifests/                   # acquisition and inventory evidence
-├── campaigns/<id>/<commit>/     # verified resumable campaign.latest.tar.gz
-├── downloads/                   # small review ZIPs for local inspection
+├── prepared/v2/idd20k/shards/  # verified 500-sample canonical IDD shards
+├── manifests/v2/               # acquisition, digest and frozen evidence
+├── runtime_cache/              # one-file environment-signature cache
+├── campaigns/<id>/             # state, recovery objects, HPO and failures
+├── review_packages/            # small review ZIPs for local inspection
 ├── source/                      # optional immutable source-code handoff
 └── datasets/<dataset_id>/       # legacy prepared roots; not the default path
 ```
@@ -127,21 +129,20 @@ the project maps only exact ontology matches and sends ambiguous classes to igno
 
 1. Leave current uploads under `private_inputs/`; future official archives may use
    `archives/<dataset_id>/`. Do not move or extract source archives in Drive.
-2. Run the preflight notebook with archive hashing enabled. Preserve the JSON inventory.
+2. Run the preflight notebook. Preserve the JSON inventory. `DEEP_VERIFY_ARCHIVES=False`
+   reuses a pinned digest receipt when size/mtime identity is unchanged.
    Hashing a mounted Drive file is best-effort at this discovery stage: a transient read
    failure is recorded per archive and no longer destroys the whole inventory. Full digest
    verification remains mandatory after the bounded-retry copy into `/content`.
-3. Set `RUN_ARCHIVE_PREPARATION=True`; keep `CREATE_BUNDLES=True`. The notebook reuses
-   Cityscapes, prepares BDD then IDD one at a time, enforces a conservative 3× archive
-   working-space estimate plus 25 GiB reserve, bundles directly, and removes temporary
-   trees. Repeat runs reuse verified bundles.
+3. Use Run all; preparation is enabled by default outside local-test mode. It prepares
+   Cityscapes and IDD only, enforces the 3× estimate plus 25 GiB reserve, and resumes IDD
+   from verified 500-sample shards. BDD requires an explicit provisional switch.
 4. Do not replace a bundle unless its archives/source profile changed intentionally and
    all scientific manifests will be regenerated.
 5. Open `EdgeGuard_Road_Colab.ipynb`. Its stage command refuses missing receipts, altered
    hashes, partial destinations, unsafe tar members, or storage plans over budget.
-6. Leave `RUN_TRAINING=False` until Cityscapes and IDD scientific candidate manifests
-   are reviewed and frozen. Review the BDD audit separately; it cannot be frozen for science.
-7. After each stage, inspect `downloads/*-review.zip`. Class distribution, pooled
+6. Start with `CAMPAIGN_TARGET="audit"`, then advance through smoke/pilot/screening/HPO/final.
+7. After each stage, inspect `review_packages/*-review.zip`. Class distribution, pooled
    imbalance/weights, split sizes and deterministic source examples are generated only
    from measured `train_fit` manifests; fixture plots are never thesis evidence.
 

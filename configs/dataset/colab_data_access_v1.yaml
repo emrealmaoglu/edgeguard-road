@@ -16,6 +16,9 @@ storage:
   quarantine_directory: quarantine
   source_directory: source
   failure_directory: failures
+  prepared_directory: prepared
+  runtime_cache_directory: runtime_cache
+  review_package_directory: review_packages
   preparation_archive_multiplier: 3.0
   preparation_reserve_gib: 25
   legacy_compatibility:
@@ -116,8 +119,14 @@ datasets:
         published_size: 127 MB
     prepared_subdirectory: acdc
     required_paths:
-      - rgb_anon/val
-      - gt/val
+      - rgb_anon/fog/val
+      - rgb_anon/night/val
+      - rgb_anon/rain/val
+      - rgb_anon/snow/val
+      - gt/fog/val
+      - gt/night/val
+      - gt/rain/val
+      - gt/snow/val
   wilddash2:
     campaign_role: primary_sealed_external
     activation_phase: after_model_and_protocol_freeze

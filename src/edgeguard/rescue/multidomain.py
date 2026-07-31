@@ -152,10 +152,11 @@ def _idd_samples(root: Path, split: str) -> list[DomainSample]:
     for image in images:
         identifier = image.stem.removesuffix("_leftImg8bit")
         mask = masks.get(identifier)
-        if mask is None:
-            raise ValueError(
-                f"IDD image lacks raw source-ID mask *_gtFine_labelids.png: {image.name}"
-            )
+        canonical_mask = canonical_masks.get(identifier)
+        if mask is None and canonical_mask is None:
+            raise ValueError(f"IDD image lacks source-ID or canonical mask: {image.name}")
+        selected_mask = mask or canonical_mask
+        assert selected_mask is not None
         sequence = image.parent.relative_to(image_root).as_posix()
         city = image.parent.name
         result.append(
@@ -164,11 +165,9 @@ def _idd_samples(root: Path, split: str) -> list[DomainSample]:
                 dataset_id="idd20k",
                 group_id=f"idd20k:{sequence}",
                 image=_relative(image, root),
-                mask=_relative(mask, root),
+                mask=_relative(selected_mask, root),
                 canonical_mask=(
-                    _relative(canonical_masks[identifier], root)
-                    if identifier in canonical_masks
-                    else None
+                    _relative(canonical_mask, root) if canonical_mask is not None else None
                 ),
                 city=city,
             )
@@ -373,6 +372,7 @@ def audit_training_dataset(
     strict_count: bool = True,
     source_split: str = "train",
     source_manifests: Sequence[Path] = (),
+    checkpoint_root: Path | None = None,
 ) -> dict[str, Any]:
     """Audit BDD/IDD train or withheld official validation data."""
     if dataset_id not in {"bdd100k", "idd20k"}:
@@ -404,37 +404,104 @@ def audit_training_dataset(
     canonical_masks_in_dataset = dataset_id == "idd20k" and all(
         sample.canonical_mask is not None for sample in samples
     )
+    catalog_chunk_size = 250
+    catalog_identity = sha256_payload(
+        {
+            "dataset_id": dataset_id,
+            "source_split": source_split,
+            "dataset_root": str(root.resolve()),
+            "ontology_sha256": sha256_file(ontology_path),
+            "preparation_receipt_sha256": preparation_receipt_sha256,
+            "sample_ids": [sample.sample_id for sample in samples],
+        }
+    )
+    catalog_dir = (
+        checkpoint_root / dataset_id / source_split / catalog_identity
+        if checkpoint_root is not None and canonical_masks_in_dataset
+        else None
+    )
+    cached_rows: dict[str, dict[str, Any]] = {}
+    if catalog_dir is not None:
+        catalog_dir.mkdir(parents=True, exist_ok=True)
+        for chunk_number, offset in enumerate(range(0, len(samples), catalog_chunk_size)):
+            expected_ids = [
+                sample.sample_id for sample in samples[offset : offset + catalog_chunk_size]
+            ]
+            chunk_path = catalog_dir / f"chunk-{chunk_number:04d}.json"
+            if not chunk_path.is_file():
+                continue
+            try:
+                chunk = json.loads(chunk_path.read_text(encoding="utf-8"))
+                receipt_hash = chunk.pop("receipt_sha256")
+                rows = chunk["records"]
+                valid = (
+                    receipt_hash == sha256_payload(chunk)
+                    and chunk.get("catalog_identity") == catalog_identity
+                    and [str(row["sample_id"]) for row in rows] == expected_ids
+                )
+            except (OSError, KeyError, TypeError, json.JSONDecodeError):
+                valid = False
+                rows = []
+            if valid:
+                for row in rows:
+                    cached_rows[str(row["sample_id"])] = row
     invalid: list[dict[str, Any]] = []
     exact_hashes: defaultdict[str, list[str]] = defaultdict(list)
     sample_hashes: dict[str, str] = {}
     sample_perceptual_hashes: dict[str, int] = {}
+    sample_pixel_counts: dict[str, list[int]] = {}
     perceptual: list[tuple[str, str, int]] = []
     pixel_counts = np.zeros(19, dtype=np.int64)
     ignore_pixels = 0
     total_pixels = 0
     audited: list[DomainSample] = []
-    for sample in samples:
+    new_rows: dict[str, dict[str, Any]] = {}
+
+    def accept_row(sample: DomainSample, row: dict[str, Any]) -> None:
+        nonlocal ignore_pixels, total_pixels
+        counts = np.asarray(row["class_pixel_counts"], dtype=np.int64)
+        if counts.shape != (19,) or bool((counts < 0).any()) or not bool(counts.any()):
+            raise ValueError("cached audit histogram is invalid")
+        image_sha = str(row["image_sha256"])
+        perceptual_hash = int(str(row["perceptual_hash"]), 16)
+        pixel_counts[:] += counts
+        ignore_pixels += int(row["ignore_pixels"])
+        total_pixels += int(row["total_pixels"])
+        exact_hashes[image_sha].append(sample.sample_id)
+        sample_hashes[sample.sample_id] = image_sha
+        sample_perceptual_hashes[sample.sample_id] = perceptual_hash
+        perceptual.append((sample.sample_id, sample.group_id, perceptual_hash))
+        sample_pixel_counts[sample.sample_id] = [int(value) for value in counts]
+        audited.append(
+            DomainSample(**{**asdict(sample), "canonical_mask": str(row["canonical_mask"])})
+        )
+
+    for sample_index, sample in enumerate(samples):
         assert sample.mask is not None
+        cached = cached_rows.get(sample.sample_id)
+        if cached is not None:
+            accept_row(sample, cached)
+            continue
         try:
             with Image.open(root / sample.image) as image:
                 image.load()
                 image_size = image.size
-                perceptual.append((sample.sample_id, sample.group_id, _difference_hash(image)))
-                sample_perceptual_hashes[sample.sample_id] = perceptual[-1][2]
+                perceptual_hash = _difference_hash(image)
             with Image.open(root / sample.mask) as mask_image:
                 native = np.asarray(mask_image)
-            canonical = map_source_mask(native, dataset_id, ontology)
-            ignore_pixels += int(np.count_nonzero(canonical == 255))
-            total_pixels += int(canonical.size)
+            canonical_only = dataset_id == "idd20k" and sample.mask == sample.canonical_mask
+            canonical = (
+                map_source_mask(native, "cityscapes", ontology)
+                if canonical_only
+                else map_source_mask(native, dataset_id, ontology)
+            )
+            sample_ignore_pixels = int(np.count_nonzero(canonical == 255))
             if canonical.shape != (image_size[1], image_size[0]):
                 raise ValueError("image/mask geometry mismatch")
             valid_counts = np.bincount(canonical[canonical != 255], minlength=19)[:19]
             if not bool(valid_counts.any()):
                 raise ValueError("canonical mask contains no usable class")
-            pixel_counts += valid_counts
             image_sha = sha256_file(root / sample.image)
-            exact_hashes[image_sha].append(sample.sample_id)
-            sample_hashes[sample.sample_id] = image_sha
             if dataset_id == "idd20k" and not canonical_masks_in_dataset:
                 canonical_path = canonical_root / f"{sample.sample_id}.png"
                 canonical_path.parent.mkdir(parents=True, exist_ok=True)
@@ -448,9 +515,52 @@ def audit_training_dataset(
                 if not np.array_equal(prepared_canonical, canonical):
                     raise ValueError("prepared canonical mask differs from frozen ontology mapping")
                 canonical_relative = existing_canonical
-            audited.append(DomainSample(**{**asdict(sample), "canonical_mask": canonical_relative}))
+            row = {
+                "sample_id": sample.sample_id,
+                "canonical_mask": canonical_relative,
+                "image_sha256": image_sha,
+                "perceptual_hash": f"{perceptual_hash:016x}",
+                "class_pixel_counts": [int(value) for value in valid_counts],
+                "ignore_pixels": sample_ignore_pixels,
+                "total_pixels": int(canonical.size),
+            }
+            new_rows[sample.sample_id] = row
+            accept_row(sample, row)
         except (OSError, UnidentifiedImageError, ValueError) as error:
             invalid.append({"sample_id": sample.sample_id, "error": str(error)})
+        chunk_end = (sample_index + 1) % catalog_chunk_size == 0 or sample_index + 1 == len(samples)
+        if catalog_dir is not None and chunk_end:
+            offset = (sample_index // catalog_chunk_size) * catalog_chunk_size
+            chunk_samples = samples[offset : sample_index + 1]
+            rows = [
+                cached_rows.get(item.sample_id) or new_rows.get(item.sample_id)
+                for item in chunk_samples
+            ]
+            if all(row is not None for row in rows):
+                chunk_number = sample_index // catalog_chunk_size
+                chunk_payload = {
+                    "schema_version": "2.0",
+                    "record_type": "edgeguard_audit_catalog_chunk",
+                    "catalog_identity": catalog_identity,
+                    "chunk_number": chunk_number,
+                    "records": rows,
+                }
+                chunk_payload["receipt_sha256"] = sha256_payload(chunk_payload)
+                chunk_path = catalog_dir / f"chunk-{chunk_number:04d}.json"
+                incoming = chunk_path.with_name(f".{chunk_path.name}.incoming")
+                incoming.write_text(canonical_json(chunk_payload) + "\n", encoding="utf-8")
+                incoming.replace(chunk_path)
+                print(
+                    canonical_json(
+                        {
+                            "phase": "audit-catalog",
+                            "dataset": dataset_id,
+                            "completed": sample_index + 1,
+                            "total": len(samples),
+                        }
+                    ),
+                    flush=True,
+                )
     duplicates = [ids for ids in exact_hashes.values() if len(ids) > 1]
     expected = (
         EXPECTED_TRAIN_COUNTS[dataset_id]
@@ -532,6 +642,7 @@ def audit_training_dataset(
                     **asdict(sample),
                     "image_sha256": sample_hashes[sample.sample_id],
                     "perceptual_hash": f"{sample_perceptual_hashes[sample.sample_id]:016x}",
+                    "class_pixel_counts": sample_pixel_counts[sample.sample_id],
                 }
                 for sample in records
             ]
@@ -791,6 +902,13 @@ def write_multidomain_statistics(
         if not isinstance(records, list) or not records:
             raise ValueError("each training manifest needs a non-empty train_fit role")
         for record in records:
+            cached_counts = record.get("class_pixel_counts")
+            if isinstance(cached_counts, list) and len(cached_counts) == 19:
+                sample_counts = np.asarray(cached_counts, dtype=np.int64)
+                if bool((sample_counts < 0).any()):
+                    raise ValueError("cached canonical histogram contains a negative count")
+                domain_counts += sample_counts
+                continue
             canonical = record.get("canonical_mask")
             if canonical is None:
                 raise ValueError("train_fit record has no canonical mask")

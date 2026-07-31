@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,11 @@ def _metric(metrics: dict[str, Any], name: str) -> float | None:
 
 
 def build_evidence_report(
-    evaluation_root: Path, export_root: Path, output_dir: Path
+    evaluation_root: Path,
+    export_root: Path,
+    output_dir: Path,
+    *,
+    expected_domains: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Build week-3/final-safe tables without estimating missing measurements."""
     if output_dir.exists():
@@ -86,12 +91,22 @@ def build_evidence_report(
     for row in evaluations:
         if row["role"] == "train_select" and row["mIoU"] is not None:
             source_rows.setdefault(str(row["model"]), []).append(row)
+    frozen_domains = set(expected_domains or ())
+    if not frozen_domains:
+        frozen_domains = {
+            str(row["dataset"])
+            for rows in source_rows.values()
+            for row in rows
+            if row.get("dataset")
+        }
+    if source_rows and ("cityscapes" not in frozen_domains or len(frozen_domains) < 2):
+        raise ValueError("candidate reporting requires at least two frozen source domains")
     for model, rows in sorted(source_rows.items()):
         if model not in exports:
             continue
         export = exports[model]
         domain_values = {str(row["dataset"]): row["mIoU"] for row in rows}
-        if set(domain_values) != {"cityscapes", "bdd100k", "idd20k"}:
+        if set(domain_values) != frozen_domains:
             continue
         onnx_validated = bool(
             export.get("shape_equal") and export.get("allclose_atol_1e_4_rtol_1e_4")
@@ -193,7 +208,11 @@ def build_evidence_report(
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         writer.writerows(shift_rows)
-    candidate_payload = {"schema_version": "1.0", "candidates": candidates}
+    candidate_payload = {
+        "schema_version": "2.0",
+        "source_domains": sorted(frozen_domains),
+        "candidates": candidates,
+    }
     (output_dir / "candidate_table.json").write_text(
         canonical_json(candidate_payload) + "\n", encoding="utf-8"
     )
@@ -217,10 +236,10 @@ def build_evidence_report(
     outline = """# Presentation outline
 
 1. Multi-domain generalization question and edge target
-2. Cityscapes, BDD100K, and IDD20K audits, ontology, split roles, and leakage controls
+2. Cityscapes and IDD20K audits, ontology, split roles, and leakage controls
 3. Domain-uniform sampling, class imbalance, and frozen rare-class definition
 4. Five lightweight MMSeg models under one optimizer-step protocol
-5. Measured three-domain pilot/screening and bounded top-two HPO
+5. Measured two-domain pilot/screening and bounded top-two HPO
 6. Dataset-composition and CrossEntropy/weighted-CrossEntropy ablations
 7. Equal-source global temperature scaling and reliability
 8. Source validation, ACDC domain shift, and sealed WildDash/MUSES evidence
@@ -234,6 +253,7 @@ def build_evidence_report(
         "record_type": "semantic_evidence_report",
         "evaluation_count": len(evaluations),
         "candidate_count": len(candidates),
+        "source_domains": sorted(frozen_domains),
         "selection_generated": selection is not None,
         "scientific_evidence": bool(evaluations),
     }

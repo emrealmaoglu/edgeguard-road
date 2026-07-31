@@ -89,8 +89,13 @@ def test_initialize_drive_layout_creates_scientific_and_review_roots(
         "source",
         "private_inputs",
         "failures",
+        "prepared",
+        "runtime_cache",
+        "review_packages",
     ):
         assert Path(paths[name]).is_dir()
+    assert (Path(paths["prepared"]) / "v2").is_dir()
+    assert (Path(paths["manifests"]) / "v2").is_dir()
     assert (Path(paths["quarantine"]) / "kaggle/bdd100k").is_dir()
 
 
@@ -131,6 +136,32 @@ def test_inventory_hashes_present_archives_and_checks_published_md5(tmp_path: Pa
     assert len(row["sha256"]) == 64
     assert len(row["md5"]) == 32
     assert row["published_md5_matches"] is False
+
+
+def test_inventory_reuses_archive_digest_receipt_without_rereading_drive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, drive = _fixture_plan(tmp_path)
+    package = plan["datasets"]["cityscapes"]["packages"][0]
+    archive = drive / "EdgeGuard/private_inputs" / package["filename"]
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"stable-drive-archive")
+    first = inventory_colab_data(plan, drive, hash_archives=True)
+    first_row = next(row for row in first["datasets"] if row["dataset_id"] == "cityscapes")[
+        "packages"
+    ][0]
+    assert first_row["hash_status"] == "computed"
+
+    def unexpected_hash(_path: Path) -> tuple[str, str]:
+        raise AssertionError("a stat-stable Drive archive must use its pinned digest receipt")
+
+    monkeypatch.setattr("edgeguard.rescue.colab_data._file_digests", unexpected_hash)
+    second = inventory_colab_data(plan, drive, hash_archives=True)
+    second_row = next(row for row in second["datasets"] if row["dataset_id"] == "cityscapes")[
+        "packages"
+    ][0]
+    assert second_row["hash_status"] == "cached"
+    assert second_row["sha256"] == first_row["sha256"]
 
 
 def test_inventory_accepts_hash_pinned_legacy_private_input(tmp_path: Path) -> None:

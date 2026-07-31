@@ -117,6 +117,7 @@ def _parser() -> argparse.ArgumentParser:
     summarize.add_argument("--evaluation-root", type=Path, required=True)
     summarize.add_argument("--export-root", type=Path, required=True)
     summarize.add_argument("--output-dir", type=Path, required=True)
+    summarize.add_argument("--expected-dataset", action="append", default=[])
     stress = commands.add_parser("stress", help="build a clearly labeled synthetic fallback")
     stress.add_argument("--cityscapes-root", type=Path, required=True)
     stress.add_argument("--output-root", type=Path, required=True)
@@ -228,7 +229,10 @@ def main() -> int:
         return 0
     if args.command == "summarize":
         result = build_evidence_report(
-            args.evaluation_root.resolve(), args.export_root.resolve(), args.output_dir.resolve()
+            args.evaluation_root.resolve(),
+            args.export_root.resolve(),
+            args.output_dir.resolve(),
+            expected_domains=args.expected_dataset or None,
         )
         print(canonical_json(result))
         return 0

@@ -34,6 +34,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--initialization", choices=("random", "pretrained"), default="random")
     parser.add_argument("--pretrained-manifest", type=Path)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--device-batch", type=int)
+    parser.add_argument("--workers", type=int)
+    parser.add_argument("--precision", choices=("auto", "fp32", "fp16", "bf16"), default="auto")
+    parser.add_argument("--recovery-root", type=Path)
+    parser.add_argument("--campaign-id")
+    parser.add_argument("--project-commit")
+    parser.add_argument("--learning-rate", type=float)
+    parser.add_argument("--weight-decay", type=float)
+    parser.add_argument("--scheduler", choices=("poly", "cosine"), default="poly")
+    parser.add_argument("--warmup-ratio", type=float, choices=(0.01, 0.03, 0.05), default=0.03)
     return parser
 
 
@@ -55,8 +65,16 @@ def main() -> int:
                 rare_classes_file=(
                     args.rare_classes_file.resolve() if args.rare_classes_file else None
                 ),
+                recovery_root=args.recovery_root.resolve() if args.recovery_root else None,
+                campaign_id=args.campaign_id,
+                project_commit=args.project_commit,
+                device_batch=args.device_batch,
+                workers=args.workers,
+                precision=args.precision,
             )
-            for model in select_hpo_models(args.candidate_table.resolve())
+            for model in select_hpo_models(
+                args.candidate_table.resolve(), protocol.datasets.training
+            )
         ]
         print(canonical_json({"schema_version": "2.0", "hpo_results": results}))
         return 0
@@ -82,6 +100,16 @@ def main() -> int:
         pretrained_manifest=(
             args.pretrained_manifest.resolve() if args.pretrained_manifest else None
         ),
+        device_batch=args.device_batch,
+        workers=args.workers,
+        precision=args.precision,
+        recovery_root=args.recovery_root.resolve() if args.recovery_root else None,
+        campaign_id=args.campaign_id,
+        project_commit=args.project_commit,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        scheduler=args.scheduler,
+        warmup_ratio=args.warmup_ratio,
     )
     print(canonical_json(result))
     return 0

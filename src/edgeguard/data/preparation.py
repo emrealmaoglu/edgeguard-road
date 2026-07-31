@@ -37,11 +37,13 @@ BDD_OFFICIAL_MD5 = {
     "bdd100k_images_10k.zip": "08f26aecceda982568063d3d5873378e",
     "bdd100k_sem_seg_labels_trainval.zip": "9a2968dde3345eeb689cffb1e26f9c78",
 }
+ACDC_ARCHIVES = {"rgb_anon_trainvaltest.zip", "gt_trainval.zip"}
 
 EXPECTED_COUNTS = {
     "cityscapes": {"train": 2_975, "val": 500},
     "bdd100k": {"train": 7_000, "val": 1_000},
     "idd20k": {"train": 14_000, "val": 2_000},
+    "acdc": {"val": 406},
 }
 
 # Exact source IDs from AutoNUE public-code commit
@@ -380,6 +382,61 @@ def _idd_relative(name: str) -> tuple[Path, str] | None:
     return None
 
 
+def _extract_acdc(archives: Sequence[Path], staging: Path) -> None:
+    """Extract only the sealed 406-image adverse-condition validation partition."""
+    targets: set[str] = set()
+    for archive_path in archives:
+        marker = "rgb_anon" if archive_path.name.startswith("rgb_anon") else "gt"
+        with ZipFile(archive_path) as archive:
+            members = _validated_zip_members(archive)
+            for name, info in sorted(members.items()):
+                if info.is_dir():
+                    continue
+                parts = PurePosixPath(name).parts
+                try:
+                    marker_index = parts.index(marker)
+                except ValueError:
+                    continue
+                relative = parts[marker_index:]
+                if (
+                    len(relative) < 5
+                    or relative[1] not in {"fog", "night", "rain", "snow"}
+                    or relative[2] != "val"
+                ):
+                    continue
+                filename = relative[-1]
+                selected = (
+                    filename.endswith("_rgb_anon.png")
+                    if marker == "rgb_anon"
+                    else filename.endswith("_gt_labelTrainIds.png")
+                )
+                if not selected:
+                    continue
+                target = Path(*relative)
+                key = target.as_posix()
+                if key in targets:
+                    raise ValueError(f"ACDC preparation target collision: {key}")
+                targets.add(key)
+                with archive.open(info) as source:
+                    _copy_stream(source, staging / target)
+
+
+def _acdc_counts(root: Path) -> dict[str, int]:
+    images = sorted((root / "rgb_anon").glob("*/val/**/*_rgb_anon.png"))
+    masks = sorted((root / "gt").glob("*/val/**/*_gt_labelTrainIds.png"))
+    image_ids = {
+        path.relative_to(root / "rgb_anon").as_posix().removesuffix("_rgb_anon.png")
+        for path in images
+    }
+    mask_ids = {
+        path.relative_to(root / "gt").as_posix().removesuffix("_gt_labelTrainIds.png")
+        for path in masks
+    }
+    if len(images) != len(image_ids) or len(masks) != len(mask_ids) or image_ids != mask_ids:
+        raise ValueError("ACDC validation image/mask identity sets do not match")
+    return {"val": len(images)}
+
+
 def _normalize_idd_label(name: str) -> str:
     if name in IDD_LABEL_IDS:
         return name
@@ -451,7 +508,199 @@ def _render_idd_mask_pair(polygon_path: Path, lut: tuple[int, ...]) -> None:
     mask.point(lut).save(canonical_target, compress_level=1)
 
 
-def _extract_idd(archives: Sequence[Path], staging: Path, ontology_path: Path) -> None:
+def _valid_shard_receipt(
+    path: Path, *, ontology_sha256: str, source_archive_sha256s: Sequence[str]
+) -> dict[str, Any] | None:
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        receipt_hash = receipt.pop("receipt_sha256", None)
+        valid = (
+            receipt_hash == sha256_payload(receipt)
+            and receipt.get("ontology_sha256") == ontology_sha256
+            and receipt.get("source_archive_sha256s") == sorted(source_archive_sha256s)
+            and isinstance(receipt.get("sha256"), str)
+            and isinstance(receipt.get("sample_ids"), list)
+        )
+        receipt["receipt_sha256"] = receipt_hash
+        return receipt if valid else None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _publish_idd_shards(
+    staging: Path,
+    polygons: Sequence[Path],
+    shard_root: Path,
+    *,
+    shard_size: int,
+    ontology_sha256: str,
+    source_archives: Sequence[dict[str, Any]],
+    lut: tuple[int, ...],
+) -> dict[str, Any]:
+    """Render and persist deterministic canonical-only shards as progress is made."""
+    if shard_size <= 0:
+        raise ValueError("IDD shard size must be positive")
+    images: dict[str, Path] = {}
+    for path in sorted((staging / "leftImg8bit").glob("**/*_leftImg8bit.*")):
+        sample_id = path.stem.removesuffix("_leftImg8bit")
+        if sample_id in images:
+            raise ValueError(f"IDD sample has multiple images: {sample_id}")
+        images[sample_id] = path
+    polygon_by_id: dict[str, Path] = {}
+    for path in sorted(polygons):
+        sample_id = path.name.removesuffix("_gtFine_polygons.json")
+        if sample_id in polygon_by_id or sample_id not in images:
+            raise ValueError(f"IDD shard pairing failed for sample: {sample_id}")
+        polygon_by_id[sample_id] = path
+    if set(images) != set(polygon_by_id):
+        missing = sorted(set(images) ^ set(polygon_by_id))[:20]
+        raise ValueError(f"IDD shard image/polygon sets differ: {missing}")
+    ordered_ids = sorted(images)
+    shard_root.mkdir(parents=True, exist_ok=True)
+    receipts: list[dict[str, Any]] = []
+    counts = {"train": 0, "val": 0}
+    source_archive_sha256s = sorted(str(row["sha256"]) for row in source_archives)
+    for shard_number, offset in enumerate(range(0, len(ordered_ids), shard_size)):
+        sample_ids = ordered_ids[offset : offset + shard_size]
+        shard_name = f"idd20k-{shard_number:04d}.tar"
+        shard = shard_root / shard_name
+        receipt_path = shard.with_suffix(".receipt.json")
+        existing = _valid_shard_receipt(
+            receipt_path,
+            ontology_sha256=ontology_sha256,
+            source_archive_sha256s=source_archive_sha256s,
+        )
+        if (
+            existing is not None
+            and existing.get("sample_ids") == sample_ids
+            and shard.is_file()
+            and shard.stat().st_size == int(existing.get("byte_size", -1))
+        ):
+            receipts.append(existing)
+            for split, value in existing["counts"].items():
+                counts[split] += int(value)
+            _emit_progress(
+                "idd_shard_reuse",
+                completed=len(receipts),
+                total=(len(ordered_ids) + shard_size - 1) // shard_size,
+                item=shard_name,
+            )
+            continue
+        shard.unlink(missing_ok=True)
+        receipt_path.unlink(missing_ok=True)
+        workers = min(4, max(1, os.cpu_count() or 1))
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="idd-shard-mask"
+        ) as executor:
+            futures = [
+                executor.submit(_render_idd_mask_pair, polygon_by_id[item], lut)
+                for item in sample_ids
+            ]
+            for future in futures:
+                future.result()
+        local_tar = staging / f".{shard_name}.incoming"
+        local_tar.unlink(missing_ok=True)
+        rows: list[Path] = []
+        shard_counts = {"train": 0, "val": 0}
+        with tarfile.open(local_tar, "w") as archive:
+            for sample_id in sample_ids:
+                image = images[sample_id]
+                polygon = polygon_by_id[sample_id]
+                canonical = polygon.with_name(
+                    polygon.name.replace("_gtFine_polygons.json", "_gtFine_labelTrainIds.png")
+                )
+                split = image.relative_to(staging / "leftImg8bit").parts[0]
+                if split not in shard_counts:
+                    raise ValueError(f"unexpected IDD split in shard: {split}")
+                shard_counts[split] += 1
+                for source in (image, canonical):
+                    info = archive.gettarinfo(
+                        str(source), arcname=source.relative_to(staging).as_posix()
+                    )
+                    info.mtime = 0
+                    info.uid = info.gid = 0
+                    info.uname = info.gname = ""
+                    with source.open("rb") as stream:
+                        archive.addfile(info, stream)
+                    rows.append(source)
+        digest = sha256_file(local_tar)
+        incoming = shard.with_name(f".{shard.name}.incoming")
+        incoming.unlink(missing_ok=True)
+        shutil.copy2(local_tar, incoming)
+        os.replace(incoming, shard)
+        source_bytes = sum(path.stat().st_size for path in rows)
+        receipt: dict[str, Any] = {
+            "schema_version": "2.0",
+            "record_type": "edgeguard_idd_canonical_shard",
+            "dataset_id": "idd20k",
+            "filename": shard.name,
+            "sample_ids": sample_ids,
+            "sample_count": len(sample_ids),
+            "file_count": len(rows),
+            "byte_size": shard.stat().st_size,
+            "source_bytes": source_bytes,
+            "sha256": digest,
+            "counts": shard_counts,
+            "ontology_sha256": ontology_sha256,
+            "source_archive_sha256s": source_archive_sha256s,
+            "prepared_payload": "images_and_cityscapes19_canonical_masks_only",
+        }
+        receipt["receipt_sha256"] = sha256_payload(receipt)
+        incoming_receipt = receipt_path.with_name(f".{receipt_path.name}.incoming")
+        incoming_receipt.write_text(canonical_json(receipt) + "\n", encoding="utf-8")
+        os.replace(incoming_receipt, receipt_path)
+        local_tar.unlink()
+        receipts.append(receipt)
+        for split, value in shard_counts.items():
+            counts[split] += value
+        _emit_progress(
+            "idd_shard_publish",
+            completed=len(receipts),
+            total=(len(ordered_ids) + shard_size - 1) // shard_size,
+            item=shard_name,
+        )
+    if counts != EXPECTED_COUNTS["idd20k"]:
+        raise ValueError(f"IDD shard counts must be {EXPECTED_COUNTS['idd20k']}, found {counts}")
+    index: dict[str, Any] = {
+        "schema_version": "2.0",
+        "record_type": "edgeguard_idd_shard_index",
+        "dataset_id": "idd20k",
+        "shard_size": shard_size,
+        "counts": counts,
+        "sample_count": len(ordered_ids),
+        "shards": [
+            {
+                "filename": row["filename"],
+                "receipt": Path(str(row["filename"])).with_suffix(".receipt.json").name,
+                "sha256": row["sha256"],
+                "byte_size": row["byte_size"],
+                "source_bytes": row["source_bytes"],
+                "file_count": row["file_count"],
+                "sample_count": row["sample_count"],
+            }
+            for row in receipts
+        ],
+        "ontology_sha256": ontology_sha256,
+        "source_archives": list(source_archives),
+        "scientific_eligible": True,
+    }
+    index["receipt_sha256"] = sha256_payload(index)
+    index_path = shard_root / "idd20k.shards.json"
+    incoming_index = index_path.with_name(f".{index_path.name}.incoming")
+    incoming_index.write_text(canonical_json(index) + "\n", encoding="utf-8")
+    os.replace(incoming_index, index_path)
+    return index
+
+
+def _extract_idd(
+    archives: Sequence[Path],
+    staging: Path,
+    ontology_path: Path,
+    *,
+    shard_root: Path | None = None,
+    shard_size: int = 500,
+    source_archives: Sequence[dict[str, Any]] = (),
+) -> dict[str, Any] | None:
     from edgeguard.rescue.multidomain import load_semantic_ontology
 
     ontology = load_semantic_ontology(ontology_path)
@@ -497,6 +746,16 @@ def _extract_idd(archives: Sequence[Path], staging: Path, ontology_path: Path) -
                     )
         _emit_progress("idd_extract", completed=extracted, total=None, item=archive_path.name)
 
+    if shard_root is not None:
+        return _publish_idd_shards(
+            staging,
+            polygons,
+            shard_root,
+            shard_size=shard_size,
+            ontology_sha256=sha256_file(ontology_path),
+            source_archives=source_archives,
+            lut=lut,
+        )
     total_polygons = len(polygons)
     workers = min(4, max(1, os.cpu_count() or 1))
     _emit_progress("idd_mask_render", completed=0, total=total_polygons)
@@ -517,6 +776,7 @@ def _extract_idd(archives: Sequence[Path], staging: Path, ontology_path: Path) -
                     pending.add(executor.submit(_render_idd_mask_pair, next_polygon, lut))
                 if completed == total_polygons or completed % 100 == 0:
                     _emit_progress("idd_mask_render", completed=completed, total=total_polygons)
+    return None
 
 
 def prepare_dataset(
@@ -529,6 +789,8 @@ def prepare_dataset(
     verify_only: bool = False,
     verify_archive_hashes: bool = True,
     ontology_path: Path | None = None,
+    idd_shard_root: Path | None = None,
+    idd_shard_size: int = 500,
 ) -> dict[str, Any]:
     """Prepare or verify one approved semantic dataset without rewriting native labels."""
     if dataset_id not in EXPECTED_COUNTS:
@@ -554,6 +816,9 @@ def prepare_dataset(
         _require_archive_set(rows, CITYSCAPES_ARCHIVES, verify_hashes=verify_archive_hashes)
     elif dataset_id == "idd20k":
         _require_archive_set(rows, IDD_ARCHIVES, verify_hashes=verify_archive_hashes)
+    elif dataset_id == "acdc":
+        if {path.name for path in archive_paths} != ACDC_ARCHIVES:
+            raise ValueError(f"ACDC archives must be exactly {sorted(ACDC_ARCHIVES)}")
     elif source_profile == "official":
         if {path.name for path in archive_paths} != set(BDD_OFFICIAL_MD5):
             raise ValueError(f"official BDD archives must be exactly {sorted(BDD_OFFICIAL_MD5)}")
@@ -583,7 +848,11 @@ def prepare_dataset(
         unhashed = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
         if expected_hash != sha256_payload(unhashed):
             raise ValueError("prepared dataset receipt hash mismatch")
-        counts = _image_mask_counts(destination, dataset_id)
+        counts = (
+            _acdc_counts(destination)
+            if dataset_id == "acdc"
+            else _image_mask_counts(destination, dataset_id)
+        )
         if counts != receipt.get("counts"):
             raise ValueError("prepared dataset file counts changed")
         return receipt
@@ -598,11 +867,27 @@ def prepare_dataset(
         elif dataset_id == "bdd100k":
             _extract_bdd(archive_paths, staging, source_profile)
             mapping_version = "bdd100k-cityscapes19-v1"
+        elif dataset_id == "acdc":
+            _extract_acdc(archive_paths, staging)
+            mapping_version = "acdc-native-cityscapes19-val-v1"
         else:
             assert resolved_ontology is not None
-            _extract_idd(archive_paths, staging, resolved_ontology)
+            shard_index = _extract_idd(
+                archive_paths,
+                staging,
+                resolved_ontology,
+                shard_root=idd_shard_root.resolve() if idd_shard_root else None,
+                shard_size=idd_shard_size,
+                source_archives=rows,
+            )
             mapping_version = "autonue-polygon-source-id-and-cityscapes19-v2"
-        counts = _image_mask_counts(staging, dataset_id)
+        counts = (
+            dict(shard_index["counts"])
+            if dataset_id == "idd20k" and shard_index is not None
+            else _acdc_counts(staging)
+            if dataset_id == "acdc"
+            else _image_mask_counts(staging, dataset_id)
+        )
         counts_valid = _validate_counts(dataset_id, counts, allow_fixture_count=allow_fixture_count)
         receipt = _write_receipt(
             staging,
@@ -615,6 +900,8 @@ def prepare_dataset(
             ontology_sha256=(sha256_file(resolved_ontology) if resolved_ontology else None),
         )
         os.replace(staging, destination)
+        if dataset_id == "idd20k" and idd_shard_root is not None:
+            receipt["shard_index"] = str(idd_shard_root.resolve() / "idd20k.shards.json")
         return receipt
     except BaseException:
         if staging.exists():

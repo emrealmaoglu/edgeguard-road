@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+import edgeguard.rescue.multidomain as multidomain_module
 from edgeguard.rescue.config import load_rescue_config
 from edgeguard.rescue.external import _encode_submission_mask, record_external_server_result
 from edgeguard.rescue.hpo_runtime import hpo_search_space, select_hpo_models
@@ -95,6 +96,52 @@ def _write_idd_fixture(root: Path) -> None:
         pixels[:, :, (index + 1) % 3] += np.arange(19, dtype=np.uint8)
         Image.fromarray(pixels, mode="RGB").save(image_root / f"{identifier}_leftImg8bit.png")
         Image.fromarray(mask, mode="L").save(mask_root / f"{identifier}_gtFine_labelids.png")
+
+
+def test_canonical_idd_audit_resumes_from_verified_250_sample_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "idd"
+    image_root = root / "leftImg8bit/train/city"
+    mask_root = root / "gtFine/train/city"
+    image_root.mkdir(parents=True)
+    mask_root.mkdir(parents=True)
+    pixels = np.arange(4 * 19 * 3, dtype=np.uint8).reshape(4, 19, 3)
+    mask = np.tile(np.arange(19, dtype=np.uint8), (4, 1))
+    for index in range(250):
+        identifier = f"city_{index:06d}_000019"
+        image = np.roll(pixels, index % 19, axis=1).copy()
+        image.reshape(-1)[0] = index % 256
+        image.reshape(-1)[1] = index // 256
+        Image.fromarray(image, mode="RGB").save(image_root / f"{identifier}_leftImg8bit.png")
+        Image.fromarray(mask, mode="L").save(mask_root / f"{identifier}_gtFine_labelTrainIds.png")
+    checkpoint_root = tmp_path / "drive/audit-catalog"
+    first = audit_training_dataset(
+        root,
+        tmp_path / "audit-first",
+        dataset_id="idd20k",
+        ontology_path=ONTOLOGY,
+        seed=3,
+        strict_count=False,
+        checkpoint_root=checkpoint_root,
+    )
+    assert first["audit_passed"] is True
+    assert len(list(checkpoint_root.rglob("chunk-*.json"))) == 1
+
+    def unexpected_open(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("verified audit catalog rows must not reopen image or mask files")
+
+    monkeypatch.setattr(multidomain_module.Image, "open", unexpected_open)
+    second = audit_training_dataset(
+        root,
+        tmp_path / "audit-after-reset",
+        dataset_id="idd20k",
+        ontology_path=ONTOLOGY,
+        seed=3,
+        strict_count=False,
+        checkpoint_root=checkpoint_root,
+    )
+    assert second["class_pixel_counts"] == first["class_pixel_counts"]
 
 
 def test_training_audits_freeze_and_pool_statistics(tmp_path: Path) -> None:
@@ -260,7 +307,6 @@ def test_hpo_contract_and_candidate_selection(tmp_path: Path) -> None:
                         "domain_macro_mIoU": score,
                         "source_domain_mIoU": {
                             "cityscapes": score,
-                            "bdd100k": score,
                             "idd20k": score,
                         },
                         "screening_valid": True,
@@ -394,7 +440,7 @@ def test_global_calibration_uses_equal_hash_bound_source_evidence(tmp_path: Path
     logits = np.zeros((1, 19, 1, 30), dtype=np.float32)
     targets = np.arange(30, dtype=np.int64).reshape(1, 1, 30) % 19
     evidence = []
-    for index, dataset in enumerate(("cityscapes", "bdd100k", "idd20k")):
+    for index, dataset in enumerate(("cityscapes", "idd20k")):
         path = tmp_path / f"{dataset}.npz"
         save_calibration_evidence(
             path,
@@ -407,8 +453,4 @@ def test_global_calibration_uses_equal_hash_bound_source_evidence(tmp_path: Path
         evidence.append(path)
     result = fit_global_temperature_from_evidence(evidence, tmp_path / "temperature.json", seed=7)
     assert result["equal_pixels_per_domain"] == 30
-    assert set(result["dataset_manifest_sha256s"]) == {
-        "cityscapes",
-        "bdd100k",
-        "idd20k",
-    }
+    assert set(result["dataset_manifest_sha256s"]) == {"cityscapes", "idd20k"}

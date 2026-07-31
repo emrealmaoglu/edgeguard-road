@@ -419,8 +419,8 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     preflight_source = "\n".join("".join(cell.get("source", [])) for cell in preflight["cells"])
     assert "scripts/prepare_colab_data.py" in preflight_source
     assert "scripts/prepare_dataset.py" in preflight_source
-    assert "VERIFY_ARCHIVE_HASHES = True" in preflight_source
-    assert "RUN_ARCHIVE_PREPARATION = False" in preflight_source
+    assert "DEEP_VERIFY_ARCHIVES = False" in preflight_source
+    assert "RUN_ARCHIVE_PREPARATION = not LOCAL_TEST_MODE" in preflight_source
     assert "CREATE_BUNDLES = True" in preflight_source
     assert 'BDD_SOURCE_PROFILE = "kaggle_mirror"' in preflight_source
     assert 'SCIENTIFIC_SOURCE_DATASETS = ["cityscapes", "idd20k"]' in preflight_source
@@ -428,8 +428,8 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "run_logged_command" in preflight_source
     assert "cwd=PROJECT_ROOT" in preflight_source
     assert "persist_bootstrap_failure" in preflight_source
-    assert "live_preparation_progress" in preflight_source
-    assert "EDGEGUARD PROGRESS dataset=" in preflight_source
+    assert '"--idd-shard-size", "500"' in preflight_source
+    assert "idd20k.shards.json" in preflight_source
     assert "reuse_or_copy_archive" in preflight_source
     assert "Yerel cache SHA-256 doğrulanıyor" in preflight_source
     assert "shutil.rmtree(CACHE_ROOT)" not in preflight_source
@@ -448,8 +448,12 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "scripts/jetson/benchmark.py" in source
     assert "--local-root" in source
     assert "sync_work_snapshot" in source
-    assert "RUN_TRAINING = False" in source
-    assert 'CAMPAIGN_ID = "semantic-first-cs-idd-v1"' in source
+    assert 'CAMPAIGN_TARGET = "audit"' in source
+    assert 'CAMPAIGN_ID = "semantic-cs-idd-v1"' in source
+    assert "completion_is_valid" in source
+    assert "package-interruption" in source
+    assert "audit-catalog" in source
+    assert "resumable-final-training-and-export" in source
     assert "bdd100k.frozen.json" not in source
     assert "runtime-compatibility-cascade" in source
     assert "failure-report.zip" in source

@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import random
+import shutil
+import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
+from edgeguard.rescue.colab_recovery import (
+    latest_checkpoint,
+    publish_recovery_file,
+    write_campaign_status,
+)
 from edgeguard.rescue.multidomain import uniform_domain_indices, validate_dataset_manifest
 
 _REGISTERED = False
@@ -119,6 +129,7 @@ def register_mmseg_components() -> None:
                 ) * self.world_size
             self.global_size = global_size
             self.num_samples = global_size // self.world_size
+            self.resume_offset = 0
 
         def __iter__(self) -> Any:
             indices = uniform_domain_indices(
@@ -127,12 +138,191 @@ def register_mmseg_components() -> None:
                 seed=self.seed,
                 epoch=self.epoch,
             )
-            return iter(indices[self.rank : self.global_size : self.world_size])
+            local = indices[self.rank : self.global_size : self.world_size]
+            offset = self.resume_offset
+            self.resume_offset = 0
+            return iter(local[offset:])
 
         def __len__(self) -> int:
             return self.num_samples
 
         def set_epoch(self, epoch: int) -> None:
             self.epoch = epoch
+
+        def set_resume_position(self, dataloader_iteration: int, batch_size: int) -> None:
+            """Reconstruct sampler epoch/offset from the optimizer checkpoint iteration."""
+            if dataloader_iteration < 0 or batch_size <= 0:
+                raise ValueError("sampler resume position is invalid")
+            consumed = dataloader_iteration * batch_size
+            self.epoch = consumed // self.num_samples
+            self.resume_offset = consumed % self.num_samples
+
+    mmengine_hooks = __import__("mmengine.hooks", fromlist=["Hook"])
+    hooks_registry = __import__("mmengine.registry", fromlist=["HOOKS"])
+    hook_base: Any = mmengine_hooks.Hook
+
+    @hooks_registry.HOOKS.register_module(force=True)
+    class EdgeGuardRecoveryHook(hook_base):
+        """Persist a resumable checkpoint without trusting the Colab VM lifetime."""
+
+        priority = "LOWEST"
+
+        def __init__(
+            self,
+            *,
+            store_root: str,
+            artifact_id: str,
+            campaign_id: str,
+            project_commit: str,
+            identity_sha256: str,
+            accumulation: int,
+            status_path: str | None = None,
+            optimizer_interval: int = 500,
+            maximum_seconds: int = 600,
+            status_seconds: int = 300,
+        ) -> None:
+            self.store_root = Path(store_root)
+            self.artifact_id = artifact_id
+            self.campaign_id = campaign_id
+            self.project_commit = project_commit
+            self.identity_sha256 = identity_sha256
+            self.accumulation = accumulation
+            self.status_path = Path(status_path) if status_path else None
+            self.iteration_interval = optimizer_interval * accumulation
+            self.maximum_seconds = maximum_seconds
+            self.status_seconds = status_seconds
+            self.started = time.monotonic()
+            self.last_publish = time.monotonic()
+            self.last_status = 0.0
+
+        def before_train(self, runner: Any) -> None:
+            sampler: Any = getattr(runner.train_dataloader, "sampler", None)
+            if int(runner.iter) > 0 and hasattr(sampler, "set_resume_position"):
+                sampler.set_resume_position(
+                    int(runner.iter), int(runner.train_dataloader.batch_size)
+                )
+
+        def before_save_checkpoint(self, runner: Any, checkpoint: dict[str, Any]) -> None:
+            torch = __import__("torch")
+            checkpoint["edgeguard_recovery_state"] = {
+                "python_random": random.getstate(),
+                "numpy_random": np.random.get_state(),
+                "torch_random": torch.get_rng_state(),
+                "cuda_random": (
+                    torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+                ),
+                "dataloader_iteration": int(runner.iter + 1),
+                "accumulation": self.accumulation,
+            }
+
+        def after_load_checkpoint(self, runner: Any, checkpoint: dict[str, Any]) -> None:
+            del runner
+            state = checkpoint.get("edgeguard_recovery_state")
+            if not isinstance(state, dict):
+                return
+            torch = __import__("torch")
+            random.setstate(state["python_random"])
+            np.random.set_state(state["numpy_random"])
+            torch.set_rng_state(state["torch_random"])
+            if torch.cuda.is_available() and state.get("cuda_random") is not None:
+                torch.cuda.set_rng_state_all(state["cuda_random"])
+
+        def after_train_iter(
+            self,
+            runner: Any,
+            batch_idx: int,
+            data_batch: Any = None,
+            outputs: Any = None,
+        ) -> None:
+            del batch_idx, data_batch, outputs
+            iteration = int(runner.iter + 1)
+            now = time.monotonic()
+            if self.status_path is not None and (
+                now - self.last_status >= self.status_seconds or iteration >= int(runner.max_iters)
+            ):
+                torch = __import__("torch")
+                elapsed = max(now - self.started, 1.0e-9)
+                rate = iteration / elapsed
+                remaining = max(0, int(runner.max_iters) - iteration)
+                usage = shutil.disk_usage(runner.work_dir)
+                write_campaign_status(
+                    self.status_path,
+                    state="running",
+                    artifact_id=self.artifact_id,
+                    dataloader_iteration=iteration,
+                    optimizer_step=iteration // self.accumulation,
+                    optimizer_step_target=int(runner.max_iters) // self.accumulation,
+                    iterations_per_second=rate,
+                    eta_seconds=remaining / rate if rate else None,
+                    disk_free_bytes=usage.free,
+                    gpu_memory_allocated_bytes=(
+                        int(torch.cuda.memory_allocated()) if torch.cuda.is_available() else None
+                    ),
+                    gpu_memory_peak_bytes=(
+                        int(torch.cuda.max_memory_allocated())
+                        if torch.cuda.is_available()
+                        else None
+                    ),
+                    last_heartbeat_monotonic_seconds=now,
+                )
+                self.last_status = now
+            due_interval = iteration % self.iteration_interval == 0
+            due_time = (
+                now - self.last_publish >= self.maximum_seconds
+                and iteration % self.accumulation == 0
+            )
+            due_final = iteration >= int(runner.max_iters)
+            if not (due_interval or due_time or due_final):
+                return
+            marker = Path(runner.work_dir) / "last_checkpoint"
+            current: Path | None = None
+            if marker.is_file():
+                try:
+                    current = latest_checkpoint(Path(runner.work_dir))
+                except FileNotFoundError:
+                    current = None
+            if current is None or not current.name.endswith(f"_{iteration}.pth"):
+                filename = f"recovery_{iteration}.pth"
+                runner.save_checkpoint(
+                    runner.work_dir,
+                    filename=filename,
+                    save_optimizer=True,
+                    save_param_scheduler=True,
+                    meta={"iter": iteration, "epoch": int(runner.epoch)},
+                )
+                marker.write_text(filename + "\n", encoding="utf-8")
+                current = Path(runner.work_dir) / filename
+            receipt = publish_recovery_file(
+                current,
+                self.store_root,
+                artifact_id=self.artifact_id,
+                campaign_id=self.campaign_id,
+                project_commit=self.project_commit,
+                metadata={
+                    "identity_sha256": self.identity_sha256,
+                    "dataloader_iteration": iteration,
+                    "optimizer_step": iteration // self.accumulation,
+                    "accumulation": self.accumulation,
+                },
+            )
+            self.last_publish = time.monotonic()
+            if self.status_path is not None:
+                write_campaign_status(
+                    self.status_path,
+                    state="running" if not due_final else "training_complete_pending_receipt",
+                    artifact_id=self.artifact_id,
+                    dataloader_iteration=iteration,
+                    optimizer_step=iteration // self.accumulation,
+                    last_checkpoint=current.name,
+                    last_checkpoint_sha256=receipt["sha256"],
+                    recovery_generation=receipt["generation"],
+                )
+            recovery_files = sorted(
+                Path(runner.work_dir).glob("recovery_*.pth"),
+                key=lambda path: path.stat().st_mtime_ns,
+                reverse=True,
+            )
+            for stale in recovery_files[2:]:
+                stale.unlink(missing_ok=True)
 
     _REGISTERED = True
