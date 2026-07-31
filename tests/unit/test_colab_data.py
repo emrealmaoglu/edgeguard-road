@@ -251,6 +251,7 @@ def test_archive_copy_retries_and_publishes_only_complete_destination(
     monkeypatch.setattr("edgeguard.rescue.colab_data.shutil.copyfileobj", flaky_copy)
     receipt = copy_archive_to_local(source, destination, attempts=3)
     assert receipt["attempts"] == 2
+    assert receipt["sha256"] == sha256_file(source)
     assert destination.read_bytes() == source.read_bytes()
     assert not (destination.parent / ".archive.zip.partial").exists()
 

@@ -167,6 +167,11 @@ PROJECT_COMMIT = subprocess.run(
     capture_output=True,
     text=True,
 ).stdout.strip()
+# A Colab kernel can survive a notebook Git update. Purge modules loaded from the
+# previous checkout so imports below always match PROJECT_COMMIT.
+for loaded_module in list(sys.modules):
+    if loaded_module == "edgeguard" or loaded_module.startswith("edgeguard."):
+        del sys.modules[loaded_module]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from edgeguard.rescue.colab_failures import (  # noqa: E402
     ColabFailureReporter,
@@ -347,11 +352,20 @@ def reuse_or_copy_archive(source, local, source_record):
     receipt_path.unlink(missing_ok=True)
     print("Drive arşivi /content alanına kopyalanıyor:", source.name)
     copy_receipt = copy_archive_to_local(source, local, attempts=3)
+    copied_sha256 = copy_receipt.get("sha256") or copy_receipt.get("copied_sha256")
+    if copied_sha256 is None:
+        # Defensive compatibility for a helper retained in a long-lived Colab kernel.
+        # The completed /content copy is reused; the 11+ GiB Drive transfer is not repeated.
+        print("Kopya receipt alanı eski; yerel arşiv SHA-256 doğrulanıyor:", local.name)
+        copied_sha256 = sha256_file(local)
+    if expected_sha256 is not None and copied_sha256 != expected_sha256:
+        local.unlink(missing_ok=True)
+        raise RuntimeError(f"Copied archive SHA-256 mismatch: {source.name}")
     cache_receipt = {
         "source": str(source.resolve()),
         "byte_size": source.stat().st_size,
         "expected_sha256": expected_sha256,
-        "copied_sha256": copy_receipt["sha256"],
+        "copied_sha256": copied_sha256,
     }
     receipt_path.write_text(canonical_json(cache_receipt) + "\\n", encoding="utf-8")
     return {**copy_receipt, "status": "copied"}
@@ -1668,6 +1682,10 @@ if EXPECTED_PROJECT_COMMIT and PROJECT_COMMIT != EXPECTED_PROJECT_COMMIT:
         "LOCAL_TEST_MODE: sabit Colab commit checkout edilmedi; "
         f"yerel HEAD={PROJECT_COMMIT[:12]}, beklenen={EXPECTED_PROJECT_COMMIT[:12]}."
     )
+# Never retain imports from a prior checkout in a reused Colab kernel.
+for loaded_module in list(sys.modules):
+    if loaded_module == "edgeguard" or loaded_module.startswith("edgeguard."):
+        del sys.modules[loaded_module]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from edgeguard.rescue.colab_failures import (  # noqa: E402
     ColabFailureReporter,

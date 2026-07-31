@@ -432,6 +432,8 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "idd20k.shards.json" in preflight_source
     assert "reuse_or_copy_archive" in preflight_source
     assert "Yerel cache SHA-256 doğrulanıyor" in preflight_source
+    assert 'copy_receipt.get("sha256") or copy_receipt.get("copied_sha256")' in preflight_source
+    assert 'loaded_module.startswith("edgeguard.")' in preflight_source
     assert "shutil.rmtree(CACHE_ROOT)" not in preflight_source
     assert (
         'EXPECTED_PROJECT_COMMIT = "3689880bc074befd326bc2831974f08f899ee42d"' in preflight_source
