@@ -42,7 +42,7 @@ ACDC_ARCHIVES = {"rgb_anon_trainvaltest.zip", "gt_trainval.zip"}
 EXPECTED_COUNTS = {
     "cityscapes": {"train": 2_975, "val": 500},
     "bdd100k": {"train": 7_000, "val": 1_000},
-    "idd20k": {"train": 14_000, "val": 2_000},
+    "idd20k": {"train": 14_027, "val": 2_036},
     "acdc": {"val": 406},
 }
 
@@ -527,6 +527,23 @@ def _valid_shard_receipt(
         return None
 
 
+def _idd_sample_key(path: Path, root: Path, suffix: str) -> str:
+    """Return the split/sequence/sample identity used by the official IDD layout."""
+    try:
+        relative = path.relative_to(root)
+    except ValueError as error:
+        raise ValueError(f"IDD sample is outside its canonical root: {path}") from error
+    if len(relative.parts) != 3 or relative.parts[0] not in {"train", "val"}:
+        raise ValueError(f"IDD sample path is malformed: {relative.as_posix()}")
+    filename = relative.name
+    if not filename.endswith(suffix):
+        raise ValueError(f"IDD sample suffix is malformed: {relative.as_posix()}")
+    basename = filename[: -len(suffix)]
+    if not basename:
+        raise ValueError(f"IDD sample basename is empty: {relative.as_posix()}")
+    return PurePosixPath(*relative.parts[:-1], basename).as_posix()
+
+
 def _publish_idd_shards(
     staging: Path,
     polygons: Sequence[Path],
@@ -542,13 +559,23 @@ def _publish_idd_shards(
         raise ValueError("IDD shard size must be positive")
     images: dict[str, Path] = {}
     for path in sorted((staging / "leftImg8bit").glob("**/*_leftImg8bit.*")):
-        sample_id = path.stem.removesuffix("_leftImg8bit")
+        image_suffix = next(
+            (
+                suffix
+                for suffix in ("_leftImg8bit.png", "_leftImg8bit.jpg", "_leftImg8bit.jpeg")
+                if path.name.lower().endswith(suffix.lower())
+            ),
+            None,
+        )
+        if image_suffix is None:
+            raise ValueError(f"IDD image suffix is unsupported: {path.name}")
+        sample_id = _idd_sample_key(path, staging / "leftImg8bit", image_suffix)
         if sample_id in images:
             raise ValueError(f"IDD sample has multiple images: {sample_id}")
         images[sample_id] = path
     polygon_by_id: dict[str, Path] = {}
     for path in sorted(polygons):
-        sample_id = path.name.removesuffix("_gtFine_polygons.json")
+        sample_id = _idd_sample_key(path, staging / "gtFine", "_gtFine_polygons.json")
         if sample_id in polygon_by_id or sample_id not in images:
             raise ValueError(f"IDD shard pairing failed for sample: {sample_id}")
         polygon_by_id[sample_id] = path

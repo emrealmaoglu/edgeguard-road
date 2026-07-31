@@ -144,6 +144,24 @@ def test_canonical_idd_audit_resumes_from_verified_250_sample_catalog(
     assert second["class_pixel_counts"] == first["class_pixel_counts"]
 
 
+def test_idd_audit_keeps_repeated_short_ids_separate_by_sequence(tmp_path: Path) -> None:
+    root = tmp_path / "idd"
+    mask = np.tile(np.arange(19, dtype=np.uint8), (4, 1))
+    for index, sequence in enumerate(("sequence-a", "sequence-b")):
+        image_root = root / "leftImg8bit/train" / sequence
+        mask_root = root / "gtFine/train" / sequence
+        image_root.mkdir(parents=True)
+        mask_root.mkdir(parents=True)
+        pixels = np.full((4, 19, 3), 40 + index * 80, dtype=np.uint8)
+        Image.fromarray(pixels, mode="RGB").save(image_root / "674060_leftImg8bit.png")
+        Image.fromarray(mask, mode="L").save(mask_root / "674060_gtFine_labelTrainIds.png")
+    sample_ids = {row.sample_id for row in multidomain_module._idd_samples(root, "train")}
+    assert sample_ids == {
+        "train/sequence-a/674060",
+        "train/sequence-b/674060",
+    }
+
+
 def test_training_audits_freeze_and_pool_statistics(tmp_path: Path) -> None:
     bdd = tmp_path / "bdd"
     idd = tmp_path / "idd"

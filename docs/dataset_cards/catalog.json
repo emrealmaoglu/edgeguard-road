@@ -43,7 +43,7 @@
       "official_source": "https://idd.insaan.iiit.ac.in/",
       "access": {"mode": "account_manual", "sealed": false, "verified_local": false},
       "license": {"id": "IDD research access terms", "redistribution": "prohibited unless terms permit", "human_acceptance_required": true},
-      "statistics": {"annotated_images": 20000, "splits": {"train": 14000, "validation": 2000, "test": 4000}, "geography": "Indian cities and outskirts", "sequence_count": 350},
+      "statistics": {"annotated_images": 20101, "splits": {"train": 14027, "validation": 2036, "test": 4038}, "geography": "Indian cities and outskirts", "sequence_count": 350},
       "label_contract": {"native_summary": "hierarchical ontology; 26 level-3 evaluation classes", "encoding": "source labelIds", "canonical_coverage": "18/19 exact classes in current LUT"},
       "merge_contract": {"status": "partial_exact_mapping", "mapping": "autonue-source-id-to-cityscapes19-v1", "lossy": true, "ignored_examples": ["autorickshaw", "animal", "vehicle fallback", "drivable fallback", "billboard", "bridge", "tunnel"]},
       "allowed_stages": ["controlled_train_ablation", "train_select", "train_calibration", "frozen_official_validation"],

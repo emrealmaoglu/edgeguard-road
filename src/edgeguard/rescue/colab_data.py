@@ -741,7 +741,7 @@ def _load_idd_shard_index(project: Path) -> tuple[Path, dict[str, Any]] | None:
         receipt_hash != sha256_payload(index)
         or index.get("record_type") != "edgeguard_idd_shard_index"
         or index.get("dataset_id") != "idd20k"
-        or index.get("counts") != {"train": 14_000, "val": 2_000}
+        or index.get("counts") != {"train": 14_027, "val": 2_036}
         or int(index.get("sample_count", -1)) != 16_000
         or sum(int(row.get("sample_count", -1)) for row in index.get("shards", [])) != 16_000
         or index.get("scientific_eligible") is not True

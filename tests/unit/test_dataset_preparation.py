@@ -82,7 +82,9 @@ def _add_tar_file(archive: tarfile.TarFile, name: str, contents: bytes) -> None:
     archive.addfile(info, io.BytesIO(contents))
 
 
-def _write_idd_archives(root: Path) -> tuple[Path, Path]:
+def _write_idd_archives(
+    root: Path, *, repeated_short_identifier: bool = False
+) -> tuple[Path, Path]:
     paths = (root / "idd-20k-I.tar.gz", root / "idd-20k-II.tar.gz")
     rgb = np.zeros((4, 8, 3), dtype=np.uint8)
     annotation = json.dumps(
@@ -102,7 +104,7 @@ def _write_idd_archives(root: Path) -> tuple[Path, Path]:
         )
     ):
         root_name = "IDD_Segmentation" if index == 0 else "idd20kII"
-        identifier = f"{index + 1:06d}"
+        identifier = "674060" if repeated_short_identifier else f"{index + 1:06d}"
         with tarfile.open(archive_path, "w:gz") as archive:
             _add_tar_file(
                 archive,
@@ -279,6 +281,28 @@ def test_idd_shards_are_atomic_and_reused_after_local_runtime_loss(
     )
     assert Path(second["shard_index"]).is_file()
     assert shard_mtimes == {path.name: path.stat().st_mtime_ns for path in shard_root.glob("*.tar")}
+
+
+def test_idd_shards_use_split_sequence_and_filename_as_sample_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archives = _write_idd_archives(tmp_path, repeated_short_identifier=True)
+    shard_root = tmp_path / "drive/prepared/v2/idd20k/shards"
+    monkeypatch.setitem(preparation.EXPECTED_COUNTS, "idd20k", {"train": 1, "val": 1})
+    result = prepare_dataset(
+        "idd20k",
+        archives,
+        tmp_path / "content",
+        verify_archive_hashes=False,
+        idd_shard_root=shard_root,
+        idd_shard_size=500,
+    )
+    index = json.loads(Path(result["shard_index"]).read_text(encoding="utf-8"))
+    receipt = json.loads((shard_root / index["shards"][0]["receipt"]).read_text())
+    assert receipt["sample_ids"] == [
+        "train/sequence-0/674060",
+        "val/sequence-1/674060",
+    ]
 
 
 def test_idd_streaming_preparation_rejects_unsafe_member_and_cleans_staging(

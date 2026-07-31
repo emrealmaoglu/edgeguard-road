@@ -6,7 +6,7 @@
 | --- | --- | ---: | --- | --- | --- |
 | Cityscapes Fine | `core_source_domain` | 5,000 | 34 semantic labels; 19 train/evaluation classes | `direct_canonical` | `registered_manual` |
 | BDD100K semantic segmentation | `core_source_domain` | 10,000 | Cityscapes-compatible 19-class semantic masks | `direct_canonical` | `account_manual` |
-| IDD20K | `controlled_lossy_source_ablation` | 20,000 | hierarchical ontology; 26 level-3 evaluation classes | `partial_exact_mapping` | `account_manual` |
+| IDD20K | `controlled_lossy_source_ablation` | 20,101 | hierarchical ontology; 26 level-3 evaluation classes | `partial_exact_mapping` | `account_manual` |
 | ACDC | `public_adverse_domain_shift` | 4,006 | 19 Cityscapes semantic classes plus invalid masks | `evaluation_only_direct` | `registered_manual` |
 | WildDash 2 | `primary_sealed_external_test` | 5,032 | Cityscapes labels plus six WildDash-specific classes and negative/void policy | `sealed_server_only` | `public_server_submission` |
 | MUSES | `secondary_sealed_external_test` | 2,500 | 19 Cityscapes evaluation classes with panoptic and difficulty annotations | `sealed_evaluation_only` | `public_direct` |

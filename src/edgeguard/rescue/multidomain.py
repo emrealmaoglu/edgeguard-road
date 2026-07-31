@@ -22,8 +22,8 @@ EVALUATION_DATASETS = ("acdc", "wilddash2", "muses", "kitti")
 SUPPORTED_DATASETS = TRAINING_DATASETS + EVALUATION_DATASETS
 SEALED_DATASETS = ("wilddash2", "muses", "kitti")
 ROLE_RATIOS = {"train_fit": 0.80, "train_select": 0.15, "train_calibration": 0.05}
-EXPECTED_TRAIN_COUNTS = {"cityscapes": 2_975, "bdd100k": 7_000, "idd20k": 14_000}
-EXPECTED_VAL_COUNTS = {"bdd100k": 1_000, "idd20k": 2_000}
+EXPECTED_TRAIN_COUNTS = {"cityscapes": 2_975, "bdd100k": 7_000, "idd20k": 14_027}
+EXPECTED_VAL_COUNTS = {"bdd100k": 1_000, "idd20k": 2_036}
 
 
 @dataclass(frozen=True)
@@ -130,14 +130,24 @@ def _idd_samples(root: Path, split: str) -> list[DomainSample]:
         raise FileNotFoundError("IDD20K requires leftImg8bit and gtFine split directories")
     masks: dict[str, Path] = {}
     canonical_masks: dict[str, Path] = {}
+
+    def identity(path: Path, base_root: Path, suffix: str) -> str:
+        relative = path.relative_to(base_root)
+        if len(relative.parts) != 2:
+            raise ValueError(f"IDD sample path is malformed: {relative.as_posix()}")
+        basename = relative.name.removesuffix(suffix)
+        if not basename or basename == relative.name:
+            raise ValueError(f"IDD sample suffix is malformed: {relative.as_posix()}")
+        return f"{split}/{relative.parent.as_posix()}/{basename}"
+
     for suffix in ("_gtFine_labelids.png", "_gtFine_labelIds.png"):
         for path in mask_root.glob(f"**/*{suffix}"):
-            identifier = path.name.removesuffix(suffix)
+            identifier = identity(path, mask_root, suffix)
             if identifier in masks:
                 raise ValueError(f"IDD sample has multiple raw source-ID masks: {identifier}")
             masks[identifier] = path
     for path in mask_root.glob("**/*_gtFine_labelTrainIds.png"):
-        identifier = path.name.removesuffix("_gtFine_labelTrainIds.png")
+        identifier = identity(path, mask_root, "_gtFine_labelTrainIds.png")
         if identifier in canonical_masks:
             raise ValueError(f"IDD sample has multiple canonical masks: {identifier}")
         canonical_masks[identifier] = path
@@ -150,7 +160,12 @@ def _idd_samples(root: Path, split: str) -> list[DomainSample]:
         )
     )
     for image in images:
-        identifier = image.stem.removesuffix("_leftImg8bit")
+        image_suffix = next(
+            suffix
+            for suffix in ("_leftImg8bit.png", "_leftImg8bit.jpg", "_leftImg8bit.jpeg")
+            if image.name.lower().endswith(suffix.lower())
+        )
+        identifier = identity(image, image_root, image_suffix)
         mask = masks.get(identifier)
         canonical_mask = canonical_masks.get(identifier)
         if mask is None and canonical_mask is None:
