@@ -2,7 +2,7 @@
 
 - **Milestone:** updated phase-one road perception and pre-Colab implementation.
 - **Branch:** `rescue/semantic-first`; exact-commit Colab delivery publication.
-- **Pinned Colab implementation:** `991cd55f213d49ae1723f96f7496a69e0f35b00b`.
+- **Pinned Colab implementation:** `6a62fc9a9d46ba22c328a62bbbbc54ee05fe2475`.
 - **Classification:** locally tested engineering implementation; no new scientific or
   Jetson measurement.
 - **Pin enforcement:** strict in Colab; the no-clone local harness only reports a later

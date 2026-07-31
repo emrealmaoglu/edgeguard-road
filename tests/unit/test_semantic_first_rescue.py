@@ -436,7 +436,7 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert 'loaded_module.startswith("edgeguard.")' in preflight_source
     assert "shutil.rmtree(CACHE_ROOT)" not in preflight_source
     assert (
-        'EXPECTED_PROJECT_COMMIT = "991cd55f213d49ae1723f96f7496a69e0f35b00b"' in preflight_source
+        'EXPECTED_PROJECT_COMMIT = "6a62fc9a9d46ba22c328a62bbbbc54ee05fe2475"' in preflight_source
     )
     source = "\n".join("".join(cell.get("source", [])) for cell in payload["cells"])
     assert "scripts/audit_dataset.py" in source
@@ -464,7 +464,7 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "failure-report.zip" in source
     assert "run_logged_command" in source
     assert "cwd=PROJECT_ROOT" in source
-    assert 'EXPECTED_PROJECT_COMMIT = "991cd55f213d49ae1723f96f7496a69e0f35b00b"' in source
+    assert 'EXPECTED_PROJECT_COMMIT = "6a62fc9a9d46ba22c328a62bbbbc54ee05fe2475"' in source
 
 
 def test_synthetic_stress_fallback_preserves_labels_and_claim_boundary(tmp_path: Path) -> None:
