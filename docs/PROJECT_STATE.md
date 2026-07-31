@@ -3,7 +3,7 @@
 Updated 2026-07-31 on branch `rescue/semantic-first`.
 
 The published delivery notebooks are pinned to implementation commit
-`c69e0b356a083b2032a53674e9ce5267b08b3e2e`; a later branch update cannot silently alter
+`3c04853107e4a01ecc83e8a8fcad331be6984b6b`; a later branch update cannot silently alter
 the Colab runtime code or scientific protocol.
 
 The Colab-resilience revision replaces the previous snapshot model with content-addressed,
