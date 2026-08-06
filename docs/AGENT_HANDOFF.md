@@ -7,8 +7,9 @@
 - **Publication state:** the approved application commit is
   `24b59a282e0bd7239ec3bd9edc179288dcca7460`; both generated notebooks pin that exact
   commit. Delivery commit `1cdce46cd9b1bef5735733b0783fadb18139e28e` was pushed to the
-  branch. This handoff also includes a narrow CI portability correction for Streamlit's
-  file-path resolution. No merge, tag, release, Drive write, or artifact promotion occurred.
+  branch. CI portability correction `5e1a6dc5473fa04dd78649187e939bca2b4d8355`
+  passed the complete remote Python 3.10/3.11 matrix. No merge, tag, release, Drive write,
+  or artifact promotion occurred.
 
 ## Root causes closed in code
 
@@ -62,6 +63,8 @@
   and 3.11, then exposed one Streamlit test-only relative-path failure on both versions.
   The test and the matching local-closure probe now derive the dashboard entry point from
   the repository root instead of depending on Streamlit's version-specific caller path.
+- Replacement CI run `31107068048` passed every install, Ruff, format, mypy, and pytest
+  step on both Python 3.10 and 3.11.
 
 ## External acceptance sequence
 

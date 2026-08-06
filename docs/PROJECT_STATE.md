@@ -9,8 +9,9 @@ The approved application and notebook-delivery commits were pushed to
 `origin/stabilize/colab-v2`. The first remote CI run exposed one test-only Streamlit
 relative-path incompatibility after all static gates passed; the dashboard test and local
 closure probe now use a repository-root absolute path. Merge, tag, release, Drive mutation,
-and real training remain outside the approval. The new runtime cannot be presented as real
-Colab evidence until remote CI is green and G1/G3 run in clean Colab sessions.
+and real training remain outside the approval. Replacement CI run `31107068048` passed the
+complete Python 3.10/3.11 matrix. The new runtime still cannot be presented as real Colab
+evidence until G1/G3 run in clean Colab sessions.
 
 The previous hosted/fallback cascade is replaced by one hermetic runtime: uv 0.8.8,
 managed CPython 3.11.13, NumPy 1.26.4, PyTorch 2.1.1/cu121, MMEngine 0.10.7,
