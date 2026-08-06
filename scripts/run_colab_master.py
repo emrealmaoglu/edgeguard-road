@@ -287,6 +287,21 @@ def _quarantine_local_commit_drift(root: Path, project_commit: str) -> Path | No
     return destination
 
 
+def _quarantine_failed_runtime_evidence(root: Path) -> Path | None:
+    """Preserve a failed canary root but never mix it into the next attempt."""
+    failure = root / "failure.json"
+    completed = root / "runtime_receipt.json"
+    if not failure.is_file() or completed.is_file():
+        return None
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    destination = root.with_name(f"{root.name}.failed-{timestamp}")
+    if destination.exists():
+        raise FileExistsError(f"runtime evidence quarantine collision: {destination}")
+    os.replace(root, destination)
+    print(f"Başarısız canary kanıtı korumaya alındı: {destination}", flush=True)
+    return destination
+
+
 def _publish_deliveries(source_root: Path, destination_root: Path) -> dict[str, str]:
     destination_root.mkdir(parents=True, exist_ok=True)
     published: dict[str, str] = {}
@@ -344,7 +359,9 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         else {"acceptance_mode": True}
     )
     quarantined_work = _quarantine_local_commit_drift(work_root, args.project_commit)
-    quarantined_evidence = _quarantine_local_commit_drift(evidence_root, args.project_commit)
+    quarantined_evidence = _quarantine_failed_runtime_evidence(evidence_root)
+    if quarantined_evidence is None:
+        quarantined_evidence = _quarantine_local_commit_drift(evidence_root, args.project_commit)
     stage("stdlib-hermetic-bootstrap", resources=resources)
     bootstrap_receipt = content_root / "edgeguard-bootstrap-receipt.json"
     _run(

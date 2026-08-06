@@ -151,3 +151,27 @@ def test_master_uses_v3_work_root_and_bootstraps_before_project_imports() -> Non
     assert source.index('stage("stdlib-hermetic-bootstrap"') < source.index(
         'stage("five-model-runtime-canary")'
     )
+
+
+def test_failed_canary_evidence_is_preserved_outside_the_next_attempt(tmp_path: Path) -> None:
+    evidence = tmp_path / "edgeguard-evidence"
+    evidence.mkdir()
+    (evidence / "failure.json").write_text('{"status":"failed"}\n', encoding="utf-8")
+    (evidence / "partial.txt").write_text("keep", encoding="utf-8")
+
+    quarantined = run_colab_master._quarantine_failed_runtime_evidence(evidence)
+
+    assert quarantined is not None
+    assert quarantined.name.startswith("edgeguard-evidence.failed-")
+    assert (quarantined / "failure.json").is_file()
+    assert (quarantined / "partial.txt").read_text(encoding="utf-8") == "keep"
+    assert not evidence.exists()
+
+
+def test_completed_runtime_evidence_is_not_quarantined(tmp_path: Path) -> None:
+    evidence = tmp_path / "edgeguard-evidence"
+    evidence.mkdir()
+    (evidence / "failure.json").write_text('{"status":"old"}\n', encoding="utf-8")
+    (evidence / "runtime_receipt.json").write_text('{"status":"completed"}\n', encoding="utf-8")
+    assert run_colab_master._quarantine_failed_runtime_evidence(evidence) is None
+    assert evidence.is_dir()
