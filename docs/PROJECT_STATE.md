@@ -2,11 +2,12 @@
 
 Updated 2026-08-06 on branch `stabilize/colab-v2`.
 
-The Colab v2 implementation is locally modified and deliberately not published yet. The
-generated delivery notebooks still pin the last reviewed implementation commit
-`5cc578cb9f15aa7a560108840f3055ae2f4e4733`; changing that pin, committing, pushing,
-tagging, or merging requires explicit human approval after G0. The new runtime cannot be
-presented as real Colab evidence until an approved clean commit is pinned.
+The Colab v2 application is frozen at approved commit
+`24b59a282e0bd7239ec3bd9edc179288dcca7460`. Both generated delivery notebooks pin and
+verify that exact commit; their double-generation hashes are recorded in the handoff.
+The user approved the separate notebook-delivery commit and branch push. Merge, tag,
+release, Drive mutation, and real training remain outside that approval. The new runtime
+cannot be presented as real Colab evidence until G1 and G3 run in clean Colab sessions.
 
 The previous hosted/fallback cascade is replaced by one hermetic runtime: uv 0.8.8,
 managed CPython 3.11.13, NumPy 1.26.4, PyTorch 2.1.1/cu121, MMEngine 0.10.7,
@@ -72,9 +73,9 @@ Colab pin before the real IDD run is retried.
 - Target-only tools build a static TensorRT FP16 engine and run sustained Jetson
   benchmarks. They never change power mode and refuse evidence overwrite. No target
   action was executed during local implementation.
-- The notebook generator is output-free, deterministic, and syntactically validated in a
-  temporary delivery root. Tracked notebooks intentionally remain on the prior immutable
-  pin until the application commit is explicitly approved.
+- The notebook generator is output-free and deterministic. Both tracked notebooks now pin
+  the approved immutable application commit, compile, execute in the external-action-free
+  local harness, and regenerate byte-identically.
 - The known Colab bootstrap failures are removed from the implementation: uv no longer
   receives `--upgrade-strategy only-if-needed`, and no later MMCV command can resolve
   NumPy 1.26 to NumPy 2.x. Runtime reuse requires matching project, lock, framework,
@@ -98,9 +99,9 @@ Colab pin before the real IDD run is retried.
   figures downloadable without copying checkpoints or licensed data.
 - Frozen multi-domain statistics generate measured-only CSV plus 300-DPI PNG/PDF class
   distribution, imbalance/weights, split-size and source-example figures with hashes.
-- The prior delivery notebooks executed all 17 cells locally. The new P0 notebook source
-  compiles and regenerates identically in a temporary root, but tracked delivery execution
-  is correctly deferred until the two-commit pin step.
+- Both P0 delivery notebooks are regenerated from source against the approved application
+  commit. The full test suite includes their external-action-free local execution and exact
+  pin assertions; real Drive/CUDA behavior remains an external Colab gate.
 - A read-only connected-Drive audit corrected the storage assumption. Existing
   `private_inputs`, prepared Cityscapes v1, its 6.99 GB verified bundle, real manifests,
   historical compatibility evidence and `EG-REAL-001` are preserved. New staging reuses

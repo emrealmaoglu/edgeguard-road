@@ -4,8 +4,10 @@
 - **Branch:** `stabilize/colab-v2`, based on `origin/rescue/semantic-first`.
 - **Classification:** locally tested engineering implementation; real Colab, Drive training,
   scientific, accepted-release, and Jetson measurements are not run.
-- **Publication state:** no commit, push, merge, tag, release, or artifact promotion was
-  performed. The notebook pin remains the prior reviewed commit until explicit approval.
+- **Publication state:** the approved application commit is
+  `24b59a282e0bd7239ec3bd9edc179288dcca7460`; both generated notebooks pin that exact
+  commit. The separate notebook-delivery commit is prepared for the approved branch push.
+  No merge, tag, release, Drive write, or artifact promotion was performed.
 
 ## Root causes closed in code
 
@@ -45,12 +47,11 @@
 ## Local verification
 
 - Mypy: 115 source files passed.
-- Pytest: 459 passed and 2 environment-gated skips. One additional test is deliberately
-  red until the approved application commit exists and both tracked notebooks can be
-  regenerated against that immutable SHA.
-- A temporary, non-delivery generation compiled every code cell and produced identical
-  hashes twice. The tracked notebooks remain on the prior pin as required by the two-commit
-  delivery protocol.
+- Pytest: 460 passed and 2 environment-gated skips after both tracked notebooks were
+  regenerated against the immutable application commit.
+- Both tracked notebooks compile and regenerate byte-identically. Their SHA-256 values are
+  `baab1bbeb40923f1ea4e0a1dd80f4f9a2beb620f16e0b845efe45f0312c45369` (preflight) and
+  `6bb5c05b49117ada827fda15ab939fa15f08321976801def8e84d5c761594359` (training).
 - Runtime lock SHA-256 values are
   `ecf59a924106d68ca49cc8e4a6c52e1206fc22fa91fb7e41a0f18069fa25865d` (main) and
   `bf96b00b6753d4eacd3a62e18eda6c96e0f26fcd5679d7926f66cc930fd4e924` (OpenMMLab).
@@ -59,17 +60,16 @@
 
 ## External acceptance sequence
 
-1. Review the diff and run G0 locally/CI; approve a commit/push only if desired.
-2. Pin the resulting clean commit in both generated delivery notebooks.
-3. Run two independent clean Colab GPU canaries and compare lock hashes (G1).
-4. Reuse the verified Cityscapes bundle and IDD receipts, then human-freeze v2 manifests
+1. Publish the notebook-delivery commit and require remote G0 CI to pass.
+2. Run two independent clean Colab GPU canaries and compare lock hashes (G1).
+3. Reuse the verified Cityscapes bundle and IDD receipts, then human-freeze v2 manifests
    only through review receipts.
-5. Run smoke with a deliberate interruption/resume, then pilot, extension smoke, screening,
+4. Run smoke with a deliberate interruption/resume, then pilot, extension smoke, screening,
    HPO, and final as separate targets.
-6. Review `accepted_release.candidate.json`, create a candidate-hash-bound human receipt,
+5. Review `accepted_release.candidate.json`, create a candidate-hash-bound human receipt,
    and promote it with `scripts/accept_colab_release.py` before evaluate/export/report.
-7. Transfer the Jetson bundle, inspect JetPack/L4T/TensorRT versions, build FP16 on-device,
+6. Transfer the Jetson bundle, inspect JetPack/L4T/TensorRT versions, build FP16 on-device,
    and run the existing 25W sustained benchmark. Do not auto-upgrade or change power mode.
 
-No external dataset, checkpoint, ONNX, TensorRT engine, Drive artifact, model metric, tag,
-or Git publication is implied by this handoff.
+No external dataset, checkpoint, ONNX, TensorRT engine, Drive artifact, model metric, merge,
+tag, or release is implied by this handoff.

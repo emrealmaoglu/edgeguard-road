@@ -44,7 +44,7 @@ are `done`, `ready`, `external`, `blocked-by-gate`, and `future`.
 | DEP-02 | Jetson TensorRT FP16 build | external | Engine/build manifest on target; no overwrite |
 | DEP-03 | 25W and MAXN SUPER sustained benchmark | external | 200 warm-up; 5,000 frames or 10 min; telemetry and acceptance result |
 | DEMO-01 | Accepted-artifact Streamlit perception/reliability demo | ready | Offline accepted bundle, cache, CPU/missing-artifact and Jetson pages |
-| DOC-01 | Fresh-runtime Colab and accepted thesis evidence | blocked-by-gate | Application commit approval, immutable notebook repin, then output-free notebook, v2 orchestrator and accepted-only thesis bundle |
+| DOC-01 | Fresh-runtime Colab and accepted thesis evidence | external | Application commit and immutable notebook repin complete; remote CI plus real Colab G1/G3 and an accepted run remain required |
 
 ## Conditional detection
 
