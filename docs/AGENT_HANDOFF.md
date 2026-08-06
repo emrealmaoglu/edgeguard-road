@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `1da25ef405fcf36180d0b223973ff768296a228f`
+  `55e13db49f6becc640b3d3d7816ee3c888d4eeb7`
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -24,18 +24,20 @@
 - Runs restore and data preparation only after the verified Python 3.11 environment exists.
 - Isolates v3 work state and preserves/skips incompatible commit-bound local/Drive state.
 - Streams the real child error and packages stage, bootstrap and log-tail diagnostics.
+- Resolves both `bin/uv` and Colab system-pip `local/bin/uv` private-prefix layouts and
+  carries the verified executable path into the runtime installer.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 462 passed, 2 environment-gated skipped.
+- Full pytest passes: 466 passed, 2 environment-gated skipped.
 - Both hosted entrypoints load with site packages disabled (`python -S`).
 - Master notebook generation is byte-identical across two runs.
 - All master notebook code cells execute in local claim-safe mode with
   `scientific_status=not_run`.
 - The notebook SHA-256 after pinning is
-  `1f7e4a7d7a65f2d921e4ed34f395029c59a20917b1744e54f4d69b694accb0e0`.
+  `206d3ca916dce38efac4e74257e20572d311b313ec792a901609aa08711d0321`.
 - ZIP writer verifies CRC, member set and every member payload after creation.
 
 ## Next external action

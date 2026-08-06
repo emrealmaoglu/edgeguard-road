@@ -5,7 +5,7 @@ Updated 2026-08-06 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`1da25ef405fcf36180d0b223973ff768296a228f`. The only generated notebook is
+`55e13db49f6becc640b3d3d7816ee3c888d4eeb7`. The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -57,6 +57,12 @@ The first real master run at application commit `2495354d…` stopped before use
 diagnostics were retained. The corrected notebook streams and records the complete child
 output, current stage, bootstrap failure, and a bounded log tail in its Drive failure ZIP,
 so a future external failure cannot collapse into an unactionable exit-code-only traceback.
+
+The next real run at application commit `1da25ef…` proved that Colab system pip installs
+prefix scripts under `local/bin` rather than the previously assumed `bin`. Both bootstrap
+layers now discover, execute, and version-check the exact private uv binary across both
+POSIX prefix layouts, and the verified discovered directory—not a reconstructed path—is
+prepended to the hermetic runtime PATH.
 
 All five models pass the runtime canary contract. Core smoke intentionally interrupts at
 step 25 of 50 and must resume from the same optimizer/checkpoint identity. Checkpoints are
