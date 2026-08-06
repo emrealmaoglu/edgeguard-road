@@ -3,7 +3,7 @@
 Updated 2026-08-06 on branch `stabilize/colab-v2`.
 
 The current Colab v2 application is frozen at commit
-`0cf886443afe5be5c5c47c9598e3faae3f5ba896`. Both generated delivery notebooks pin and
+`bcfff06bae511da2646fc034291bb5cd33e28405`. Both generated delivery notebooks pin and
 verify that exact commit; their double-generation hashes are recorded in the handoff.
 The approved application and notebook-delivery commits were pushed to
 `origin/stabilize/colab-v2`. The first remote CI run exposed one test-only Streamlit
@@ -21,7 +21,11 @@ found that the IDD candidate's `source_manifest_sha256s` was empty: its reported
 cross-source overlap was therefore not provenance-bound. The new application passes the
 Cityscapes candidate to the IDD audit and includes its hash in the completion identity.
 Restored legacy IDD audit output is invalidated, while the persistent audit catalog remains
-reusable; extraction and full pixel re-audit are not required.
+reusable; extraction and full pixel re-audit are not required. The first rerun showed that
+the expected-input check rejected the old receipt but the generic quarantine helper still
+accepted it without checking those inputs, leaving `idd20k_audit` in place. The helper and
+notebook now use the same expected-input identity, so the legacy directory is preserved
+under a timestamped quarantine name and the replacement audit gets a clean output root.
 
 The previous hosted/fallback cascade is replaced by one hermetic runtime: uv 0.8.8,
 managed CPython 3.11.13, NumPy 1.26.4, PyTorch 2.1.1/cu121, MMEngine 0.10.7,

@@ -4,8 +4,8 @@
 - **Branch:** `stabilize/colab-v2`, based on `origin/rescue/semantic-first`.
 - **Classification:** locally tested engineering implementation plus one real Colab data
   audit; GPU canary/training, accepted-release, and Jetson measurements are not run.
-- **Publication state:** the approved application commit is
-  `0cf886443afe5be5c5c47c9598e3faae3f5ba896`; both regenerated notebooks pin that exact
+- **Publication state:** the current application commit is
+  `bcfff06bae511da2646fc034291bb5cd33e28405`; both regenerated notebooks pin that exact
   commit. Its notebook-delivery commit and replacement remote CI are pending. No merge,
   tag, release, training, or artifact promotion occurred.
 
@@ -39,6 +39,8 @@
 - Every secondary scientific-domain audit is bound to the SHA-256 identities of earlier
   source candidates. Candidate manifests are accepted for overlap checking only after
   their own audit passes; old completion receipts without these source hashes are rejected.
+- Stale audit output is quarantined using the same expected-input identity that rejected
+  its completion receipt, preventing a restored legacy directory from blocking recreation.
 - Accepted final checkpoints are restored from immutable Drive generations before later
   phases, then rechecked against the accepted release hash.
 - Streamlit accepted-bundle mode, cached tables/models, single active model resource, CPU
@@ -53,8 +55,8 @@
 - Pytest: 460 passed and 2 environment-gated skips after both tracked notebooks were
   regenerated against the immutable application commit.
 - Both tracked notebooks compile and regenerate byte-identically. Their SHA-256 values are
-  `b9ee9e863c85f2e1efb321b9f41d00d6d43aa51a45c4d2fc3b8e50d9b14848d6` (preflight) and
-  `bc180ffa8059bfb496ccc62a300b20c2fc88eb5e1b72e0591c16914f3d64dc35` (training).
+  `a2938d3aeb2e56772a472650ccfef77344fb450b4d0dfe76704fb1707ec6aa45` (preflight) and
+  `f433ae7a155528249657ecb4e847a606cfb6a7ec131ee019095bba8073632535` (training).
 - Runtime lock SHA-256 values are
   `ecf59a924106d68ca49cc8e4a6c52e1206fc22fa91fb7e41a0f18069fa25865d` (main) and
   `bf96b00b6753d4eacd3a62e18eda6c96e0f26fcd5679d7926f66cc930fd4e924` (OpenMMLab).
@@ -69,7 +71,8 @@
 - The real audit package hash and all 31 indexed files verified. Cityscapes was 2975/2975;
   IDD accounted for 14,027 records with 14,018 valid and nine accepted all-ignore-source
   exclusions. Three cross-role dHash candidates were visually and numerically confirmed as
-  distinct highway scenes. The rerun must now bind IDD to the Cityscapes candidate hash.
+  distinct highway scenes. The first provenance rerun exposed and now closes a restored
+  legacy-output quarantine identity mismatch before any data scan or training began.
 
 ## External acceptance sequence
 
