@@ -18,6 +18,7 @@ from edgeguard.rescue.multidomain import (
     build_cityscapes_dataset_manifest,
     build_cityscapes_official_validation_manifest,
     freeze_candidate_manifest,
+    freeze_candidate_manifest_by_policy,
     write_multidomain_statistics,
 )
 from edgeguard.serialization import canonical_json
@@ -81,6 +82,11 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="hash-bound human approval required by --freeze-approved",
     )
+    parser.add_argument(
+        "--authorization-policy",
+        type=Path,
+        help="owner-preauthorized exact-source/post-release validation policy",
+    )
     parser.add_argument("--campaign-id", default="semantic-cs-idd-v2")
     parser.add_argument("--project-commit")
     return parser
@@ -98,16 +104,29 @@ def main() -> int:
     if args.freeze_approved:
         if args.split_manifest is None:
             raise ValueError("manifest freeze requires --split-manifest")
-        if args.review_receipt is None or args.project_commit is None:
-            raise PermissionError("manifest freeze requires --review-receipt and --project-commit")
+        if args.project_commit is None:
+            raise PermissionError("manifest freeze requires --project-commit")
         destination = args.output_root.resolve() / f"{args.dataset}.frozen.json"
-        result = freeze_candidate_manifest(
-            args.split_manifest.resolve(),
-            destination,
-            review_receipt_path=args.review_receipt.resolve(),
-            campaign_id=args.campaign_id,
-            project_commit=args.project_commit,
-        )
+        if args.authorization_policy is not None:
+            if args.review_receipt is not None:
+                raise ValueError("choose review receipt or authorization policy, not both")
+            result = freeze_candidate_manifest_by_policy(
+                args.split_manifest.resolve(),
+                destination,
+                policy_path=args.authorization_policy.resolve(),
+                campaign_id=args.campaign_id,
+                project_commit=args.project_commit,
+            )
+        else:
+            if args.review_receipt is None:
+                raise PermissionError("manifest freeze requires --review-receipt")
+            result = freeze_candidate_manifest(
+                args.split_manifest.resolve(),
+                destination,
+                review_receipt_path=args.review_receipt.resolve(),
+                campaign_id=args.campaign_id,
+                project_commit=args.project_commit,
+            )
         print(canonical_json(result))
         return 0
     if args.dataset_root is None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 import shutil
 import time
@@ -180,6 +181,7 @@ def register_mmseg_components() -> None:
             optimizer_interval: int = 500,
             maximum_seconds: int = 600,
             status_seconds: int = 300,
+            intentional_interrupt_optimizer_step: int | None = None,
         ) -> None:
             self.store_root = Path(store_root)
             self.artifact_id = artifact_id
@@ -194,6 +196,7 @@ def register_mmseg_components() -> None:
             self.started = time.monotonic()
             self.last_publish = time.monotonic()
             self.last_status = 0.0
+            self.intentional_interrupt_optimizer_step = intentional_interrupt_optimizer_step
 
         def before_train(self, runner: Any) -> None:
             sampler: Any = getattr(runner.train_dataloader, "sampler", None)
@@ -272,7 +275,16 @@ def register_mmseg_components() -> None:
                 and iteration % self.accumulation == 0
             )
             due_final = iteration >= int(runner.max_iters)
-            if not (due_interval or due_time or due_final):
+            interrupt_marker = (
+                Path(runner.work_dir) / ".intentional-interruption-complete.json"
+            )
+            optimizer_step = iteration // self.accumulation
+            due_interrupt = (
+                self.intentional_interrupt_optimizer_step is not None
+                and optimizer_step == self.intentional_interrupt_optimizer_step
+                and not interrupt_marker.exists()
+            )
+            if not (due_interval or due_time or due_final or due_interrupt):
                 return
             marker = Path(runner.work_dir) / "last_checkpoint"
             current: Path | None = None
@@ -317,6 +329,28 @@ def register_mmseg_components() -> None:
                     last_checkpoint_sha256=receipt["sha256"],
                     recovery_generation=receipt["generation"],
                 )
+            if (
+                self.intentional_interrupt_optimizer_step is not None
+                and optimizer_step == self.intentional_interrupt_optimizer_step
+                and not interrupt_marker.exists()
+            ):
+                interrupt_marker.write_text(
+                    json.dumps(
+                        {
+                            "record_type": "edgeguard_intentional_interruption",
+                            "optimizer_step": optimizer_step,
+                            "checkpoint_sha256": receipt["sha256"],
+                            "recovery_generation": receipt["generation"],
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                raise RuntimeError(
+                    "EDGEGUARD_INTENTIONAL_INTERRUPTION_AFTER_VERIFIED_CHECKPOINT"
+                )
             recovery_files = sorted(
                 Path(runner.work_dir).glob("recovery_*.pth"),
                 key=lambda path: path.stat().st_mtime_ns,
@@ -324,5 +358,63 @@ def register_mmseg_components() -> None:
             )
             for stale in recovery_files[2:]:
                 stale.unlink(missing_ok=True)
+
+    @hooks_registry.HOOKS.register_module(force=True)
+    class EdgeGuardMetricsHistoryHook(hook_base):
+        """Append sparse optimizer-step loss history for thesis plots and diagnostics."""
+
+        priority = "LOW"
+
+        def __init__(self, *, accumulation: int, optimizer_interval: int = 50) -> None:
+            self.accumulation = accumulation
+            self.iteration_interval = optimizer_interval * accumulation
+            self.seen: set[int] = set()
+
+        def before_train(self, runner: Any) -> None:
+            path = Path(runner.work_dir) / "metrics_history.jsonl"
+            if not path.is_file():
+                return
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    self.seen.add(int(json.loads(line)["optimizer_step"]))
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+
+        def after_train_iter(
+            self,
+            runner: Any,
+            batch_idx: int,
+            data_batch: Any = None,
+            outputs: Any = None,
+        ) -> None:
+            del batch_idx, data_batch
+            iteration = int(runner.iter + 1)
+            if iteration % self.accumulation:
+                return
+            optimizer_step = iteration // self.accumulation
+            if (
+                iteration % self.iteration_interval
+                and iteration < int(runner.max_iters)
+            ) or optimizer_step in self.seen:
+                return
+            scalars: dict[str, float] = {}
+            if isinstance(outputs, dict):
+                for name, value in outputs.items():
+                    try:
+                        scalar = float(value.detach().cpu().item())
+                    except (AttributeError, TypeError, ValueError, RuntimeError):
+                        continue
+                    if np.isfinite(scalar):
+                        scalars[str(name)] = scalar
+            record = {
+                "optimizer_step": optimizer_step,
+                "dataloader_iteration": iteration,
+                "scalars": scalars,
+            }
+            with (Path(runner.work_dir) / "metrics_history.jsonl").open(
+                "a", encoding="utf-8"
+            ) as stream:
+                stream.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+            self.seen.add(optimizer_step)
 
     _REGISTERED = True

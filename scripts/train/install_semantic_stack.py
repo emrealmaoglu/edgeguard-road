@@ -25,7 +25,13 @@ from edgeguard.training.config import load_semantic_framework_config
 from edgeguard.training.contracts import SemanticFrameworkConfig
 
 UV_VERSION = "0.8.8"
-CORE_CANARY_MODELS = ("segformer_b0", "fast_scnn", "pidnet_s")
+CORE_CANARY_MODELS = (
+    "segformer_b0",
+    "fast_scnn",
+    "pidnet_s",
+    "ddrnet_23_slim",
+    "bisenetv2",
+)
 OPENMMLAB_LOCKFILE = Path("requirements/colab-openmmlab.lock")
 OPENMMLAB_REQUIREMENTS = {
     "mmengine": (
@@ -522,7 +528,7 @@ def _execute_runtime(
         or completion.get("checkpoint_resume_model_count") != len(CORE_CANARY_MODELS)
         or len(fp16_models) != len(CORE_CANARY_MODELS)
     ):
-        raise ValueError("three-model hermetic canary is incomplete")
+        raise ValueError("five-model hermetic canary is incomplete")
     completion["fp16_finite_model_count"] = len(fp16_models)
     return {
         "runtime_profile": "py311-cu121",
@@ -583,7 +589,7 @@ def _reuse_completed_environment(
         or probe.get("checkpoint_resume_verified") is not True
         or probe.get("fp16_finite_model_count") != len(CORE_CANARY_MODELS)
     ):
-        raise ValueError("completed runtime receipt lacks the three-model acceptance")
+        raise ValueError("completed runtime receipt lacks the five-model acceptance")
     return {**receipt, "reused_completed_environment": True}
 
 

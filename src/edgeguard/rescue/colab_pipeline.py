@@ -1,21 +1,31 @@
-"""State and artifact contracts for the resumable Colab v2 campaign."""
+"""State and artifact contracts for the resumable Colab production campaign."""
 
 from __future__ import annotations
 
 import csv
 import json
 import re
+import shutil
 import subprocess
+import sys
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from edgeguard.rescue.colab_recovery import atomic_json, restore_recovery_file
+from edgeguard.rescue.colab_recovery import (
+    atomic_json,
+    create_state_archive,
+    publish_recovery_file,
+    restore_recovery_file,
+)
 from edgeguard.rescue.multidomain import validate_dataset_manifest
+from edgeguard.rescue.release_acceptance import accept_release_candidate_by_policy
+from edgeguard.rescue.selection import select_recommended_model
 from edgeguard.serialization import sha256_file, sha256_payload
 
-CAMPAIGN_ID = "semantic-cs-idd-v2"
+CAMPAIGN_ID = "semantic-cs-idd-v3"
 CORE_MODELS = ("segformer_b0", "fast_scnn", "pidnet_s")
 EXTENSION_MODELS = ("ddrnet_23_slim", "bisenetv2")
 ALL_MODELS = CORE_MODELS + EXTENSION_MODELS
@@ -24,29 +34,48 @@ PHASES = (
     "preflight",
     "restore",
     "stage-data",
+    "canary",
     "smoke",
     "pilot",
     "extension-smoke",
     "screening",
     "hpo",
     "final",
+    "selection",
+    "ablation",
+    "accept",
+    "validation-data",
     "evaluate",
     "export",
     "report",
+    "package",
 )
-TARGETS = ("smoke", "pilot", "screening", "hpo", "final", "evaluate", "export", "report")
+TARGETS = (
+    "smoke",
+    "pilot",
+    "screening",
+    "hpo",
+    "final",
+    "evaluate",
+    "export",
+    "report",
+    "package",
+    "all",
+)
 
 
 def phases_for_target(target: str) -> tuple[str, ...]:
     """Return the complete ordered prerequisite closure for one public target."""
     if target not in TARGETS:
         raise ValueError(f"unsupported Colab pipeline target: {target}")
-    end = PHASES.index(target)
+    end = len(PHASES) - 1 if target == "all" else PHASES.index(target)
     return PHASES[: end + 1]
 
 
 def models_for_phase(phase: str) -> tuple[str, ...]:
     """Apply the frozen 3→5 model gate without notebook-local branching."""
+    if phase == "canary":
+        return ALL_MODELS
     if phase in {"smoke", "pilot"}:
         return CORE_MODELS
     if phase == "extension-smoke":
@@ -58,7 +87,7 @@ def models_for_phase(phase: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class PipelineInputs:
-    """Immutable identities and paths required by the Colab v2 orchestrator."""
+    """Immutable identities and paths required by the Colab v3 orchestrator."""
 
     project_root: Path
     project_commit: str
@@ -69,12 +98,18 @@ class PipelineInputs:
     config_path: Path
     data_manifests: tuple[Path, ...]
     candidate_table: Path | None = None
-    final_models: tuple[str, ...] = ()
+    final_models: tuple[str, ...] = ALL_MODELS
     ablation_model: str | None = None
     rare_classes_file: Path | None = None
     class_weights_file: Path | None = None
     accepted_release: Path | None = None
     evaluation_manifests: tuple[Path, ...] = ()
+    authorization_policy: Path | None = None
+    release_policy: Path | None = None
+    data_roots: tuple[tuple[str, Path], ...] = ()
+    campaign_id: str = CAMPAIGN_ID
+    execution_mode: str = "production"
+    state_store_root: Path | None = None
 
     def validated(self) -> PipelineInputs:
         if len(self.project_commit) != 40 or any(
@@ -82,20 +117,25 @@ class PipelineInputs:
         ):
             raise ValueError("project_commit must be a full lowercase Git SHA")
         if len(self.data_manifests) != 2:
-            raise ValueError("Colab v2 requires Cityscapes and IDD20K frozen manifests")
+            raise ValueError("Colab v3 requires Cityscapes and IDD20K frozen manifests")
         if len(set(self.data_manifests)) != len(self.data_manifests):
             raise ValueError("data manifest paths must be distinct")
         unknown = set(self.final_models) - set(ALL_MODELS)
         if unknown:
             raise ValueError(f"unsupported final models: {sorted(unknown)}")
-        if len(self.final_models) != len(set(self.final_models)) or len(self.final_models) > 3:
-            raise ValueError("final models must be at most three distinct supported models")
-        if self.ablation_model is not None and self.ablation_model not in self.final_models:
-            raise ValueError("ablation model must be one of the frozen finalists")
-        if self.ablation_model is not None and (
-            self.class_weights_file is None or not self.class_weights_file.is_file()
-        ):
-            raise ValueError("weighted-loss ablation requires accepted class weights")
+        if self.final_models != ALL_MODELS:
+            raise ValueError("Colab v3 final training requires all five models in frozen order")
+        if self.ablation_model is not None:
+            raise ValueError("Colab v3 derives the ablation model from train_select evidence")
+        if self.execution_mode not in {"production", "acceptance"}:
+            raise ValueError("execution_mode must be production or acceptance")
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", self.campaign_id) is None:
+            raise ValueError("campaign_id is missing or unsafe")
+        if self.data_roots and {name for name, _ in self.data_roots} != {
+            "cityscapes",
+            "idd20k",
+        }:
+            raise ValueError("data roots must contain Cityscapes and IDD20K exactly")
         return self
 
     def identity(self) -> dict[str, Any]:
@@ -109,10 +149,28 @@ class PipelineInputs:
         for path in required_files:
             if not path.is_file():
                 raise FileNotFoundError(f"pipeline identity input is missing: {path}")
+        runtime = json.loads(self.runtime_receipt.read_text(encoding="utf-8"))
+        probe = runtime.get("core_model_probe")
+        stable_probe = {
+            key: probe.get(key)
+            for key in (
+                "model_count",
+                "fp16_finite_model_count",
+                "checkpoint_resume_verified",
+            )
+        } if isinstance(probe, dict) else None
+        runtime_identity = {
+            "record_type": runtime.get("record_type"),
+            "project_commit": runtime.get("project_commit"),
+            "runtime_profile": runtime.get("runtime_profile"),
+            "lock_sha256": runtime.get("lock_sha256"),
+            "environment": runtime.get("environment"),
+            "core_model_probe": stable_probe,
+        }
         return {
-            "campaign_id": CAMPAIGN_ID,
+            "campaign_id": self.campaign_id,
             "project_commit": self.project_commit,
-            "runtime_receipt_sha256": sha256_file(self.runtime_receipt),
+            "runtime_identity_sha256": sha256_payload(runtime_identity),
             "config_sha256": sha256_file(self.config_path),
             "data_manifest_sha256": {
                 path.name: sha256_file(path) for path in sorted(self.data_manifests)
@@ -122,7 +180,7 @@ class PipelineInputs:
 
 @dataclass(frozen=True)
 class AcceptedModelSource:
-    """One human-accepted final checkpoint/config pair resolved from a release."""
+    """One accepted final checkpoint/config pair resolved from a release."""
 
     model: str
     checkpoint: Path
@@ -159,8 +217,8 @@ class ColabPipeline:
         if release.get("record_type") != "edgeguard_accepted_release":
             raise ValueError("invalid accepted release record type")
         if release.get("status") != "accepted":
-            raise PermissionError("pipeline handoff requires a human-accepted release")
-        if release.get("campaign_id") != CAMPAIGN_ID:
+            raise PermissionError("pipeline handoff requires an accepted release")
+        if release.get("campaign_id") != self.inputs.campaign_id:
             raise ValueError("accepted release belongs to another campaign")
         if release.get("project_commit") != self.inputs.project_commit:
             raise ValueError("accepted release belongs to another project commit")
@@ -177,8 +235,8 @@ class ColabPipeline:
                 raise ValueError("accepted release contains a non-accepted artifact")
             _release_artifact(release_path, artifact, f"artifact[{index}]")
         raw_models = release.get("models")
-        if not isinstance(raw_models, list) or not raw_models:
-            raise ValueError("accepted release has no final model sources")
+        if not isinstance(raw_models, list) or len(raw_models) != len(ALL_MODELS):
+            raise ValueError("accepted release must contain exactly five final model sources")
         models: list[AcceptedModelSource] = []
         seen: set[str] = set()
         for index, record in enumerate(raw_models):
@@ -200,6 +258,10 @@ class ColabPipeline:
                         f"models[{index}].resolved_config",
                     ),
                 )
+            )
+        if tuple(item.model for item in models) != ALL_MODELS:
+            raise ValueError(
+                "accepted release model order differs from the frozen five-model order"
             )
         return release, tuple(models)
 
@@ -255,14 +317,14 @@ class ColabPipeline:
 
     @property
     def state_root(self) -> Path:
-        return self.inputs.work_root / "pipeline-v2"
+        return self.inputs.work_root / "pipeline-v3"
 
     def plan(self, target: str) -> dict[str, Any]:
         phases = phases_for_target(target)
         return {
             "schema_version": "2.0",
             "record_type": "edgeguard_colab_pipeline_plan",
-            "campaign_id": CAMPAIGN_ID,
+            "campaign_id": self.inputs.campaign_id,
             "target": target,
             "identity_sha256": self.identity_sha256,
             "phases": [
@@ -283,22 +345,45 @@ class ColabPipeline:
 
     def _phase_identity_sha256(self, phase: str) -> str:
         identity = dict(self.identity)
-        if phase in {"hpo", "final", "evaluate", "export", "report"}:
+        if phase in {
+            "hpo",
+            "final",
+            "selection",
+            "ablation",
+            "accept",
+            "validation-data",
+            "evaluate",
+            "export",
+            "report",
+            "package",
+        }:
             identity["candidate_table_sha256"] = (
                 sha256_file(self.inputs.candidate_table)
                 if self.inputs.candidate_table is not None and self.inputs.candidate_table.is_file()
                 else None
             )
-        if phase in {"final", "evaluate", "export", "report"}:
+        if phase in {
+            "selection",
+            "ablation",
+            "accept",
+            "validation-data",
+            "evaluate",
+            "export",
+            "report",
+            "package",
+        }:
             identity["final_models"] = list(self.inputs.final_models)
-            identity["ablation_model"] = self.inputs.ablation_model
             identity["class_weights_sha256"] = (
                 sha256_file(self.inputs.class_weights_file)
                 if self.inputs.class_weights_file is not None
                 and self.inputs.class_weights_file.is_file()
                 else None
             )
-        if phase in {"restore", "evaluate", "export", "report"}:
+            selection = self.inputs.work_root / "reports/selection/recommended_model.json"
+            identity["recommended_selection_sha256"] = (
+                sha256_file(selection) if selection.is_file() else None
+            )
+        if phase in {"validation-data", "evaluate", "export", "report", "package"}:
             identity["accepted_release_sha256"] = (
                 sha256_file(self.inputs.accepted_release)
                 if self.inputs.accepted_release is not None
@@ -310,6 +395,12 @@ class ColabPipeline:
                 for path in sorted(self.inputs.evaluation_manifests)
                 if path.is_file()
             }
+        if phase in {"accept", "validation-data", "evaluate", "export", "report", "package"}:
+            identity["release_policy_sha256"] = (
+                sha256_file(self.inputs.release_policy)
+                if self.inputs.release_policy is not None and self.inputs.release_policy.is_file()
+                else None
+            )
         return sha256_payload(identity)
 
     def _restore_accepted_release_checkpoints(self) -> list[dict[str, Any]]:
@@ -320,7 +411,7 @@ class ColabPipeline:
         if (
             release.get("record_type") != "edgeguard_accepted_release"
             or release.get("status") != "accepted"
-            or release.get("campaign_id") != CAMPAIGN_ID
+            or release.get("campaign_id") != self.inputs.campaign_id
             or release.get("project_commit") != self.inputs.project_commit
             or release.get("data_manifest_sha256") != self.identity["data_manifest_sha256"]
         ):
@@ -414,6 +505,10 @@ class ColabPipeline:
         root.mkdir(parents=True, exist_ok=True)
         runtime = json.loads(self.inputs.runtime_receipt.read_text(encoding="utf-8"))
         phase_models = list(models_for_phase(phase))
+        if phase in {"final", "selection", "accept", "validation-data", "package"}:
+            phase_models = list(ALL_MODELS)
+        if phase == "ablation":
+            phase_models = [self._recommended_model()]
         release_verification = root / "accepted_release_verification.json"
         if release_verification.is_file():
             verified = json.loads(release_verification.read_text(encoding="utf-8"))
@@ -421,14 +516,14 @@ class ColabPipeline:
         run_manifest = {
             "schema_version": "2.0",
             "record_type": "edgeguard_run_manifest",
-            "run_id": f"{CAMPAIGN_ID}-{phase}",
-            "campaign_id": CAMPAIGN_ID,
+            "run_id": f"{self.inputs.campaign_id}-{phase}",
+            "campaign_id": self.inputs.campaign_id,
             "stage": phase,
             "models": phase_models,
             "git_commit": self.inputs.project_commit,
             "config_sha256": self.identity["config_sha256"],
             "data_manifest_sha256": self.identity["data_manifest_sha256"],
-            "environment_sha256": self.identity["runtime_receipt_sha256"],
+            "environment_sha256": self.identity["runtime_identity_sha256"],
             "seed": 20260728,
             "scientific_status": scientific_status,
             "synthetic_or_smoke": phase in {"smoke", "extension-smoke"},
@@ -528,7 +623,7 @@ class ColabPipeline:
         artifact_index = {
             "schema_version": "2.0",
             "record_type": "edgeguard_artifact_index",
-            "campaign_id": CAMPAIGN_ID,
+            "campaign_id": self.inputs.campaign_id,
             "phase": phase,
             "scientific_status": scientific_status,
             "artifacts": {
@@ -561,14 +656,50 @@ class ColabPipeline:
         completion = {
             "schema_version": "2.0",
             "record_type": "edgeguard_colab_phase_completion",
-            "campaign_id": CAMPAIGN_ID,
+            "campaign_id": self.inputs.campaign_id,
             "phase": phase,
             "status": "completed",
             "identity_sha256": self._phase_identity_sha256(phase),
             "artifact_index_sha256": sha256_file(root / "artifact_index.json"),
         }
         atomic_json(self._completion_path(phase), completion)
+        self._publish_campaign_state(phase)
         return completion
+
+    def _publish_campaign_state(self, phase: str) -> None:
+        """Publish small resumable state after every completed phase."""
+        if self.inputs.state_store_root is None:
+            return
+        archive = self.inputs.work_root.parent / "edgeguard-campaign-state-v3.tar.gz"
+        relative_paths = (
+            "accepted_release.candidate.json",
+            "accepted_release.json",
+            "calibration",
+            "evaluation",
+            "exports",
+            "ledger",
+            "manifests",
+            "multidomain-statistics",
+            "pipeline-v3",
+            "reports/screening",
+            "reports/selection",
+            "reviews",
+            "runs",
+        )
+        create_state_archive(
+            self.inputs.work_root,
+            archive,
+            relative_paths=relative_paths,
+            compression=True,
+        )
+        publish_recovery_file(
+            archive,
+            self.inputs.state_store_root,
+            artifact_id="campaign-state",
+            campaign_id=self.inputs.campaign_id,
+            project_commit=self.inputs.project_commit,
+            metadata={"phase": phase, "target": "all"},
+        )
 
     def _verify_preflight(self) -> None:
         head = subprocess.run(
@@ -587,6 +718,17 @@ class ColabPipeline:
         if not self.inputs.mmseg_root.is_dir():
             raise FileNotFoundError("verified MMSegmentation checkout is missing")
 
+    def _verify_canary(self) -> None:
+        runtime = json.loads(self.inputs.runtime_receipt.read_text(encoding="utf-8"))
+        probe = runtime.get("core_model_probe")
+        if not isinstance(probe, dict) or (
+            probe.get("model_count") != len(ALL_MODELS)
+            or probe.get("checkpoint_resume_verified") is not True
+            or probe.get("checkpoint_resume_model_count") != len(ALL_MODELS)
+            or probe.get("fp16_finite_model_count") != len(ALL_MODELS)
+        ):
+            raise ValueError("runtime receipt lacks the complete five-model FP32/AMP canary")
+
     def _train_command(
         self,
         phase: str,
@@ -594,14 +736,23 @@ class ColabPipeline:
         *,
         device_batch: int | None = None,
         loss: str = "ce",
+        run_name: str | None = None,
+        crop_size: tuple[int, int] | None = None,
     ) -> list[str]:
+        training_stage = (
+            "smoke"
+            if phase == "extension-smoke"
+            else "final"
+            if phase == "ablation"
+            else phase
+        )
         command = [
             str(Path(sys_executable())),
             str(self.inputs.project_root / "scripts/train.py"),
             "--config",
             str(self.inputs.config_path),
             "--stage",
-            "smoke" if phase == "extension-smoke" else phase,
+            training_stage,
             "--output-root",
             str(self.inputs.work_root / "runs"),
             "--mmseg-root",
@@ -609,7 +760,7 @@ class ColabPipeline:
             "--recovery-root",
             str(self.inputs.recovery_root),
             "--campaign-id",
-            CAMPAIGN_ID,
+            self.inputs.campaign_id,
             "--project-commit",
             self.inputs.project_commit,
             "--loss",
@@ -621,11 +772,25 @@ class ColabPipeline:
             command.extend(("--model", model))
         if device_batch is not None:
             command.extend(("--device-batch", str(device_batch)))
+        if run_name is not None:
+            command.extend(("--run-name", run_name))
+        if crop_size is not None:
+            command.extend(
+                ("--crop-height", str(crop_size[0]), "--crop-width", str(crop_size[1]))
+            )
+        if self.inputs.execution_mode == "acceptance":
+            command.extend(("--max-steps", "2", "--workers", "0", "--precision", "fp32"))
+            if phase == "hpo":
+                command.append("--acceptance-test")
+            if device_batch is None:
+                command.extend(("--device-batch", "1"))
+        elif phase in {"smoke", "extension-smoke"}:
+            command.extend(("--intentional-interrupt-step", "25"))
         if loss == "median_frequency":
             if self.inputs.class_weights_file is None:
                 raise ValueError("weighted-loss command requires class weights")
             command.extend(("--audit-report", str(self.inputs.class_weights_file)))
-        if phase == "final" and model is not None:
+        if phase in {"final", "ablation"} and model is not None:
             hpo_result = self.inputs.work_root / "runs" / "hpo" / model / "result.json"
             if hpo_result.is_file():
                 params = json.loads(hpo_result.read_text(encoding="utf-8")).get("best_params")
@@ -648,35 +813,100 @@ class ColabPipeline:
     def _run_command(self, phase: str, label: str, command: list[str]) -> dict[str, Any]:
         log_root = self._phase_root(phase) / "logs"
         log_root.mkdir(parents=True, exist_ok=True)
-        completed = subprocess.run(
-            command,
-            cwd=self.inputs.project_root,
-            capture_output=True,
-            text=True,
-        )
-        (log_root / f"{label}.stdout.log").write_text(completed.stdout, encoding="utf-8")
-        (log_root / f"{label}.stderr.log").write_text(completed.stderr, encoding="utf-8")
-        if completed.returncode != 0:
-            raise subprocess.CalledProcessError(
-                completed.returncode,
+        log_path = log_root / f"{label}.combined.log"
+        tail: deque[str] = deque(maxlen=300)
+        with log_path.open("w", encoding="utf-8") as log_stream:
+            process = subprocess.Popen(
                 command,
-                output=completed.stdout,
-                stderr=completed.stderr,
+                cwd=self.inputs.project_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
             )
-        return {"label": label, "return_code": 0, "command": command}
+            assert process.stdout is not None
+            for line in process.stdout:
+                log_stream.write(line)
+                log_stream.flush()
+                tail.append(line)
+                print(line, end="", flush=True)
+            return_code = process.wait()
+        output_tail = "".join(tail)
+        if return_code != 0:
+            raise subprocess.CalledProcessError(
+                return_code,
+                command,
+                output=output_tail,
+                stderr=output_tail,
+            )
+        return {
+            "label": label,
+            "return_code": 0,
+            "command": command,
+            "log": log_path.relative_to(self._phase_root(phase)).as_posix(),
+        }
+
+    def _recovery_artifact_id(self, phase: str, model: str, suffix: str) -> str:
+        actual_phase = (
+            "smoke"
+            if phase == "extension-smoke"
+            else "final"
+            if phase == "ablation"
+            else phase
+        )
+        return f"{actual_phase}-{model}-{suffix}".replace("_", "-")
+
+    def _recovery_pointer_exists(self, phase: str, model: str, suffix: str) -> bool:
+        artifact_id = self._recovery_artifact_id(phase, model, suffix)
+        return (self.inputs.recovery_root / "pointers" / f"{artifact_id}.json").is_file()
+
+    def _prepare_oom_retry(
+        self, phase: str, model: str, suffix: str, run_dir: Path, command: list[str]
+    ) -> list[str]:
+        retry = list(command)
+        if self._recovery_pointer_exists(phase, model, suffix):
+            if "--resume" not in retry:
+                retry.append("--resume")
+            return retry
+        if run_dir.exists():
+            quarantine = run_dir.with_name(f"{run_dir.name}.oom-attempt-{time.time_ns()}")
+            run_dir.rename(quarantine)
+        return [value for value in retry if value != "--resume"]
 
     def _run_directory(self, phase: str, model: str, loss: str = "ce") -> Path:
-        actual_phase = "smoke" if phase == "extension-smoke" else phase
+        actual_phase = (
+            "smoke"
+            if phase == "extension-smoke"
+            else "final"
+            if phase == "ablation"
+            else phase
+        )
         return self.inputs.work_root / "runs" / actual_phase / model / loss
 
     def _checkpoint(self, phase: str, model: str, loss: str = "ce") -> Path:
         run_dir = self._run_directory(phase, model, loss)
         pointer = run_dir / "last_checkpoint"
-        if not pointer.is_file():
-            raise FileNotFoundError(f"training checkpoint pointer is missing: {run_dir}")
-        checkpoint = run_dir / pointer.read_text(encoding="utf-8").strip()
+        checkpoint = (
+            run_dir / pointer.read_text(encoding="utf-8").strip()
+            if pointer.is_file()
+            else run_dir / "missing.pth"
+        )
         if not checkpoint.is_file():
-            raise FileNotFoundError(f"training checkpoint is missing: {checkpoint}")
+            identity_path = run_dir / "run_identity.json"
+            if not identity_path.is_file():
+                raise FileNotFoundError(f"training checkpoint identity is missing: {run_dir}")
+            artifact_id = self._recovery_artifact_id(phase, model, loss)
+            checkpoint = run_dir / "recovered.pth"
+            result = restore_recovery_file(
+                self.inputs.recovery_root,
+                artifact_id=artifact_id,
+                destination=checkpoint,
+            )
+            identity = json.loads(identity_path.read_text(encoding="utf-8"))
+            if result.get("metadata", {}).get("identity_sha256") != sha256_payload(identity):
+                checkpoint.unlink(missing_ok=True)
+                raise ValueError("Drive recovery checkpoint has another immutable run identity")
+            pointer.write_text(checkpoint.name + "\n", encoding="utf-8")
         return checkpoint
 
     def _screening_evidence(self) -> list[dict[str, Any]]:
@@ -782,6 +1012,121 @@ class ColabPipeline:
             results.append(self._run_command("screening", "screening-report", command))
         return results
 
+    def _selection_evidence(self) -> list[dict[str, Any]]:
+        """Evaluate all final CE checkpoints only on frozen train-select roles."""
+        results: list[dict[str, Any]] = []
+        evaluation_root = self.inputs.work_root / "evaluation/selection"
+        export_root = self.inputs.work_root / "exports/selection"
+        for model in ALL_MODELS:
+            run_dir = self._run_directory("final", model)
+            checkpoint = self._checkpoint("final", model)
+            resolved = run_dir / "resolved.py"
+            for manifest in self.inputs.data_manifests:
+                payload = json.loads(manifest.read_text(encoding="utf-8"))
+                dataset = str(payload.get("dataset_id", ""))
+                output = evaluation_root / model / dataset
+                evidence = output / "evaluation.json"
+                if evidence.is_file():
+                    recorded = json.loads(evidence.read_text(encoding="utf-8"))
+                    if (
+                        recorded.get("checkpoint_sha256") != sha256_file(checkpoint)
+                        or recorded.get("role") != "train_select"
+                    ):
+                        raise ValueError("existing final selection evidence identity mismatch")
+                    continue
+                if output.exists() and any(output.iterdir()):
+                    raise ValueError(f"incomplete final selection evaluation: {output}")
+                command = [
+                    sys_executable(),
+                    str(self.inputs.project_root / "scripts/evaluate.py"),
+                    "run",
+                    "--resolved-config",
+                    str(resolved),
+                    "--checkpoint",
+                    str(checkpoint),
+                    "--dataset",
+                    dataset,
+                    "--dataset-manifest",
+                    str(manifest),
+                    "--role",
+                    "train_select",
+                    "--output-dir",
+                    str(output),
+                ]
+                if self.inputs.rare_classes_file is not None:
+                    command.extend(("--rare-classes-file", str(self.inputs.rare_classes_file)))
+                results.append(
+                    self._run_command("selection", f"evaluate-{model}-{dataset}", command)
+                )
+            export_dir = export_root / model
+            onnx = export_dir / f"{model}.onnx"
+            validation = onnx.with_suffix(".validation.json")
+            if validation.is_file() and onnx.is_file():
+                recorded = json.loads(validation.read_text(encoding="utf-8"))
+                if (
+                    recorded.get("checkpoint_sha256") != sha256_file(checkpoint)
+                    or recorded.get("onnx_sha256") != sha256_file(onnx)
+                ):
+                    raise ValueError("existing final selection ONNX identity mismatch")
+            else:
+                if export_dir.exists() and any(export_dir.iterdir()):
+                    raise ValueError(f"incomplete final selection export: {export_dir}")
+                results.append(
+                    self._run_command(
+                        "selection",
+                        f"export-{model}",
+                        [
+                            sys_executable(),
+                            str(self.inputs.project_root / "scripts/export_onnx.py"),
+                            "--resolved-config",
+                            str(resolved),
+                            "--checkpoint",
+                            str(checkpoint),
+                            "--output",
+                            str(onnx),
+                            "--device",
+                            "cuda",
+                            "--warmup",
+                            "5",
+                            "--iterations",
+                            "20",
+                        ],
+                    )
+                )
+        report = self.inputs.work_root / "reports/selection"
+        candidate_table = report / "candidate_table.json"
+        if not candidate_table.is_file():
+            if report.exists() and any(report.iterdir()):
+                raise ValueError(f"incomplete final selection report: {report}")
+            results.append(
+                self._run_command(
+                    "selection",
+                    "selection-report",
+                    [
+                        sys_executable(),
+                        str(self.inputs.project_root / "scripts/evaluate.py"),
+                        "summarize",
+                        "--evaluation-root",
+                        str(evaluation_root),
+                        "--export-root",
+                        str(export_root),
+                        "--output-dir",
+                        str(report),
+                        "--expected-dataset",
+                        "cityscapes",
+                        "--expected-dataset",
+                        "idd20k",
+                    ],
+                )
+            )
+        payload = json.loads(candidate_table.read_text(encoding="utf-8"))
+        candidates = payload.get("candidates")
+        if not isinstance(candidates, list):
+            raise ValueError("final selection candidate table is invalid")
+        selection = select_recommended_model(candidates, expected_models=ALL_MODELS)
+        atomic_json(report / "recommended_model.json", selection)
+        return results
+
     def _run_training_phase(self, phase: str) -> list[dict[str, Any]]:
         if phase == "hpo":
             if self.inputs.candidate_table is None or not self.inputs.candidate_table.is_file():
@@ -793,27 +1138,55 @@ class ColabPipeline:
             return [self._run_command(phase, "hpo-top-two", command)]
         models = models_for_phase(phase)
         if phase == "final":
-            if len(self.inputs.final_models) != 3:
-                raise ValueError("final training requires exactly three frozen finalists")
             models = self.inputs.final_models
         results: list[dict[str, Any]] = []
         for model in models:
-            losses = ("ce", "median_frequency") if model == self.inputs.ablation_model else ("ce",)
-            for loss in losses:
+            for loss in ("ce",):
                 label = f"{model}-{loss}"
                 command = self._train_command(phase, model, loss=loss)
                 run_dir = self._run_directory(phase, model, loss)
-                if (run_dir / "run_identity.json").is_file():
+                if (run_dir / "run_identity.json").is_file() or self._recovery_pointer_exists(
+                    phase, model, loss
+                ):
                     command.append("--resume")
                 try:
                     results.append(self._run_command(phase, label, command))
                 except subprocess.CalledProcessError as error:
                     stderr = str(error.stderr or "").lower()
+                    intentional = "edgeguard_intentional_interruption" in stderr
+                    if intentional:
+                        resume_command = list(command)
+                        if "--resume" not in resume_command:
+                            resume_command.append("--resume")
+                        result = self._run_command(
+                            phase, f"{label}-intentional-resume", resume_command
+                        )
+                        marker = run_dir / ".intentional-interruption-complete.json"
+                        if not marker.is_file():
+                            raise RuntimeError(
+                                "intentional interruption marker is missing"
+                            ) from error
+                        proof = json.loads(marker.read_text(encoding="utf-8"))
+                        result["interruption_resume"] = {
+                            "verified": True,
+                            "optimizer_step": proof["optimizer_step"],
+                            "checkpoint_sha256": proof["checkpoint_sha256"],
+                        }
+                        results.append(result)
+                        continue
                     if "out of memory" not in stderr and "cuda oom" not in stderr:
                         raise
                     retry = self._train_command(phase, model, device_batch=2, loss=loss)
-                    retry.append("--resume")
-                    result = self._run_command(phase, f"{label}-oom-retry", retry)
+                    retry = self._prepare_oom_retry(phase, model, loss, run_dir, retry)
+                    try:
+                        result = self._run_command(phase, f"{label}-oom-retry", retry)
+                    except subprocess.CalledProcessError as retry_error:
+                        retry_stderr = str(retry_error.stderr or "").lower()
+                        if "edgeguard_intentional_interruption" not in retry_stderr:
+                            raise
+                        result = self._run_command(
+                            phase, f"{label}-oom-retry-resume", retry
+                        )
                     result["oom_recovery"] = {
                         "attempts": 1,
                         "device_batch": 2,
@@ -822,14 +1195,98 @@ class ColabPipeline:
                     results.append(result)
         if phase == "screening":
             results.extend(self._screening_evidence())
-        if phase == "final":
-            self._write_release_candidate()
+        return results
+
+    def _recommended_model(self) -> str:
+        selection_path = self.inputs.work_root / "reports/selection/recommended_model.json"
+        if not selection_path.is_file():
+            raise FileNotFoundError("recommended-model selection is missing")
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        model = str(selection.get("recommended_model", ""))
+        if model not in ALL_MODELS or selection.get("selection_role") != "train_select":
+            raise ValueError("recommended-model selection is invalid")
+        return model
+
+    def _run_ablation_phase(self) -> list[dict[str, Any]]:
+        """Run weighted-loss and low-resolution ablations for the selected model."""
+        if self.inputs.class_weights_file is None or not self.inputs.class_weights_file.is_file():
+            raise FileNotFoundError("ablation requires frozen class weights")
+        model = self._recommended_model()
+        variants = (
+            ("median_frequency", "median_frequency", None),
+            ("ce-256x512", "ce", (256, 512)),
+        )
+        results: list[dict[str, Any]] = []
+        for run_name, loss, crop_size in variants:
+            run_dir = self._run_directory("ablation", model, run_name)
+            command = self._train_command(
+                "ablation",
+                model,
+                loss=loss,
+                run_name=run_name,
+                crop_size=crop_size,
+            )
+            if (run_dir / "run_identity.json").is_file() or self._recovery_pointer_exists(
+                "ablation", model, run_name
+            ):
+                command.append("--resume")
+            try:
+                results.append(self._run_command("ablation", f"train-{run_name}", command))
+            except subprocess.CalledProcessError as error:
+                stderr = str(error.stderr or "").lower()
+                if "out of memory" not in stderr and "cuda oom" not in stderr:
+                    raise
+                retry = self._train_command(
+                    "ablation",
+                    model,
+                    device_batch=2,
+                    loss=loss,
+                    run_name=run_name,
+                    crop_size=crop_size,
+                )
+                retry = self._prepare_oom_retry(
+                    "ablation", model, run_name, run_dir, retry
+                )
+                results.append(
+                    self._run_command("ablation", f"train-{run_name}-oom-retry", retry)
+                )
+            checkpoint = self._checkpoint("ablation", model, run_name)
+            for manifest in self.inputs.data_manifests:
+                payload = json.loads(manifest.read_text(encoding="utf-8"))
+                dataset = str(payload["dataset_id"])
+                output = self.inputs.work_root / "evaluation/ablation" / model / run_name / dataset
+                evidence = output / "evaluation.json"
+                if evidence.is_file():
+                    recorded = json.loads(evidence.read_text(encoding="utf-8"))
+                    if recorded.get("checkpoint_sha256") != sha256_file(checkpoint):
+                        raise ValueError("ablation evaluation checkpoint identity mismatch")
+                    continue
+                command = [
+                    sys_executable(),
+                    str(self.inputs.project_root / "scripts/evaluate.py"),
+                    "run",
+                    "--resolved-config",
+                    str(run_dir / "resolved.py"),
+                    "--checkpoint",
+                    str(checkpoint),
+                    "--dataset",
+                    dataset,
+                    "--dataset-manifest",
+                    str(manifest),
+                    "--role",
+                    "train_select",
+                    "--output-dir",
+                    str(output),
+                ]
+                if self.inputs.rare_classes_file is not None:
+                    command.extend(("--rare-classes-file", str(self.inputs.rare_classes_file)))
+                results.append(
+                    self._run_command("ablation", f"evaluate-{run_name}-{dataset}", command)
+                )
         return results
 
     def _write_release_candidate(self) -> Path:
-        """Write the deterministic final-model handoff that still requires human acceptance."""
-        if len(self.inputs.final_models) != 3:
-            raise ValueError("release candidate requires exactly three frozen finalists")
+        """Write the deterministic five-model handoff for policy acceptance."""
         models: list[dict[str, Any]] = []
         artifacts: list[dict[str, Any]] = []
 
@@ -853,7 +1310,7 @@ class ColabPipeline:
             summary = run_dir / "summary.json"
             if not resolved.is_file() or not summary.is_file():
                 raise FileNotFoundError(f"final release source is incomplete: {run_dir}")
-            run_id = f"{CAMPAIGN_ID}-final-{model}-ce"
+            run_id = f"{self.inputs.campaign_id}-final-{model}-ce"
             checkpoint_record = relative_artifact(
                 checkpoint, run_id=run_id, kind="final_checkpoint"
             )
@@ -878,19 +1335,168 @@ class ColabPipeline:
                     },
                 }
             )
+        selection_path = self.inputs.work_root / "reports/selection/recommended_model.json"
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        selection_record = relative_artifact(
+            selection_path,
+            run_id=f"{self.inputs.campaign_id}-selection",
+            kind="recommended_model_selection",
+        )
+        artifacts.append(selection_record)
+        selection_sources = [
+            self.inputs.work_root / "reports/selection/candidate_table.json",
+            *sorted(
+                (self.inputs.work_root / "evaluation/selection").glob("**/evaluation.json")
+            ),
+            *sorted(
+                (self.inputs.work_root / "exports/selection").glob("**/*.validation.json")
+            ),
+        ]
+        for path in selection_sources:
+            artifacts.append(
+                relative_artifact(
+                    path,
+                    run_id=f"{self.inputs.campaign_id}-selection",
+                    kind="selection_source_evidence",
+                )
+            )
+        recommended = str(selection["recommended_model"])
+        for run_name in ("median_frequency", "ce-256x512"):
+            run_dir = self._run_directory("ablation", recommended, run_name)
+            for path, kind in (
+                (self._checkpoint("ablation", recommended, run_name), "ablation_checkpoint"),
+                (run_dir / "resolved.py", "ablation_resolved_config"),
+                (run_dir / "summary.json", "ablation_training_summary"),
+            ):
+                artifacts.append(
+                    relative_artifact(
+                        path,
+                        run_id=f"{self.inputs.campaign_id}-ablation-{recommended}-{run_name}",
+                        kind=kind,
+                    )
+                )
         candidate = {
-            "schema_version": "2.0",
+            "schema_version": "3.0",
             "record_type": "edgeguard_release_candidate",
-            "status": "candidate_requires_human_acceptance",
-            "campaign_id": CAMPAIGN_ID,
+            "status": "candidate_requires_policy_acceptance",
+            "campaign_id": self.inputs.campaign_id,
             "project_commit": self.inputs.project_commit,
             "data_manifest_sha256": self.identity["data_manifest_sha256"],
             "models": models,
             "artifacts": artifacts,
+            "selection_sha256": sha256_file(selection_path),
+            "recommended_model": recommended,
         }
         destination = self.inputs.work_root / "accepted_release.candidate.json"
         atomic_json(destination, candidate)
         return destination
+
+    def _run_accept_phase(self) -> list[dict[str, Any]]:
+        """Create and accept the exact release under the committed owner policy."""
+        if self.inputs.release_policy is None or not self.inputs.release_policy.is_file():
+            raise FileNotFoundError("automatic acceptance requires the release policy")
+        if self.inputs.accepted_release is None:
+            raise ValueError("automatic acceptance requires an output release path")
+        candidate = self._write_release_candidate()
+        selection = self.inputs.work_root / "reports/selection/recommended_model.json"
+        accepted = accept_release_candidate_by_policy(
+            candidate,
+            self.inputs.release_policy,
+            selection,
+            self.inputs.accepted_release,
+        )
+        return [
+            {
+                "label": "policy-accept-release",
+                "return_code": 0,
+                "release_id": accepted["release_id"],
+                "recommended_model": accepted["recommended_model"],
+            }
+        ]
+
+    def _evaluation_manifest_outputs(self) -> dict[str, Path]:
+        outputs = {
+            path.name.removesuffix(".frozen.json"): path
+            for path in self.inputs.evaluation_manifests
+        }
+        if set(outputs) != {"cityscapes", "idd20k"}:
+            raise ValueError(
+                "evaluation manifest filenames must be cityscapes.frozen.json and "
+                "idd20k.frozen.json"
+            )
+        return outputs
+
+    def _run_validation_data_phase(self) -> list[dict[str, Any]]:
+        """Open and audit official source validation only after release acceptance."""
+        self._accepted_release()
+        if (
+            self.inputs.authorization_policy is None
+            or not self.inputs.authorization_policy.is_file()
+        ):
+            raise FileNotFoundError("official validation requires the authorization policy")
+        roots = dict(self.inputs.data_roots)
+        if set(roots) != {"cityscapes", "idd20k"}:
+            raise ValueError("official validation requires both staged dataset roots")
+        outputs = self._evaluation_manifest_outputs()
+        results: list[dict[str, Any]] = []
+        audit_base = self.inputs.work_root / "audit/official-validation"
+        for dataset in ("cityscapes", "idd20k"):
+            frozen = outputs[dataset]
+            if frozen.is_file():
+                validate_dataset_manifest(
+                    frozen,
+                    allowed_roles=("official_source_val",),
+                )
+                continue
+            audit_root = audit_base / dataset
+            report_name = (
+                "dataset_audit" if dataset == "cityscapes" else "idd20k_val_audit"
+            )
+            candidate = audit_root / report_name / "dataset_manifest.candidate.json"
+            report_root = audit_root / report_name
+            if report_root.exists() and not candidate.is_file():
+                quarantine = audit_root / f"{report_name}.incomplete-{time.time_ns()}"
+                report_root.rename(quarantine)
+            if not candidate.is_file():
+                command = [
+                    sys_executable(),
+                    str(self.inputs.project_root / "scripts/audit_dataset.py"),
+                    "--dataset",
+                    dataset,
+                    "--dataset-root",
+                    str(roots[dataset]),
+                    "--output-root",
+                    str(audit_root),
+                    "--source-split",
+                    "val",
+                ]
+                for source in self.inputs.data_manifests:
+                    command.extend(("--source-manifest", str(source)))
+                results.append(
+                    self._run_command("validation-data", f"audit-{dataset}-val", command)
+                )
+            freeze = [
+                sys_executable(),
+                str(self.inputs.project_root / "scripts/audit_dataset.py"),
+                "--dataset",
+                dataset,
+                "--output-root",
+                str(frozen.parent),
+                "--split-manifest",
+                str(candidate),
+                "--freeze-approved",
+                "--authorization-policy",
+                str(self.inputs.authorization_policy),
+                "--campaign-id",
+                self.inputs.campaign_id,
+                "--project-commit",
+                self.inputs.project_commit,
+            ]
+            results.append(
+                self._run_command("validation-data", f"freeze-{dataset}-val", freeze)
+            )
+            validate_dataset_manifest(frozen, allowed_roles=("official_source_val",))
+        return results
 
     def _run_evaluate_phase(
         self,
@@ -901,6 +1507,65 @@ class ColabPipeline:
         results: list[dict[str, Any]] = []
         release_id = str(release["release_id"])
         for source in models:
+            calibration_files: list[Path] = []
+            for manifest in self.inputs.data_manifests:
+                training_manifest = json.loads(manifest.read_text(encoding="utf-8"))
+                dataset = str(training_manifest["dataset_id"])
+                calibration_root = (
+                    self.inputs.work_root
+                    / "evaluation/calibration"
+                    / release_id
+                    / source.model
+                    / dataset
+                )
+                calibration_evidence = calibration_root / "calibration-evidence.npz"
+                calibration_files.append(calibration_evidence)
+                if calibration_evidence.is_file():
+                    continue
+                if calibration_root.exists() and any(calibration_root.iterdir()):
+                    raise ValueError(f"incomplete calibration evidence: {calibration_root}")
+                command = [
+                    sys_executable(),
+                    str(self.inputs.project_root / "scripts/evaluate.py"),
+                    "run",
+                    "--resolved-config",
+                    str(source.resolved_config),
+                    "--checkpoint",
+                    str(source.checkpoint),
+                    "--dataset",
+                    dataset,
+                    "--dataset-manifest",
+                    str(manifest),
+                    "--role",
+                    "train_calibration",
+                    "--save-calibration-evidence",
+                    str(calibration_evidence),
+                    "--output-dir",
+                    str(calibration_root),
+                ]
+                results.append(
+                    self._run_command("evaluate", f"calibration-{source.model}-{dataset}", command)
+                )
+            temperature = (
+                self.inputs.work_root
+                / "calibration"
+                / release_id
+                / source.model
+                / "global-temperature.json"
+            )
+            if not temperature.is_file():
+                command = [
+                    sys_executable(),
+                    str(self.inputs.project_root / "scripts/evaluate.py"),
+                    "calibrate-global",
+                    "--output",
+                    str(temperature),
+                ]
+                for evidence in calibration_files:
+                    command.extend(("--evidence", str(evidence)))
+                results.append(
+                    self._run_command("evaluate", f"temperature-{source.model}", command)
+                )
             for dataset, manifest in sorted(manifests.items()):
                 output = (
                     self.inputs.work_root
@@ -937,6 +1602,8 @@ class ColabPipeline:
                     str(manifest),
                     "--role",
                     "official_source_val",
+                    "--temperature-file",
+                    str(temperature),
                     "--output-dir",
                     str(output),
                 ]
@@ -974,27 +1641,33 @@ class ColabPipeline:
                 raise ValueError(
                     f"incomplete accepted-release export requires review: {output.parent}"
                 )
+            selection = self.inputs.work_root / "exports/selection" / source.model
+            selection_onnx = selection / f"{source.model}.onnx"
+            selection_validation = selection_onnx.with_suffix(".validation.json")
+            selection_payload = json.loads(
+                selection_validation.read_text(encoding="utf-8")
+            )
+            if (
+                selection_payload.get("checkpoint_sha256")
+                != sha256_file(source.checkpoint)
+                or selection_payload.get("onnx_sha256") != sha256_file(selection_onnx)
+                or selection_payload.get("allclose_atol_1e_4_rtol_1e_4") is not True
+            ):
+                raise ValueError("selection ONNX cannot be reused for accepted export")
+            output.parent.mkdir(parents=True)
+            copied: list[str] = []
+            for selection_source in sorted(selection.glob(f"{source.model}.*")):
+                destination = output.parent / selection_source.name
+                shutil.copy2(selection_source, destination)
+                if sha256_file(destination) != sha256_file(selection_source):
+                    raise OSError("accepted export copy hash mismatch")
+                copied.append(destination.name)
             results.append(
-                self._run_command(
-                    "export",
-                    source.model,
-                    [
-                        sys_executable(),
-                        str(self.inputs.project_root / "scripts/export_onnx.py"),
-                        "--resolved-config",
-                        str(source.resolved_config),
-                        "--checkpoint",
-                        str(source.checkpoint),
-                        "--output",
-                        str(output),
-                        "--device",
-                        "cuda",
-                        "--input-height",
-                        "512",
-                        "--input-width",
-                        "1024",
-                    ],
-                )
+                {
+                    "label": source.model,
+                    "return_code": 0,
+                    "reused_hash_verified_selection_export": copied,
+                }
             )
         return results
 
@@ -1002,27 +1675,88 @@ class ColabPipeline:
         assert self.inputs.accepted_release is not None
         output = self.inputs.work_root / "reports/report" / str(release["release_id"])
         manifest = output / "bundle_manifest.json"
-        if manifest.is_file():
+        archive = output.with_suffix(".zip")
+        gallery = self.inputs.work_root / "reports/gallery" / str(release["release_id"])
+        results: list[dict[str, Any]] = []
+        if not (gallery / "gallery_manifest.json").is_file():
+            command = [
+                sys_executable(),
+                str(self.inputs.project_root / "scripts/generate_release_gallery.py"),
+                "--accepted-release",
+                str(self.inputs.accepted_release),
+                "--work-root",
+                str(self.inputs.work_root),
+                "--output-root",
+                str(gallery),
+            ]
+            for evaluation_manifest in self.inputs.evaluation_manifests:
+                command.extend(("--evaluation-manifest", str(evaluation_manifest)))
+            results.append(self._run_command("report", "measured-gallery", command))
+        if manifest.is_file() and archive.is_file():
             payload = json.loads(manifest.read_text(encoding="utf-8"))
             if payload.get("source_release_sha256") != sha256_file(self.inputs.accepted_release):
                 raise ValueError("existing thesis report belongs to another accepted release")
-            return []
-        if output.exists() or output.with_suffix(".zip").exists():
+        elif output.exists() or archive.exists():
             raise ValueError(f"incomplete thesis report requires review: {output}")
-        return [
-            self._run_command(
-                "report",
-                "thesis-bundle",
-                [
-                    sys_executable(),
-                    str(self.inputs.project_root / "scripts/build_thesis_bundle.py"),
-                    "--accepted-release",
-                    str(self.inputs.accepted_release),
-                    "--output-root",
-                    str(output),
-                ],
+        else:
+            results.append(
+                self._run_command(
+                    "report",
+                    "thesis-bundle",
+                    [
+                        sys_executable(),
+                        str(self.inputs.project_root / "scripts/build_thesis_bundle.py"),
+                        "--accepted-release",
+                        str(self.inputs.accepted_release),
+                        "--output-root",
+                        str(output),
+                        "--evidence-root",
+                        str(self.inputs.work_root),
+                    ],
+                )
             )
-        ]
+        atomic_json(
+            self._phase_root("report") / "report_delivery_verification.json",
+            {
+                "release_id": release["release_id"],
+                "bundle_manifest_sha256": sha256_file(manifest),
+                "thesis_archive_sha256": sha256_file(archive),
+                "gallery_manifest_sha256": sha256_file(
+                    gallery / "gallery_manifest.json"
+                ),
+            },
+        )
+        return results
+
+    def _run_package_phase(self, release: dict[str, Any]) -> list[dict[str, Any]]:
+        assert self.inputs.accepted_release is not None
+        output = self.inputs.work_root / "deliveries" / str(release["release_id"])
+        result = self._run_command(
+            "package",
+            "final-delivery",
+            [
+                sys_executable(),
+                str(self.inputs.project_root / "scripts/package_colab_release.py"),
+                "--accepted-release",
+                str(self.inputs.accepted_release),
+                "--work-root",
+                str(self.inputs.work_root),
+                "--project-root",
+                str(self.inputs.project_root),
+                "--output-root",
+                str(output),
+            ],
+        )
+        index = json.loads((output / "release_index.json").read_text(encoding="utf-8"))
+        atomic_json(
+            self._phase_root("package") / "delivery_verification.json",
+            {
+                "release_id": release["release_id"],
+                "release_index_sha256": sha256_file(output / "release_index.json"),
+                "packages": index["packages"],
+            },
+        )
+        return [result]
 
     def _run_phase(self, phase: str) -> dict[str, Any]:
         started = time.perf_counter()
@@ -1036,25 +1770,46 @@ class ColabPipeline:
             for manifest in self.inputs.data_manifests:
                 if not manifest.is_file():
                     raise FileNotFoundError(f"frozen local data manifest is missing: {manifest}")
+        elif phase == "canary":
+            self._verify_canary()
+            commands = []
         elif phase in {"smoke", "pilot", "extension-smoke", "screening", "hpo", "final"}:
             commands = self._run_training_phase(phase)
-        elif phase in {"evaluate", "export", "report"}:
+        elif phase == "selection":
+            commands = self._selection_evidence()
+        elif phase == "ablation":
+            commands = self._run_ablation_phase()
+        elif phase == "accept":
+            commands = self._run_accept_phase()
+        elif phase == "validation-data":
+            commands = self._run_validation_data_phase()
+        elif phase in {"evaluate", "export", "report", "package"}:
             release, models = self._accepted_release()
             self._record_release_verification(phase, release, models)
             if phase == "evaluate":
                 commands = self._run_evaluate_phase(release, models)
             elif phase == "export":
                 commands = self._run_export_phase(release, models)
-            else:
+            elif phase == "report":
                 commands = self._run_report_phase(release)
+            else:
+                commands = self._run_package_phase(release)
         else:
             raise ValueError(f"unsupported internal pipeline phase: {phase}")
         elapsed = time.perf_counter() - started
         scientific_status: Literal["measured", "accepted", "failed", "not_run"] = (
             "not_run"
-            if phase in {"preflight", "restore", "stage-data", "smoke", "extension-smoke"}
+            if phase
+            in {
+                "preflight",
+                "restore",
+                "stage-data",
+                "canary",
+                "smoke",
+                "extension-smoke",
+            }
             else "accepted"
-            if phase == "report"
+            if phase in {"accept", "validation-data", "report", "package"}
             else "measured"
         )
         return self._complete_phase(
@@ -1079,7 +1834,7 @@ class ColabPipeline:
                 failure = {
                     "schema_version": "2.0",
                     "record_type": "edgeguard_pipeline_failure",
-                    "campaign_id": CAMPAIGN_ID,
+                    "campaign_id": self.inputs.campaign_id,
                     "phase": phase,
                     "status": "failed",
                     "identity_sha256": self._phase_identity_sha256(phase),
@@ -1092,7 +1847,7 @@ class ColabPipeline:
         return {
             "schema_version": "2.0",
             "record_type": "edgeguard_colab_pipeline_result",
-            "campaign_id": CAMPAIGN_ID,
+            "campaign_id": self.inputs.campaign_id,
             "target": target,
             "identity_sha256": self.identity_sha256,
             "completed": completed,
@@ -1102,6 +1857,4 @@ class ColabPipeline:
 
 def sys_executable() -> str:
     """Resolve the orchestrator interpreter without importing platform state elsewhere."""
-    import sys
-
     return sys.executable

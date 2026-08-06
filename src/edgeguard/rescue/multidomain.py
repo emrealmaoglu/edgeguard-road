@@ -376,6 +376,67 @@ def freeze_candidate_manifest(
     return payload
 
 
+def freeze_candidate_manifest_by_policy(
+    candidate_path: Path,
+    output_path: Path,
+    *,
+    policy_path: Path,
+    campaign_id: str,
+    project_commit: str,
+) -> dict[str, Any]:
+    """Freeze an exact source candidate or post-release validation under owner policy."""
+    payload = validate_dataset_manifest(candidate_path, require_frozen=False)
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    if (
+        policy.get("schema_version") != "1.0"
+        or policy.get("record_type") != "edgeguard_owner_authorization_policy"
+        or policy.get("decision") != "preauthorize_exact_pipeline"
+        or policy.get("owner_approved") is not True
+        or policy.get("campaign_id") != campaign_id
+    ):
+        raise PermissionError("dataset policy is not valid for this campaign")
+    if payload.get("split_state") != "candidate_requires_human_freeze":
+        raise ValueError("only a candidate manifest can be policy-frozen")
+    dataset_id = str(payload["dataset_id"])
+    if dataset_id not in set(policy.get("scientific_sources", [])):
+        raise PermissionError("dataset is outside the owner-authorized source set")
+    roles = set(payload.get("roles", {}))
+    if roles == {"official_source_val"}:
+        if policy.get("official_source_validation_allowed_after_acceptance") is not True:
+            raise PermissionError("official source validation is not authorized")
+        if payload.get("source_split") != "val" or payload.get("scientific_eligible") is not True:
+            raise ValueError("official validation candidate is incomplete or ineligible")
+        approval_scope = "post_acceptance_official_source_validation"
+    else:
+        expected = policy.get("training_manifest_candidates", {}).get(dataset_id)
+        if not isinstance(expected, dict):
+            raise PermissionError("training candidate has no exact policy identity")
+        if sha256_file(candidate_path) != expected.get("file_sha256"):
+            raise ValueError("training candidate hash differs from owner authorization")
+        valid_count = sum(int(value) for value in payload.get("counts", {}).values())
+        if valid_count != int(expected.get("expected_valid_samples", -1)):
+            raise ValueError("training candidate count differs from owner authorization")
+        excluded = payload.get("excluded_samples", [])
+        if not isinstance(excluded, list) or len(excluded) != int(
+            expected.get("expected_quarantined_samples", -1)
+        ):
+            raise ValueError("training candidate quarantine differs from owner authorization")
+        approval_scope = "exact_training_manifest_candidate"
+    payload["split_state"] = "frozen"
+    payload["human_freeze_approved"] = True
+    payload["approval_method"] = "owner_preauthorized_policy"
+    payload["approval_scope"] = approval_scope
+    payload["campaign_id"] = campaign_id
+    payload["project_commit"] = project_commit
+    payload["approved_candidate_sha256"] = sha256_file(candidate_path)
+    payload["authorization_policy_sha256"] = sha256_file(policy_path)
+    payload["human_reviewer"] = policy.get("authorized_by")
+    payload["manifest_sha256"] = _manifest_hash(payload)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(canonical_json(payload) + "\n", encoding="utf-8")
+    return payload
+
+
 def build_cityscapes_dataset_manifest(
     dataset_root: Path,
     split_manifest: Path,

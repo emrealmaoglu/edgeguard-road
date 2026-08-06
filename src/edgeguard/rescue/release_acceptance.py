@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from edgeguard.rescue.colab_recovery import atomic_json
-from edgeguard.serialization import sha256_file
+from edgeguard.serialization import sha256_file, sha256_payload
 
 
 def _verify_artifact(root: Path, payload: object, label: str) -> None:
@@ -85,6 +85,91 @@ def accept_release_candidate(
         "accepted_candidate_sha256": sha256_file(candidate_path),
         "human_review_receipt_sha256": sha256_file(review_receipt_path),
         "human_reviewer": reviewer,
+        "artifacts": [{**artifact, "scientific_status": "accepted"} for artifact in artifacts],
+    }
+    atomic_json(output_path, accepted)
+    return accepted
+
+
+def accept_release_candidate_by_policy(
+    candidate_path: Path,
+    policy_path: Path,
+    selection_path: Path,
+    output_path: Path,
+) -> dict[str, Any]:
+    """Promote an exact five-model candidate under owner-preauthorized rules."""
+    if output_path.exists():
+        existing = json.loads(output_path.read_text(encoding="utf-8"))
+        if existing.get("accepted_candidate_sha256") == sha256_file(candidate_path):
+            return existing
+        raise FileExistsError("accepted release overwrite is not permitted")
+    if output_path.parent.resolve() != candidate_path.parent.resolve():
+        raise ValueError("accepted release must remain beside its release candidate")
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    if (
+        candidate.get("schema_version") != "3.0"
+        or candidate.get("record_type") != "edgeguard_release_candidate"
+        or candidate.get("status") != "candidate_requires_policy_acceptance"
+    ):
+        raise ValueError("invalid policy-acceptance release candidate")
+    if (
+        policy.get("schema_version") != "1.0"
+        or policy.get("record_type") != "edgeguard_owner_authorization_policy"
+        or policy.get("decision") != "preauthorize_exact_pipeline"
+        or policy.get("owner_approved") is not True
+    ):
+        raise PermissionError("release policy is not an owner authorization")
+    if candidate.get("campaign_id") != policy.get("campaign_id"):
+        raise ValueError("release policy campaign mismatch")
+    expected_models = tuple(str(value) for value in policy.get("final_models", []))
+    models = candidate.get("models")
+    if not isinstance(models, list) or tuple(
+        record.get("model") for record in models
+    ) != expected_models:
+        raise ValueError("release candidate does not contain the authorized model order")
+    if selection.get("recommended_model") not in expected_models:
+        raise ValueError("release selection does not recommend an authorized model")
+    if selection.get("selection_role") != "train_select":
+        raise ValueError("release policy forbids final-only data in model selection")
+    if selection.get("official_validation_used_for_selection") is not False:
+        raise ValueError("release policy forbids official validation model selection")
+    if candidate.get("selection_sha256") != sha256_file(selection_path):
+        raise ValueError("release candidate selection identity mismatch")
+    artifacts = candidate.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise ValueError("release candidate has no artifacts")
+    for index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict) or artifact.get("scientific_status") != "measured":
+            raise ValueError("release candidate contains a non-measured artifact")
+        _verify_artifact(candidate_path.parent, artifact, f"artifact[{index}]")
+    for index, model in enumerate(models):
+        if not isinstance(model, dict):
+            raise ValueError("release candidate model record is invalid")
+        _verify_artifact(candidate_path.parent, model.get("checkpoint"), f"model[{index}]")
+        _verify_artifact(
+            candidate_path.parent,
+            model.get("resolved_config"),
+            f"model[{index}].resolved_config",
+        )
+    release_id = f"{candidate['campaign_id']}-{sha256_file(candidate_path)[:12]}"
+    accepted = {
+        **candidate,
+        "record_type": "edgeguard_accepted_release",
+        "status": "accepted",
+        "release_id": release_id,
+        "acceptance_method": "owner_preauthorized_policy",
+        "accepted_candidate_sha256": sha256_file(candidate_path),
+        "acceptance_policy_sha256": sha256_file(policy_path),
+        "acceptance_decision_sha256": sha256_payload(
+            {
+                "candidate": sha256_file(candidate_path),
+                "policy": sha256_file(policy_path),
+                "selection": sha256_file(selection_path),
+            }
+        ),
+        "recommended_model": selection["recommended_model"],
         "artifacts": [{**artifact, "scientific_status": "accepted"} for artifact in artifacts],
     }
     atomic_json(output_path, accepted)

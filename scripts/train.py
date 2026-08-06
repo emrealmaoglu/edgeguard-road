@@ -44,12 +44,20 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--weight-decay", type=float)
     parser.add_argument("--scheduler", choices=("poly", "cosine"), default="poly")
     parser.add_argument("--warmup-ratio", type=float, choices=(0.01, 0.03, 0.05), default=0.03)
+    parser.add_argument("--run-name")
+    parser.add_argument("--max-steps", type=int)
+    parser.add_argument("--crop-height", type=int)
+    parser.add_argument("--crop-width", type=int)
+    parser.add_argument("--intentional-interrupt-step", type=int)
+    parser.add_argument("--acceptance-test", action="store_true")
     return parser
 
 
 def main() -> int:
     """Resolve the shared protocol and execute a bounded training stage."""
     args = _parser().parse_args()
+    if (args.crop_height is None) != (args.crop_width is None):
+        raise ValueError("crop override requires both --crop-height and --crop-width")
     protocol = load_rescue_config(args.config.resolve())
     manifests = tuple(path.resolve() for path in args.data_manifest)
     if args.stage == "hpo":
@@ -71,6 +79,7 @@ def main() -> int:
                 device_batch=args.device_batch,
                 workers=args.workers,
                 precision=args.precision,
+                acceptance_test=args.acceptance_test,
             )
             for model in select_hpo_models(
                 args.candidate_table.resolve(), protocol.datasets.training
@@ -110,6 +119,14 @@ def main() -> int:
         weight_decay=args.weight_decay,
         scheduler=args.scheduler,
         warmup_ratio=args.warmup_ratio,
+        run_name=args.run_name,
+        max_steps_override=args.max_steps,
+        crop_size_override=(
+            (args.crop_height, args.crop_width)
+            if args.crop_height is not None and args.crop_width is not None
+            else None
+        ),
+        intentional_interrupt_optimizer_step=args.intentional_interrupt_step,
     )
     print(canonical_json(result))
     return 0

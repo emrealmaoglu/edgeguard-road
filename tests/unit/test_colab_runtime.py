@@ -47,9 +47,10 @@ def _receipt(tmp_path: Path) -> Path:
                 },
                 "environment": {"cuda_available": True},
                 "core_model_probe": {
-                    "model_count": 3,
+                    "model_count": 5,
                     "checkpoint_resume_verified": True,
-                    "fp16_finite_model_count": 3,
+                    "checkpoint_resume_model_count": 5,
+                    "fp16_finite_model_count": 5,
                 },
             }
         ),

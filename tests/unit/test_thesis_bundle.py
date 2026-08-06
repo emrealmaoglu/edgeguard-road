@@ -64,5 +64,5 @@ def test_thesis_bundle_keeps_sources_latex_and_claim_hashes(tmp_path: Path) -> N
 
 def test_thesis_bundle_rejects_unaccepted_release(tmp_path: Path) -> None:
     manifest = _release(tmp_path, status="measured")
-    with pytest.raises(ValueError, match="human-accepted"):
+    with pytest.raises(ValueError, match="accepted release"):
         build_thesis_bundle(manifest, tmp_path / "thesis_bundle")

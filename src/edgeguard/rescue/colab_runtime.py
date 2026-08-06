@@ -49,11 +49,11 @@ def resolve_colab_runtime(
         raise ValueError("selected semantic runtime has no verified CUDA")
     probe = payload.get("core_model_probe")
     if not isinstance(probe, dict) or (
-        probe.get("model_count") != 3
+        probe.get("model_count") != 5
         or probe.get("checkpoint_resume_verified") is not True
-        or probe.get("fp16_finite_model_count") != 3
+        or probe.get("fp16_finite_model_count") != 5
     ):
-        raise ValueError("selected runtime lacks the three-model reload gate")
+        raise ValueError("selected runtime lacks the five-model reload gate")
     return {
         "schema_version": "2.0",
         "record_type": "edgeguard_resolved_colab_runtime",

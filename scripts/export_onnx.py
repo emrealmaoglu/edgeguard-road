@@ -30,7 +30,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def export_and_verify(args: argparse.Namespace) -> dict[str, Any]:
     """Perform static export, checker validation, equivalence, and CPU timing."""
-    if args.output.exists():
+    golden_input_path = args.output.with_suffix(".golden-input.npy")
+    golden_output_path = args.output.with_suffix(".golden-output.npy")
+    if args.output.exists() or golden_input_path.exists() or golden_output_path.exists():
         raise FileExistsError(f"refusing to overwrite ONNX artifact: {args.output}")
     if min(args.input_height, args.input_width, args.iterations) <= 0 or args.warmup < 0:
         raise ValueError("input size/iterations must be positive and warmup cannot be negative")
@@ -93,6 +95,8 @@ def export_and_verify(args: argparse.Namespace) -> dict[str, Any]:
     if expected.shape != actual.shape or not bool(np.isfinite(actual).all()):
         raise RuntimeError("ONNX output shape/finiteness check failed")
     difference = np.abs(expected.astype(np.float64) - actual.astype(np.float64))
+    np.save(golden_input_path, feed["normalized_rgb"], allow_pickle=False)
+    np.save(golden_output_path, expected.astype(np.float32), allow_pickle=False)
     for _ in range(args.warmup):
         session.run(["native_logits"], feed)
     timings = []
@@ -117,6 +121,10 @@ def export_and_verify(args: argparse.Namespace) -> dict[str, Any]:
             np.allclose(expected, actual, atol=1.0e-4, rtol=1.0e-4)
         ),
         "onnx_sha256": sha256_file(args.output),
+        "golden_input_sha256": sha256_file(golden_input_path),
+        "golden_output_sha256": sha256_file(golden_output_path),
+        "golden_input_file": golden_input_path.name,
+        "golden_output_file": golden_output_path.name,
         "checkpoint_sha256": sha256_file(args.checkpoint),
         "onnx_bytes": args.output.stat().st_size,
         "onnxruntime_cpu": {

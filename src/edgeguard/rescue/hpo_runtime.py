@@ -126,6 +126,7 @@ def run_hpo_study(
     device_batch: int | None = None,
     workers: int | None = None,
     precision: str = "auto",
+    acceptance_test: bool = False,
 ) -> dict[str, Any]:
     """Run/resume one 12-trial TPE study with 1.5k/3k successive-halving rungs."""
     try:
@@ -158,13 +159,16 @@ def run_hpo_study(
         except ValueError:
             pass
     storage = f"sqlite:///{database_path}"
+    pruning_steps = (1,) if acceptance_test else protocol.hpo.pruning_steps
+    maximum_steps = 2 if acceptance_test else protocol.hpo.max_steps
+    target_trials = 1 if acceptance_test else protocol.hpo.trials_per_model
     study = optuna.create_study(
         study_name=f"edgeguard-{model}-multidomain-v1",
         storage=storage,
         direction="maximize",
         sampler=optuna.samplers.TPESampler(seed=protocol.hpo.sampler_seed),
         pruner=optuna.pruners.SuccessiveHalvingPruner(
-            min_resource=protocol.hpo.pruning_steps[0], reduction_factor=2
+            min_resource=pruning_steps[0], reduction_factor=2
         ),
         load_if_exists=True,
     )
@@ -220,7 +224,7 @@ def run_hpo_study(
             raise optuna.TrialPruned(f"duplicate of trial {duplicate.number}")
         run_number = int(resumed_trial) if resumed_trial is not None else trial.number
         run_name = f"trial-{run_number:03d}"
-        rungs = (*protocol.hpo.pruning_steps, protocol.hpo.max_steps)
+        rungs = (*pruning_steps, maximum_steps)
         last_macro = 0.0
         for rung_index, rung in enumerate(rungs):
             previous = study.trials[int(resumed_trial)] if resumed_trial is not None else None
@@ -249,7 +253,7 @@ def run_hpo_study(
                 warmup_ratio=float(warmup_ratio),
                 run_name=run_name,
                 max_steps_override=rung,
-                scheduler_steps_override=protocol.hpo.max_steps,
+                scheduler_steps_override=maximum_steps,
                 recovery_root=recovery_root,
                 campaign_id=campaign_id,
                 project_commit=project_commit,
@@ -279,10 +283,10 @@ def run_hpo_study(
                     temperature_file=None,
                     max_reliability_pixels=1,
                     rare_classes_file=(
-                        rare_classes_file if rung == protocol.hpo.max_steps else None
+                        rare_classes_file if rung == maximum_steps else None
                     ),
                     dataset_manifest=manifest,
-                    collect_classwise=rung == protocol.hpo.max_steps,
+                    collect_classwise=rung == maximum_steps,
                 )
                 domain_scores.append(_metric(result["metrics"], "mIoU"))
                 if result["rare_class_mIoU"] is not None:
@@ -294,11 +298,10 @@ def run_hpo_study(
             trial.report(last_macro, step=rung)
             _snapshot(study, study_root / "trials.snapshot.json", model=model, manifests=manifests)
             backup_study()
-            if rung != protocol.hpo.max_steps and trial.should_prune():
+            if rung != maximum_steps and trial.should_prune():
                 raise optuna.TrialPruned(f"pruned at {rung} optimizer steps")
         return last_macro
 
-    target_trials = protocol.hpo.trials_per_model
     attempt_budget = target_trials * 2
     attempts = 0
     terminal = [trial for trial in study.trials if trial.state.name in {"COMPLETE", "PRUNED"}]
@@ -322,7 +325,7 @@ def run_hpo_study(
     best = sorted(
         tied,
         key=lambda trial: (
-            -float(trial.user_attrs.get(f"rare_macro_{protocol.hpo.max_steps}", -1.0)),
+            -float(trial.user_attrs.get(f"rare_macro_{maximum_steps}", -1.0)),
             -float(trial.value),
             trial.number,
         ),
@@ -336,7 +339,9 @@ def run_hpo_study(
         "best_trial": best.number,
         "best_domain_macro_mIoU": float(best.value),
         "best_params": best.params,
-        "human_config_freeze_required": True,
+        "human_config_freeze_required": False,
+        "execution_mode": "acceptance" if acceptance_test else "production",
+        "scientific_evidence": not acceptance_test,
     }
     (study_root / "result.json").write_text(canonical_json(result) + "\n", encoding="utf-8")
     append_run_ledger(output_root / "run_ledger.jsonl", operation="semantic_hpo", result=result)

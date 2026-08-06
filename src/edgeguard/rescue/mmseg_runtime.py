@@ -436,6 +436,7 @@ def build_training_config(
     campaign_id: str | None = None,
     project_commit: str | None = None,
     identity_sha256: str | None = None,
+    intentional_interrupt_optimizer_step: int | None = None,
 ) -> Any:
     """Resolve one standard MMSeg Runner config with no custom loop or hook."""
     mmengine = _config_import()
@@ -611,8 +612,17 @@ def build_training_config(
             "status_path": str(recovery_root.parents[1] / "state/status.json"),
             "optimizer_interval": 500,
             "maximum_seconds": 600,
+            "intentional_interrupt_optimizer_step": intentional_interrupt_optimizer_step,
         }
         cfg.custom_hooks = [*list(cfg.get("custom_hooks", [])), recovery_hook]
+    cfg.custom_hooks = [
+        *list(cfg.get("custom_hooks", [])),
+        {
+            "type": "EdgeGuardMetricsHistoryHook",
+            "accumulation": protocol.gradient_accumulation,
+            "optimizer_interval": 50,
+        },
+    ]
     cfg.default_hooks.pop("visualization", None)
     cfg.visualizer = {
         "_scope_": "mmengine",
@@ -679,9 +689,18 @@ def train_model(
     recovery_root: Path | None = None,
     campaign_id: str | None = None,
     project_commit: str | None = None,
+    crop_size_override: tuple[int, int] | None = None,
+    intentional_interrupt_optimizer_step: int | None = None,
 ) -> dict[str, Any]:
     """Train through the stock MMEngine Runner and record only measured evidence."""
     torch, mmengine, mmseg = _imports()
+    if crop_size_override is not None:
+        if len(crop_size_override) != 2 or min(crop_size_override) <= 0:
+            raise ValueError("crop override must contain two positive integers")
+        protocol = replace(protocol, crop_size=crop_size_override)
+    scientific_protocol = asdict(protocol)
+    scientific_protocol["device_batch"] = None
+    scientific_protocol["gradient_accumulation"] = None
     resolved_device_batch = protocol.device_batch if device_batch is None else device_batch
     if resolved_device_batch <= 0 or protocol.effective_batch % resolved_device_batch:
         raise ValueError("device batch must be a positive divisor of frozen effective batch")
@@ -694,6 +713,18 @@ def train_model(
         gradient_accumulation=protocol.effective_batch // resolved_device_batch,
         workers=resolved_workers,
     )
+    stage = protocol.stages[stage_name]
+    assert stage.max_steps is not None
+    resolved_max_steps = stage.max_steps if max_steps_override is None else max_steps_override
+    resolved_scheduler_steps = (
+        resolved_max_steps if scheduler_steps_override is None else scheduler_steps_override
+    )
+    if resolved_max_steps <= 0 or resolved_scheduler_steps < resolved_max_steps:
+        raise ValueError("step overrides must be positive and scheduler horizon cannot be shorter")
+    if intentional_interrupt_optimizer_step is not None and not (
+        0 < intentional_interrupt_optimizer_step < resolved_max_steps
+    ):
+        raise ValueError("intentional interruption must be inside the optimizer-step budget")
     if precision == "auto":
         if not torch.cuda.is_available():
             precision = "fp32"
@@ -750,7 +781,7 @@ def train_model(
         "model": model_name,
         "stage": stage_name,
         "loss": loss,
-        "protocol_sha256": sha256_payload(asdict(protocol)),
+        "protocol_sha256": sha256_payload(scientific_protocol),
         "split_manifest_sha256": sha256_file(split_manifest) if split_manifest else None,
         "dataset_manifest_sha256s": [sha256_file(path) for path in manifests],
         "datasets": datasets,
@@ -763,11 +794,12 @@ def train_model(
             sha256_file(pretrained_manifest) if pretrained_manifest else None
         ),
         "upstream_config_sha256": sha256_file(upstream),
-        "device_batch": protocol.device_batch,
-        "gradient_accumulation": protocol.gradient_accumulation,
         "effective_batch": protocol.effective_batch,
         "workers": protocol.workers,
         "precision": precision,
+        "max_steps": resolved_max_steps,
+        "scheduler_steps": resolved_scheduler_steps,
+        "intentional_interrupt_optimizer_step": intentional_interrupt_optimizer_step,
         "project_commit": project_commit,
         "class_weights_sha256": (
             sha256_file(audit_report) if loss == "median_frequency" and audit_report else None
@@ -830,6 +862,7 @@ def train_model(
         campaign_id=campaign_id,
         project_commit=project_commit,
         identity_sha256=identity_sha256,
+        intentional_interrupt_optimizer_step=intentional_interrupt_optimizer_step,
     )
     resolved_path = work_dir / "resolved.py"
     cfg.dump(str(resolved_path))
