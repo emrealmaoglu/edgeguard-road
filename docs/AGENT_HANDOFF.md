@@ -1,89 +1,75 @@
 # Agent Handoff
 
-- **Milestone:** updated phase-one road perception and pre-Colab implementation.
-- **Branch:** `rescue/semantic-first`; exact-commit Colab delivery publication.
-- **Pinned Colab implementation:** `5cc578cb9f15aa7a560108840f3055ae2f4e4733`.
-- **Classification:** locally tested engineering implementation; no new scientific or
-  Jetson measurement.
-- **Pin enforcement:** strict in Colab; the no-clone local harness only reports a later
-  checkout so branch-tip CI can validate the immutable notebook payload.
-- **Observed Colab incident:** the first real inventory child process resolved its relative
-  config default from `/content`, not the checkout. Active CLI defaults and every notebook
-  subprocess working directory are repository-root anchored. Subprocess-tail logging exposed
-  the exact cause; hash-read resilience and mandatory post-copy verification remain active.
-- **Observed IDD incident:** the official Part I/II preparation produced no output for over
-  12 hours. The old gzip seek pattern, duplicate hash reads, serial dual-mask rendering,
-  missing liveness, and orphanable child process are corrected. Do not rerun the old
-  `6745106` payload.
+- **Milestone:** Colab v2 hermetic runtime and resumable semantic campaign implementation.
+- **Branch:** `stabilize/colab-v2`, based on `origin/rescue/semantic-first`.
+- **Classification:** locally tested engineering implementation; real Colab, Drive training,
+  scientific, accepted-release, and Jetson measurements are not run.
+- **Publication state:** no commit, push, merge, tag, release, or artifact promotion was
+  performed. The notebook pin remains the prior reviewed commit until explicit approval.
 
-## Delivered
+## Root causes closed in code
 
-- Safe archive preparation for Cityscapes, official/quarantined BDD100K, and official
-  IDD20K Part I/II, including published identities, safe extraction, collision checks,
-  pinned IDD polygon rendering, Part II JPG support, and immutable native labels.
-- Kaggle BDD is fail-closed as `scientific_eligible=false`; active scientific HPO and
-  final training use Cityscapes + IDD20K.
-- Drive/Colab notebooks enforce the 175 GiB + 25 GiB policy; Cityscapes uses its verified
-  bundle and IDD publishes resumable 500-sample canonical shards.
-- Immutable content-addressed recovery retains current and previous generations. Full
-  optimizer, scheduler, AMP, sampler and RNG state is published every 500 optimizer steps
-  or ten minutes; incomplete incoming artifacts are never accepted.
-- HPO persists each rung and an atomic SQLite backup. Input/output hash completion receipts
-  make a second Run all a no-op for verified stages.
-- IDD preparation now reads each gzip TAR forward once, hashes archives once, renders
-  canonical masks through a reviewed LUT with bounded workers, and reports extraction,
-  mask, bundle, staging and disk progress. Verified archive cache survives a failed retry.
-- Interrupting a notebook command now terminates its complete subprocess group with a
-  bounded TERM-to-KILL escalation, preventing hidden duplicate preparation processes.
-- Colab runtime selection is receipt-driven for both hosted-current and isolated-Python
-  paths; the previous hard-coded fallback interpreter/checkout mismatch is removed.
-- Notebook-wide failure reporting captures bootstrap, Python and failed subprocess
-  errors into redacted JSON plus a small downloadable ZIP in Drive. It records stage,
-  commit, platform, disk and hashed bounded logs; data/model payloads are excluded.
-- Selective campaign snapshots exclude staged data. Small review ZIPs expose reports,
-  manifests and thesis figures for browser download while excluding models/data.
-- Real frozen manifests generate class-distribution CSV and hashed 300-DPI PNG/PDF
-  figures; notebook local mode executed every delivery code cell without external work.
-- Connected Drive was inspected read-only. The implementation now supports the observed
-  legacy/current Cityscapes paths and exact 6.99 GB bundle without moving or recompressing
-  them; new BDD/IDD storage remains additive.
-- The repeated Drive inspection confirmed IDD Part I/II and `bdd100k.zip` are now in
-  `private_inputs/`; local archives were intentionally removed for space. Inventory and
-  notebook preparation use this placement directly without a Drive migration.
-- Semantic-derived road/corridor, regions, confidence, entropy, unreliable pixels, and
-  deterministic operational-attention outputs in prediction and Streamlit.
-- Road/component evaluation metrics and explicit non-instance/non-physical-risk bounds.
-- Per-frame MSP, normalized entropy, maximum logit, energy, source-only shift reference,
-  source/external AUROC/AP and alert-rate evidence.
-- Dry-run-first TensorRT FP16 build and target-only sustained Jetson benchmark contracts;
-  neither changes power mode or overwrites evidence.
-- Fail-closed RTMDet-Tiny activation gate for measured phase-one, 25W p95, memory,
-  remaining budget, and official BDD detection provenance.
-- Charter, state, tasks, runbook, experiment and claim matrices now describe one current
-  semantic thesis rather than the legacy detection/OOD/temporal campaign.
+- uv is exactly `0.8.8`; the removed `--upgrade-strategy only-if-needed` option is gone.
+- A single managed Python 3.11.13 environment replaces hosted/fallback resolution.
+- NumPy 1.26.4 and PyTorch 2.1.1/cu121 are installed by one hash-locked `uv pip sync`.
+- MMEngine 0.10.7 and mmcv-lite 2.1.0 are removed from the main dependency solution and
+  installed together from a two-wheel hash lock with `--no-deps`. The main lock directly
+  supplies `rich`; GUI OpenCV is rejected and headless OpenCV 4.10.0.84 is mandatory.
+- MMSegmentation is frozen at v1.2.2 commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`
+  and installed without dependency resolution. Failure writes `failure.json`; no other
+  matrix is silently selected.
+- The notebook generator imports `canonical_json`, fixing the PR #1 Ruff failure at source.
 
-## Verification
+## Delivered contracts
 
-- `ruff format --check .`: 293 files formatted.
-- `ruff check .`: passed.
-- `mypy src/edgeguard`: 110 source files passed.
-- `pytest -q`: 430 passed, 10 skipped.
-- Both delivery notebooks regenerate, contain no outputs, and all 17 code cells execute
-  in the external-action-free local contract runner.
-- All active command help surfaces and Python compile-all passed.
-- `git diff --check` passed; no machine-local path or credential marker was found in
-  active code, configuration, documentation, or notebooks.
+- `semantic-cs-idd-v2` 3→5 gate: core canary/smoke/pilot, extension smoke, five-model
+  screening, top-two HPO, three explicit finalists, and one CE/weighted-CE ablation.
+- CUDA canary checks FP32 forward/backward, finite AMP/FP16 output/loss/gradients, and exact
+  checkpoint reload for SegFormer-B0, Fast-SCNN and PIDNet-S.
+- Python orchestrator owns prerequisite closure, resume identity, one OOM retry with
+  effective batch four, screening evaluation/ONNX/reporting, and uniform artifacts.
+- Public orchestrator targets are exactly `smoke`, `pilot`, `screening`, `hpo`, `final`,
+  `evaluate`, `export`, and `report`. The final target writes a measured release candidate;
+  later targets require a separately human-approved, hash-bound accepted release.
+- Training/validation manifests cannot be frozen merely by selecting a later target.
+  Candidate SHA-256, campaign, project commit, reviewer, and decision must match an explicit
+  human review receipt. Cityscapes official val now has a separate final-only manifest.
+- Accepted final checkpoints are restored from immutable Drive generations before later
+  phases, then rechecked against the accepted release hash.
+- Streamlit accepted-bundle mode, cached tables/models, single active model resource, CPU
+  fallback, calibration/failure review and Jetson evidence page.
+- Accepted-only thesis collector with source files, LaTeX, provenance, hash-bound claim
+  index and honest `not_run` coverage.
+- Jetson handoff ZIP with static ONNX and golden vectors; TensorRT stays target-built.
 
-## Evidence boundary and next action
+## Local verification
 
-No archive was extracted locally, no Drive write/Colab/GPU/official-validation/ACDC/sealed
-run occurred, and no ONNX/TensorRT/Jetson artifact was created. The user-managed archive
-store contains official Cityscapes, official IDD20K I/II, and a provisional Kaggle BDD
-mirror. Run `notebooks/EdgeGuard_Data_Preflight_Colab.ipynb` against the existing
-`private_inputs/` uploads. Then audit/freeze Cityscapes + IDD scientific manifests;
-audit BDD separately without promoting it into HPO or the main thesis table.
+- Mypy: 115 source files passed.
+- Pytest: 459 passed and 2 environment-gated skips. One additional test is deliberately
+  red until the approved application commit exists and both tracked notebooks can be
+  regenerated against that immutable SHA.
+- A temporary, non-delivery generation compiled every code cell and produced identical
+  hashes twice. The tracked notebooks remain on the prior pin as required by the two-commit
+  delivery protocol.
+- Runtime lock SHA-256 values are
+  `ecf59a924106d68ca49cc8e4a6c52e1206fc22fa91fb7e41a0f18069fa25865d` (main) and
+  `bf96b00b6753d4eacd3a62e18eda6c96e0f26fcd5679d7926f66cc930fd4e924` (OpenMMLab).
+- Installer, pipeline, thesis and Jetson package CLIs load successfully; source/script
+  compilation and `git diff --check` pass.
 
-Do not open ACDC or sealed external data before the final model/preprocessing/reliability
-freeze. Do not start RTMDet-Tiny unless `scripts/check_detection_gate.py` returns a
-fully evidenced pass. No dataset license acceptance, sealed submission, scientific-result
-approval or privileged Jetson operation is implied by this handoff.
+## External acceptance sequence
+
+1. Review the diff and run G0 locally/CI; approve a commit/push only if desired.
+2. Pin the resulting clean commit in both generated delivery notebooks.
+3. Run two independent clean Colab GPU canaries and compare lock hashes (G1).
+4. Reuse the verified Cityscapes bundle and IDD receipts, then human-freeze v2 manifests
+   only through review receipts.
+5. Run smoke with a deliberate interruption/resume, then pilot, extension smoke, screening,
+   HPO, and final as separate targets.
+6. Review `accepted_release.candidate.json`, create a candidate-hash-bound human receipt,
+   and promote it with `scripts/accept_colab_release.py` before evaluate/export/report.
+7. Transfer the Jetson bundle, inspect JetPack/L4T/TensorRT versions, build FP16 on-device,
+   and run the existing 25W sustained benchmark. Do not auto-upgrade or change power mode.
+
+No external dataset, checkpoint, ONNX, TensorRT engine, Drive artifact, model metric, tag,
+or Git publication is implied by this handoff.

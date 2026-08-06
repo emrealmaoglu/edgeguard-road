@@ -93,14 +93,14 @@ def test_latest_checkpoint_uses_marker_or_numeric_iteration(tmp_path: Path) -> N
 
 
 def test_action_planner_is_run_all_and_dataset_conditional() -> None:
-    review = action_requirements("review")
-    assert review["datasets"] == []
-    assert review["runtime_required"] is False
+    report = action_requirements("report")
+    assert report["datasets"] == ["cityscapes", "idd20k"]
+    assert report["runtime_required"] is True
     hpo = action_requirements("hpo")
     assert hpo["datasets"] == ["cityscapes", "idd20k"]
     assert hpo["training_stages"] == ["smoke", "pilot", "screening"]
     assert hpo["runtime_required"] is True
-    final = action_requirements("source_eval", allow_final_data=True)
+    final = action_requirements("evaluate", allow_final_data=True)
     assert "cityscapes_official_val" in final["datasets"]
     with pytest.raises(ValueError, match="target must be"):
         action_requirements("external")

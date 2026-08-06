@@ -29,12 +29,15 @@ After the training notebook stages verified bundles into `/content/edgeguard-dat
 
 ```bash
 python scripts/audit_dataset.py --dataset cityscapes --dataset-root /content/edgeguard-data/cityscapes --output-root /content/work/audit/cityscapes
-python scripts/audit_dataset.py --dataset idd20k --dataset-root /content/edgeguard-data/idd20k --output-root /content/work/audit/idd20k --checkpoint-root /content/drive/MyDrive/EdgeGuard/campaigns/semantic-cs-idd-v1/state/audit-catalog
+python scripts/audit_dataset.py --dataset idd20k --dataset-root /content/edgeguard-data/idd20k --output-root /content/work/audit/idd20k --checkpoint-root /content/drive/MyDrive/EdgeGuard/campaigns/semantic-cs-idd-v2/state/audit-catalog
 ```
 
 Review corrupt/geometry/unknown-label/ignore/class/group/duplicate evidence. Freeze only
-group-atomic candidates with no cross-role leakage. Generate rare-five classes and
-median-frequency weights from the three `train_fit` roles only. Official validation,
+group-atomic candidates with no cross-role leakage. `--freeze-approved` also requires a
+human-authored `--review-receipt`, `--campaign-id`, and full `--project-commit`; choosing a
+training target is never approval. The receipt must bind the candidate file SHA-256,
+dataset, campaign, commit, reviewer and `freeze_approved` decision. Generate rare-five
+classes and median-frequency weights from the two scientific `train_fit` roles only. Official validation,
 ACDC, and sealed datasets remain inaccessible to training, selection, calibration, HPO,
 and threshold fitting.
 
@@ -46,20 +49,21 @@ deterministically selected source examples. Every file is hash-listed in
 ## 3. Model campaign
 
 Use repeated `--data-manifest` arguments for the two frozen scientific sources; never
-concatenate native folders. Run one-batch validation, then stages `smoke`, `pilot`, and `screening`
-for each model in `configs/rescue/semantic_first.yaml`. Source batches are domain-uniform.
-Record every failure and allow at most two substantial integration repairs/model.
+concatenate native folders. The hermetic canary and first smoke/pilot run only SegFormer-B0,
+Fast-SCNN and PIDNet-S. DDRNet-23-Slim and BiSeNetV2 enter extension smoke only after the
+core pilot, then all five enter screening. Source batches are domain-uniform.
 
 Use `CAMPAIGN_TARGET` and Run all in this order: `audit`, `smoke`, `pilot`, `screening`,
 `hpo`, `final`. Every later target runs only missing prerequisites. HPO rungs and training
-checkpoints survive resets; final training automatically uses each finalist's frozen HPO
-parameters. After screening, the equivalent CLI is:
+checkpoints survive resets; final training uses frozen HPO parameters when available. The
+notebook delegates training state to one command. The equivalent screening target is:
 
 ```bash
-python scripts/train.py --stage hpo --candidate-table /content/work/reports/screening/candidate_table.json --data-manifest /content/work/manifests/cityscapes.frozen.json --data-manifest /content/work/manifests/idd20k.frozen.json --rare-classes-file /content/work/statistics/rare_classes.json --output-root /content/work/runs --mmseg-root /content/mmsegmentation
+python scripts/colab_pipeline.py run --target screening --project-root /content/edgeguard-road --project-commit "$EDGEGUARD_COMMIT" --runtime-receipt /content/edgeguard-evidence/runtime_receipt.json --mmseg-root /content/edgeguard-checkouts/mmsegmentation --work-root /content/edgeguard-work --recovery-root /content/drive/MyDrive/EdgeGuard/campaigns/semantic-cs-idd-v2/recovery --config /content/edgeguard-road/configs/rescue/semantic_first.yaml --data-manifest /content/edgeguard-work/manifests/cityscapes.frozen.json --data-manifest /content/edgeguard-work/manifests/idd20k.frozen.json
 ```
 
-The scientific finalist automatically receives the separate CE/weighted-CE final ablation.
+HPO requires the reviewed screening candidate table. Final requires three explicitly frozen
+models; its first listed finalist receives the separate CE/weighted-CE final ablation.
 Random initialization is the primary table; pretrained models remain a separate reference.
 
 ## 4. Reliability and frozen evaluation
@@ -74,8 +78,17 @@ python scripts/evaluate.py evaluate-shift --help
 ```
 
 First complete `CAMPAIGN_TARGET="final"`. Only in a later run set
-`CAMPAIGN_TARGET="source_eval"` and `ALLOW_FINAL_DATA=True`; optionally set `RUN_ACDC=True`
-after preparing its validation bundle. Report mIoU, 19 class IoUs,
+`CAMPAIGN_TARGET="evaluate"` and `ALLOW_FINAL_DATA=True`. Final writes
+`accepted_release.candidate.json`; it does not accept itself. After human review, promote
+that exact candidate and only then run the later targets:
+
+```bash
+python scripts/accept_colab_release.py --candidate /content/edgeguard-work/accepted_release.candidate.json --review-receipt /content/edgeguard-work/reviews/release.review.json --output /content/edgeguard-work/accepted_release.json
+```
+
+The public continuation is `evaluate`, then `export`, then `report`; each requires the
+same accepted-release hash. Optionally set `RUN_ACDC=True` after preparing its validation
+bundle. Report mIoU, 19 class IoUs,
 rare-class mIoU, confidence/entropy/logit/energy, reliability, frame-shift AUROC/AP and
 alert rate. Open MUSES/WildDash only after the sealed release record; do not iterate on
 its result. Use KITTI only if both preferred external routes are unavailable.
@@ -85,7 +98,7 @@ its result. Use KITTI only if both preferred external routes are unavailable.
 ```bash
 python scripts/predict.py --help
 python scripts/predict.py --emit-regions --emit-risk --shift-reference /artifacts/shift-reference.json ...
-streamlit run app.py
+EDGEGUARD_ACCEPTED_BUNDLE_ROOT=/accepted/release streamlit run app.py
 ```
 
 The JSON output explicitly labels regions as semantic connected components and attention
@@ -95,6 +108,13 @@ as a heuristic operational score. Validate missing-checkpoint messaging and CPU 
 
 Export static batch-one `1×3×512×1024` raw logits and require PyTorch/ONNX shape,
 19-class, finiteness, and numerical agreement before target transfer.
+
+Build and verify the device-neutral transfer ZIP in Colab. It contains no TensorRT engine:
+
+```bash
+python scripts/package_jetson_deployment.py build --help
+python scripts/package_jetson_deployment.py verify --package jetson-deployment.zip
+```
 
 On the Jetson, review before execution:
 

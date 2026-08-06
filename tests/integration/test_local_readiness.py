@@ -21,9 +21,15 @@ def test_local_readiness_runs_without_content_drive_or_real_data(tmp_path: Path)
     assert result["workspace_bytes_before_evidence_package"] < 5 * 1024**2
     assert result["framework_probe"]["requires_linux_cpu_gate"] is True
     assert len(result["phases"]) == 11
-    path_a_plan = result["phases"]["installer-plan-generation"]["result"]["path_a"]
-    assert any("python3.12" in value for command in path_a_plan for value in command)
-    assert any("mmcv-lite==2.1.0" in command for command in path_a_plan)
+    runtime_plan = result["phases"]["installer-plan-generation"]["result"]["hermetic_runtime"]
+    flattened_plan = [value for command in runtime_plan for value in command]
+    assert any(
+        command[:3] == ["uv-resolved-at-runtime", "python", "install"] and command[3] == "3.11.13"
+        for command in runtime_plan
+    )
+    assert any(value.endswith("requirements/colab-py311-cu121.lock") for value in flattened_plan)
+    assert any(value.endswith("requirements/colab-openmmlab.lock") for value in flattened_plan)
+    assert "--upgrade-strategy" not in flattened_plan
     assert (workspace / "evidence/local-readiness-evidence.zip").is_file()
     persisted = json.loads((workspace / "evidence/readiness_receipt.json").read_text())
     assert str(tmp_path) not in json.dumps(persisted)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -37,11 +36,10 @@ from edgeguard.training.logits import validate_native_logits_tensor
 from edgeguard.training.registry import append_registry, load_registry
 from scripts.train.install_semantic_stack import (
     BootstrapError,
-    _preflight_path_a,
-    _record_bootstrap_failure,
+    _record_failure,
     _resolve_uv_executable,
-    build_path_a_commands,
-    build_path_b_commands,
+    _validate_lock_contract,
+    build_hermetic_commands,
     repair_owned_path,
 )
 from scripts.train.train_semantic import (
@@ -244,43 +242,67 @@ def test_native_logits_requires_predicate_approved_19_class_tensor() -> None:
         validate_native_logits_tensor(TensorLike(), is_tensor=lambda _value: False)
 
 
-def test_install_cascade_is_openmim_free_and_has_auditable_cuda_fallback(
-    tmp_path: Path,
-) -> None:
+def test_hermetic_install_is_hash_locked_and_has_no_fallback(tmp_path: Path) -> None:
     framework = load_semantic_framework_config(CONFIG_ROOT / "framework_mmseg.yaml")
-    path_a = build_path_a_commands(
+    commands = build_hermetic_commands(
         framework,
-        tmp_path / "mmseg-a",
-        uv_executable=tmp_path / "resolved-tools/uv",
-        hosted_python=Path(sys.executable),
-        project_root=REPO_ROOT,
-        runtime_root=tmp_path / "runtime-a",
-    )
-    path_b = build_path_b_commands(
-        framework,
-        tmp_path / "mmseg-b",
+        tmp_path / "mmsegmentation",
         uv_executable=tmp_path / "resolved-tools/uv",
         project_root=REPO_ROOT,
-        runtime_root=tmp_path / "runtime-b",
+        runtime_root=tmp_path / "runtime",
     )
-    hosted = "\n".join(" ".join(command) for command in path_a)
-    fallback = "\n".join(" ".join(command) for command in path_b)
+    serialized = "\n".join(" ".join(command) for command in commands)
 
-    assert "openmim" not in (hosted + fallback).lower()
-    assert f"{tmp_path}/resolved-tools/uv venv --system-site-packages" in hosted
-    assert f"{tmp_path}/resolved-tools/uv python install 3.11" in fallback
-    assert "python -m venv" not in hosted
-    assert "/content/edgeguard-uv/bin/uv" not in hosted + fallback
-    assert "mmengine==0.10.7" in hosted
-    assert "mmcv-lite==2.1.0" in hosted
-    assert "torch==2.1.1" not in hosted
-    assert "numpy==1.26.4" in fallback
-    assert "torch==2.1.1" in fallback
-    assert "download.openmmlab.com/mmcv/dist/cu121/torch2.1" in fallback
-    assert "--only-binary=:all:" in fallback
-    assert framework.commit in hosted and framework.commit in fallback
-    assert "pip check --python" in hosted
-    assert "pip check --python" in fallback
+    assert "openmim" not in serialized.lower()
+    assert f"{tmp_path}/resolved-tools/uv python install 3.11.13" in serialized
+    assert "--system-site-packages" not in serialized
+    assert "--upgrade-strategy" not in serialized
+    assert "pip sync" in serialized
+    assert "--strict --require-hashes" in serialized
+    assert "colab-py311-cu121.lock" in serialized
+    assert "colab-openmmlab.lock" in serialized
+    assert framework.commit in serialized
+    assert "download.openmmlab.com" not in serialized
+
+
+def _write_valid_openmmlab_lock(path: Path) -> None:
+    path.write_text(
+        "mmengine==0.10.7 \\\n"
+        "    --hash=sha256:262ac976a925562f78cd5fd14dd1bc9b680ed0aa81f0d85b723ef782f99c54ee\n"
+        "mmcv-lite==2.1.0 \\\n"
+        "    --hash=sha256:1d9913c35f793de4a3a022b93cecb712e1e7262eb4704eb8cd15e623dd375000\n",
+        encoding="utf-8",
+    )
+
+
+def test_colab_locks_reject_gui_opencv(tmp_path: Path) -> None:
+    main = tmp_path / "main.lock"
+    openmmlab = tmp_path / "openmmlab.lock"
+    _write_valid_openmmlab_lock(openmmlab)
+    main.write_text(
+        "opencv-python-headless==4.10.0.84\nrich==15.0.0\n",
+        encoding="utf-8",
+    )
+    _validate_lock_contract(main, openmmlab)
+
+    main.write_text(
+        "opencv-python==4.11.0.86\nopencv-python-headless==4.10.0.84\nrich==15.0.0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="GUI opencv-python"):
+        _validate_lock_contract(main, openmmlab)
+
+
+def test_colab_locks_require_openmmlab_no_deps_partition(tmp_path: Path) -> None:
+    main = tmp_path / "main.lock"
+    openmmlab = tmp_path / "openmmlab.lock"
+    _write_valid_openmmlab_lock(openmmlab)
+    main.write_text(
+        "opencv-python-headless==4.10.0.84\nrich==15.0.0\nmmengine==0.10.7\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="only in the OpenMMLab lock"):
+        _validate_lock_contract(main, openmmlab)
 
 
 def test_uv_resolution_uses_the_hosted_path_executable(
@@ -362,7 +384,7 @@ def test_uv_unexpected_version_and_non_executable_are_rejected(tmp_path: Path) -
     class NoBootstrapRunner:
         pass
 
-    with pytest.raises(BootstrapError, match="unexpected uv version") as version_error:
+    with pytest.raises(BootstrapError, match="expected uv 0.8.8") as version_error:
         _resolve_uv_executable(  # type: ignore[arg-type]
             NoBootstrapRunner(),
             which=lambda _name: str(executable),
@@ -378,7 +400,7 @@ def test_uv_unexpected_version_and_non_executable_are_rejected(tmp_path: Path) -
     assert executable_error.value.classification == "uv_executable_invalid"
 
 
-def test_uv_colab_newer_compatible_version_with_platform_suffix_is_accepted(
+def test_uv_newer_version_with_platform_suffix_is_rejected(
     tmp_path: Path,
 ) -> None:
     executable = tmp_path / "uv"
@@ -388,14 +410,12 @@ def test_uv_colab_newer_compatible_version_with_platform_suffix_is_accepted(
     class NoBootstrapRunner:
         pass
 
-    resolved, version, receipts = _resolve_uv_executable(  # type: ignore[arg-type]
-        NoBootstrapRunner(),
-        which=lambda _name: str(executable),
-        version_probe=lambda _path: "uv 0.11.19 (x86_64-unknown-linux-gnu)",
-    )
-    assert resolved == executable.resolve()
-    assert version == "0.11.19"
-    assert receipts == []
+    with pytest.raises(BootstrapError, match="expected uv 0.8.8"):
+        _resolve_uv_executable(  # type: ignore[arg-type]
+            NoBootstrapRunner(),
+            which=lambda _name: str(executable),
+            version_probe=lambda _path: "uv 0.11.19 (x86_64-unknown-linux-gnu)",
+        )
 
 
 def test_bootstrap_failure_writes_terminal_receipt_and_logs(tmp_path: Path) -> None:
@@ -403,45 +423,30 @@ def test_bootstrap_failure_writes_terminal_receipt_and_logs(tmp_path: Path) -> N
     status = LongRunStatus(paths.evidence_root / "run_status.json")
     error = BootstrapError("uv_resolution", "uv_executable_not_found", "missing uv")
 
-    _record_bootstrap_failure(error, paths=paths, status=status)
+    _record_failure(
+        error,
+        paths=paths,
+        status=status,
+        failed_stage="uv_bootstrap",
+    )
 
     persisted = json.loads((paths.evidence_root / "run_status.json").read_text())
-    failure = json.loads((paths.evidence_root / "bootstrap_failure.json").read_text())
+    failure = json.loads((paths.evidence_root / "failure.json").read_text())
     assert persisted["status"] == "failed"
     assert persisted["phase"] == "uv_resolution"
     assert failure["failure_classification"] == "uv_executable_not_found"
     assert failure["failed_stage"] == "uv_resolution"
-    assert (paths.log_root / "00-uv-bootstrap.stdout.log").is_file()
-    assert (paths.log_root / "00-uv-bootstrap.stderr.log").is_file()
-
-
-def test_path_a_wheel_preflight_retains_binary_only_mmcv_lite(tmp_path: Path) -> None:
-    framework = load_semantic_framework_config(CONFIG_ROOT / "framework_mmseg.yaml")
-
-    class RecordingRunner:
-        command: tuple[str, ...] | None = None
-
-        def run(self, _stage: str, command: tuple[str, ...], **_kwargs: object) -> None:
-            self.command = command
-
-    runner = RecordingRunner()
-    _preflight_path_a(framework, runner, tmp_path / "wheels")  # type: ignore[arg-type]
-    assert runner.command is not None
-    serialized = " ".join(runner.command)
-    assert "download --only-binary=:all: --no-deps" in serialized
-    assert "mmengine==0.10.7" in serialized
-    assert "mmcv-lite==2.1.0" in serialized
 
 
 def test_bounded_runtime_repair_removes_only_recognizable_owned_targets(
     tmp_path: Path,
 ) -> None:
-    runtime = tmp_path / "edgeguard-runtime-current"
+    runtime = tmp_path / "edgeguard-runtime"
     runtime.mkdir()
     (runtime / "pyvenv.cfg").write_text("incomplete", encoding="utf-8")
-    checkout = tmp_path / "mmseg-path-a"
+    checkout = tmp_path / "mmsegmentation"
     checkout.mkdir()
-    probe = tmp_path / "hosted_current-five-model-probe"
+    probe = tmp_path / "hermetic-core-model-probe"
     probe.mkdir()
 
     actions = repair_owned_path(
@@ -458,14 +463,14 @@ def test_bounded_runtime_repair_removes_only_recognizable_owned_targets(
     }
     assert not runtime.exists() and not checkout.exists() and not probe.exists()
 
-    unrelated = tmp_path / "edgeguard-runtime-current"
+    unrelated = tmp_path / "edgeguard-runtime"
     unrelated.mkdir()
     (unrelated / "user-data.txt").write_text("keep", encoding="utf-8")
     with pytest.raises(ValueError, match="unrecognized"):
         repair_owned_path(
             runtime_root=unrelated,
-            checkout=tmp_path / "mmseg-path-a",
-            probe=tmp_path / "hosted_current-five-model-probe",
+            checkout=tmp_path / "mmsegmentation",
+            probe=tmp_path / "hermetic-core-model-probe",
             expected_commit="a" * 40,
         )
     assert (unrelated / "user-data.txt").is_file()

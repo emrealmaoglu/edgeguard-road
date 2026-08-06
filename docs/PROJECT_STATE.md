@@ -1,10 +1,20 @@
 # Project State
 
-Updated 2026-07-31 on branch `rescue/semantic-first`.
+Updated 2026-08-06 on branch `stabilize/colab-v2`.
 
-The published delivery notebooks are pinned to implementation commit
-`5cc578cb9f15aa7a560108840f3055ae2f4e4733`; a later branch update cannot silently alter
-the Colab runtime code or scientific protocol.
+The Colab v2 implementation is locally modified and deliberately not published yet. The
+generated delivery notebooks still pin the last reviewed implementation commit
+`5cc578cb9f15aa7a560108840f3055ae2f4e4733`; changing that pin, committing, pushing,
+tagging, or merging requires explicit human approval after G0. The new runtime cannot be
+presented as real Colab evidence until an approved clean commit is pinned.
+
+The previous hosted/fallback cascade is replaced by one hermetic runtime: uv 0.8.8,
+managed CPython 3.11.13, NumPy 1.26.4, PyTorch 2.1.1/cu121, MMEngine 0.10.7,
+mmcv-lite 2.1.0, headless OpenCV 4.10.0.84, and MMSegmentation commit
+`c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`. Normal dependencies use a generated
+manylinux_2_28 hash lock. mmcv-lite uses a separate hash lock with `--no-deps` so its
+GUI-OpenCV metadata cannot replace the headless runtime. A failure never selects another
+matrix automatically.
 
 The Colab-resilience revision replaces the previous snapshot model with content-addressed,
 current/previous-generation recovery. Training publishes full optimizer/scheduler/AMP/RNG
@@ -38,8 +48,10 @@ Colab pin before the real IDD run is retried.
 
 ## Implemented and locally verified
 
-- Five-model, two-source scientific training/evaluation/HPO contracts are active for
-  Cityscapes + IDD20K. The available Kaggle BDD mirror is audit/smoke-only.
+- The v2 campaign ID is `semantic-cs-idd-v2`. SegFormer-B0, Fast-SCNN, and PIDNet-S must
+  pass environment/AMP canary, smoke, recovery, and pilot before DDRNet-23-Slim and
+  BiSeNetV2 enter extension smoke and five-model screening. The Kaggle BDD mirror remains
+  outside scientific selection.
 - Safe dataset-specific preparation now consumes untouched Cityscapes, BDD100K, and
   IDD20K archives. It verifies published identities where available, rejects unsafe
   members/collisions/unknown labels, supports IDD Part II JPG, renders pinned AutoNUE
@@ -60,17 +72,35 @@ Colab pin before the real IDD run is retried.
 - Target-only tools build a static TensorRT FP16 engine and run sustained Jetson
   benchmarks. They never change power mode and refuse evidence overwrite. No target
   action was executed during local implementation.
-- Delivery notebooks are regenerated, output-free, and syntactically validated.
-- The prior Colab failure mode is removed: the selected hosted/fallback environment is
-  resolved from its compatibility receipt instead of hard-coding fallback Python and
-  MMSeg paths. Both paths install the complete Colab project extras.
+- The notebook generator is output-free, deterministic, and syntactically validated in a
+  temporary delivery root. Tracked notebooks intentionally remain on the prior immutable
+  pin until the application commit is explicitly approved.
+- The known Colab bootstrap failures are removed from the implementation: uv no longer
+  receives `--upgrade-strategy only-if-needed`, and no later MMCV command can resolve
+  NumPy 1.26 to NumPy 2.x. Runtime reuse requires matching project, lock, framework,
+  CUDA, FP16 and three-model canary identities.
+- The generated training notebook delegates smoke through final training to one Python
+  orchestrator. It verifies prerequisites and completed hashes, resumes only matching
+  identities, permits one OOM batch/accumulation adjustment at effective batch four, and
+  emits uniform run/environment/metrics/resource/artifact/failure records.
+- MMEngine/MMCV are isolated in a two-wheel no-deps hash lock; the main lock rejects GUI
+  OpenCV and requires headless OpenCV plus direct `rich`. Evaluate/export/report require a
+  human-accepted release; manifest freeze and release promotion both require explicit
+  candidate-hash-bound human review receipts.
+- Streamlit defaults to accepted, hash-verified demo bundles and keeps one selected model
+  resource active. Accepted releases can be collected into thesis source/LaTeX/provenance
+  bundles with explicit `not_run` coverage instead of fabricated figures.
+- Colab can build a device-neutral Jetson ZIP containing static ONNX, preprocessing and
+  ontology identities, golden input/output and equivalence evidence. It cannot contain a
+  TensorRT engine or Jetson performance claim.
 - Drive now has explicit archive/quarantine/bundle/manifest/campaign/download/source
   roots. Snapshots exclude staged datasets; a bounded review ZIP makes reports and thesis
   figures downloadable without copying checkpoints or licensed data.
 - Frozen multi-domain statistics generate measured-only CSV plus 300-DPI PNG/PDF class
   distribution, imbalance/weights, split-size and source-example figures with hashes.
-- Both delivery notebooks executed all 16 code cells locally in safe contract mode. This
-  verifies integration and control flow, not Colab CUDA or scientific execution.
+- The prior delivery notebooks executed all 17 cells locally. The new P0 notebook source
+  compiles and regenerates identically in a temporary root, but tracked delivery execution
+  is correctly deferred until the two-commit pin step.
 - A read-only connected-Drive audit corrected the storage assumption. Existing
   `private_inputs`, prepared Cityscapes v1, its 6.99 GB verified bundle, real manifests,
   historical compatibility evidence and `EG-REAL-001` are preserved. New staging reuses
@@ -114,10 +144,12 @@ runs are engineering evidence only.
    classes. Review BDD separately as provisional, non-scientific evidence.
 3. If official BDD packages are later obtained, add them as a new source ablation rather
    than replacing the already recorded mirror evidence.
-4. Advance `CAMPAIGN_TARGET` through smoke, pilot, screening, HPO and final. Reset recovery
-   is automatic; do not delete campaign recovery objects.
-5. Only after final completes, set `source_eval` plus `ALLOW_FINAL_DATA=True`; prepare/open
-   ACDC separately and never use its result to change model or preprocessing.
+4. After an approved clean commit is pinned, prove the hash lock in two independent clean
+   Colab GPU sessions. Advance `CAMPAIGN_TARGET` through smoke, pilot, screening, HPO and
+   final. The notebook invokes one v2 orchestrator command; do not delete recovery objects.
+5. Only after final completes, review the generated release candidate and promote it with
+   a candidate-hash-bound human receipt. Then set `evaluate` plus `ALLOW_FINAL_DATA=True`;
+   prepare/open ACDC separately and never use its result to change model or preprocessing.
 6. Build/benchmark TensorRT FP16 manually on Jetson, then decide whether the detection
    phase gate passes.
 

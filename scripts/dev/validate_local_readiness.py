@@ -31,8 +31,7 @@ from scripts.stage_cityscapes_training import stage_cityscapes_training  # noqa:
 from scripts.train.install_semantic_stack import (  # noqa: E402
     BootstrapError,
     _resolve_uv_executable,
-    build_path_a_commands,
-    build_path_b_commands,
+    build_hermetic_commands,
 )
 from scripts.train.train_semantic import run_stack_probe, validate_configs  # noqa: E402
 
@@ -439,25 +438,14 @@ def validate_local_readiness(
             ).load_semantic_framework_config(config_root / "framework_mmseg.yaml")
             uv = Path("uv-resolved-at-runtime")
             return {
-                "path_a": [
+                "hermetic_runtime": [
                     list(command)
-                    for command in build_path_a_commands(
+                    for command in build_hermetic_commands(
                         framework,
-                        paths.checkout_root / "mmseg-path-a",
-                        uv_executable=uv,
-                        hosted_python=Path("python3.12"),
-                        project_root=project_root,
-                        runtime_root=paths.runtime_current_root,
-                    )
-                ],
-                "path_b": [
-                    list(command)
-                    for command in build_path_b_commands(
-                        framework,
-                        paths.checkout_root / "mmseg-path-b",
+                        paths.checkout_root / "mmsegmentation",
                         uv_executable=uv,
                         project_root=project_root,
-                        runtime_root=paths.runtime_py311_root,
+                        runtime_root=paths.runtime_root,
                     )
                 ],
             }

@@ -16,13 +16,13 @@ are `done`, `ready`, `external`, `blocked-by-gate`, and `future`.
 
 | ID | Deliverable | Status | Exit evidence |
 | --- | --- | --- | --- |
-| SEG-01 | Five-model one-batch and 50-step smoke | external | Five real CUDA logs and reloadable checkpoints |
-| SEG-02 | Five 2,000-step pilots and valid 6,000-step screenings | external | Domain-macro/select tables plus failure records |
+| SEG-01 | Three-model hermetic canary, 50-step smoke and forced resume | external | Two clean Colab lock hashes; finite FP32/FP16 probes; reloadable checkpoints |
+| SEG-02 | Three 2,000-step pilots, extension smoke, five 6,000-step screenings | external | Core receipts, domain-macro/select tables and failure records |
 | SEG-03 | Early ONNX compatibility and top-two selection | external | Numerical export reports and frozen selection record |
 | SEG-04 | Top-two bounded HPO | external | 12 unique/resumable trials per model; no final/external access |
 | SEG-05 | Scientific source-composition ablation | external | Cityscapes versus Cityscapes+IDD under equal budget; BDD mirror reported only as provisional audit evidence |
 | SEG-06 | CE versus weighted CE | external | Overall and rare-class comparison |
-| SEG-07 | Scientific and edge final training | external | Hash-bound final checkpoints; optional extra seeds |
+| SEG-07 | Three-finalist scientific and edge final training | external | Hash-bound final checkpoints; isolated weighted-CE ablation |
 
 ## Reliability and perception
 
@@ -43,8 +43,8 @@ are `done`, `ready`, `external`, `blocked-by-gate`, and `future`.
 | DEP-01 | Static ONNX FP32 validation | ready | Shape/class/finiteness/allclose and ORT latency report |
 | DEP-02 | Jetson TensorRT FP16 build | external | Engine/build manifest on target; no overwrite |
 | DEP-03 | 25W and MAXN SUPER sustained benchmark | external | 200 warm-up; 5,000 frames or 10 min; telemetry and acceptance result |
-| DEMO-01 | Streamlit perception/reliability demo | done | CPU fallback, maps, regions, attention and latency |
-| DOC-01 | Fresh-runtime Colab and thesis evidence | ready | Output-free notebooks and measured tables after external runs |
+| DEMO-01 | Accepted-artifact Streamlit perception/reliability demo | ready | Offline accepted bundle, cache, CPU/missing-artifact and Jetson pages |
+| DOC-01 | Fresh-runtime Colab and accepted thesis evidence | blocked-by-gate | Application commit approval, immutable notebook repin, then output-free notebook, v2 orchestrator and accepted-only thesis bundle |
 
 ## Conditional detection
 

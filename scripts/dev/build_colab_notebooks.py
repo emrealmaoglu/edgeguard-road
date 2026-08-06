@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -47,7 +49,19 @@ def _write(path: Path, cells: list[dict[str, Any]]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
 
-def build_preflight_notebook() -> None:
+def _pin_delivery(cells: list[dict[str, Any]], *, branch: str, project_commit: str) -> None:
+    for cell in cells:
+        source = "".join(cell["source"])
+        source = re.sub(r'(?m)^BRANCH = "[^"]+"$', f'BRANCH = "{branch}"', source)
+        source = re.sub(
+            r'(?m)^EXPECTED_PROJECT_COMMIT = "[0-9a-f]{40}"$',
+            f'EXPECTED_PROJECT_COMMIT = "{project_commit}"',
+            source,
+        )
+        cell["source"] = _source(source)
+
+
+def build_preflight_notebook(*, branch: str, project_commit: str) -> None:
     cells = [
         _cell(
             "markdown",
@@ -79,7 +93,7 @@ else:
     DRIVE_ROOT = Path("/content/drive/MyDrive")
 
 REPOSITORY = "https://github.com/emrealmaoglu/edgeguard-road.git"
-BRANCH = "rescue/semantic-first"
+BRANCH = "stabilize/colab-v2"
 EXPECTED_PROJECT_COMMIT = "5cc578cb9f15aa7a560108840f3055ae2f4e4733"
 SCIENTIFIC_SOURCE_DATASETS = ["cityscapes", "idd20k"]
 PROVISIONAL_ENGINEERING_DATASETS = ["bdd100k"]
@@ -504,10 +518,11 @@ if DOWNLOAD_LATEST_FAILURE_REPORT:
 """,
         ),
     ]
+    _pin_delivery(cells, branch=branch, project_commit=project_commit)
     _write(NOTEBOOK_ROOT / "EdgeGuard_Data_Preflight_Colab.ipynb", cells)
 
 
-def build_training_notebook() -> None:
+def build_training_notebook(*, branch: str, project_commit: str) -> None:
     existing = json.loads((NOTEBOOK_ROOT / "EdgeGuard_Road_Colab.ipynb").read_text())
 
     def find_cell(*markers: str) -> dict[str, Any]:
@@ -518,10 +533,18 @@ def build_training_notebook() -> None:
         )
 
     final_protocol = find_cell("FINAL_PROTOCOL_CODE =")
-    setup_stack = find_cell("Pinned compatibility cascade")
+    setup_stack = find_cell("Pinned compatibility cascade", "One pinned hermetic runtime")
     audit = find_cell("Audit is the hard scientific gate", "dataset-audit-and-freeze")
-    training = find_cell("Five equal-protocol random-init runs", "resumable-training")
-    evaluation = find_cell("Frozen evaluation and ONNX export", "resumable-evaluation-export-hpo")
+    training = find_cell(
+        "Five equal-protocol random-init runs",
+        "resumable-training",
+        "resumable-python-orchestrator",
+    )
+    evaluation = find_cell(
+        "Frozen evaluation and ONNX export",
+        "resumable-evaluation-export-hpo",
+        "pipeline-artifact-review",
+    )
     protocol_text = "".join(final_protocol["source"])
     protocol_text = protocol_text.replace(
         'source_val_manifests = {\n        "bdd100k": WORK_ROOT / "manifests/official-validation/bdd100k.frozen.json",\n        "idd20k": WORK_ROOT / "manifests/official-validation/idd20k.frozen.json",\n    }',
@@ -695,9 +718,14 @@ if RUN_SEALED_PACKAGE:
     sync_work_snapshot("sealed-external-package")
 """
 '''
-    final_protocol["source"] = _source(protocol_text)
-    setup_text = """# Pinned compatibility cascade; runtime comes from the verified receipt.
-FAILURE_REPORTER.set_stage("runtime-compatibility-cascade")
+    final_protocol["source"] = _source(
+        '''FINAL_PROTOCOL_CODE = r"""# Accepted-release evaluation/export/report is owned by
+# scripts/colab_pipeline.py.
+print("Accepted-release sonrası fazlar sürümlenmiş Python orchestrator tarafından işlendi.")
+"""'''
+    )
+    setup_text = """# One pinned hermetic runtime; no automatic compatibility fallback.
+FAILURE_REPORTER.set_stage("runtime-hermetic-install")
 if not RUNTIME_REQUIRED:
     RUNTIME_PYTHON = Path(sys.executable)
     MMSEG_ROOT = PROJECT_ROOT
@@ -765,8 +793,7 @@ else:
         "--project-root", str(PROJECT_ROOT),
         "--project-commit", PROJECT_COMMIT,
         "--config-root", str(PROJECT_ROOT / "configs/training/segmentation"),
-        "--runtime-current-root", str(CONTENT_ROOT / "edgeguard-runtime-current"),
-        "--runtime-py311-root", str(CONTENT_ROOT / "edgeguard-runtime-py311"),
+        "--runtime-root", str(CONTENT_ROOT / "edgeguard-runtime"),
         "--checkout-root", str(CONTENT_ROOT / "edgeguard-checkouts"),
         "--evidence-root", str(CONTENT_ROOT / "edgeguard-evidence"),
         "--log-root", str(CONTENT_ROOT / "edgeguard-logs"),
@@ -798,7 +825,7 @@ else:
         [
             sys.executable,
             str(PROJECT_ROOT / "scripts/resolve_colab_runtime.py"),
-            "--receipt", str(CONTENT_ROOT / "edgeguard-evidence/compatibility_receipt.json"),
+            "--receipt", str(CONTENT_ROOT / "edgeguard-evidence/runtime_receipt.json"),
             "--project-commit", PROJECT_COMMIT,
             "--output", str(runtime_report),
         ],
@@ -809,7 +836,7 @@ else:
     persist_compatibility_evidence()
     work_runtime_evidence = WORK_ROOT / "reports/runtime-compatibility"
     work_runtime_evidence.mkdir(parents=True, exist_ok=True)
-    for source in (compatibility_evidence / "compatibility_receipt.json", runtime_report):
+    for source in (compatibility_evidence / "runtime_receipt.json", runtime_report):
         shutil.copy2(source, work_runtime_evidence / source.name)
     training_profile = WORK_ROOT / "reports/runtime-compatibility/training-profile.json"
     run_colab_command(
@@ -996,16 +1023,23 @@ else:
         for dataset, candidate in candidates.items():
             if not candidate.is_file():
                 raise RuntimeError(f"Missing reviewed audit candidate for {dataset}")
+            review_receipt = MANIFEST_REVIEW_RECEIPT_ROOT / f"{dataset}.review.json"
+            if not review_receipt.is_file():
+                raise PermissionError(
+                    "Manifest freeze is closed until a human review receipt exists: "
+                    f"{review_receipt}"
+                )
             frozen = MANIFEST_ROOT / f"{dataset}.frozen.json"
-            candidate_payload = json.loads(candidate.read_text())
             reuse = False
             if frozen.is_file():
                 frozen_payload = json.loads(frozen.read_text())
-                comparable = dict(frozen_payload)
-                comparable["split_state"] = "candidate_requires_human_freeze"
-                comparable["human_freeze_approved"] = False
-                comparable["manifest_sha256"] = candidate_payload["manifest_sha256"]
-                reuse = comparable == candidate_payload
+                reuse = (
+                    frozen_payload.get("approved_candidate_sha256") == sha256_file(candidate)
+                    and frozen_payload.get("human_review_receipt_sha256")
+                    == sha256_file(review_receipt)
+                    and frozen_payload.get("project_commit") == PROJECT_COMMIT
+                    and frozen_payload.get("campaign_id") == CAMPAIGN_ID
+                )
             if not reuse:
                 if frozen.exists():
                     quarantine = frozen.with_name(f"{frozen.name}.stale-{PROJECT_COMMIT[:12]}")
@@ -1014,6 +1048,8 @@ else:
                     str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/audit_dataset.py"),
                     "--dataset", dataset, "--output-root", str(MANIFEST_ROOT),
                     "--split-manifest", str(candidate), "--freeze-approved",
+                    "--review-receipt", str(review_receipt),
+                    "--campaign-id", CAMPAIGN_ID, "--project-commit", PROJECT_COMMIT,
                 ])
         sync_work_snapshot("frozen-source-manifests")
 
@@ -1024,14 +1060,18 @@ else:
             path for path in (WORK_ROOT / "runs/final").glob("*/ce")
             if completion_is_valid(path)
         ]
-        if len(completed_final_runs) < 2:
+        if len(completed_final_runs) < 3:
             raise RuntimeError(
                 "Official validation remains sealed until CAMPAIGN_TARGET='final' completes"
             )
         manifest_set = sha256_payload(sorted(sha256_file(path) for path in DATA_MANIFESTS))
-        for dataset in SECONDARY_SCIENTIFIC_DATASETS:
+        for dataset in OFFICIAL_VALIDATION_DATASETS:
             destination = WORK_ROOT / "audit" / f"{dataset}-val"
-            report_root = destination / f"{dataset}_val_audit"
+            report_root = (
+                destination / "dataset_audit"
+                if dataset == "cityscapes"
+                else destination / f"{dataset}_val_audit"
+            )
             validation_inputs = {
                 "training_manifests": manifest_set,
                 "preparation": preparation_identity(DATASET_ROOTS[dataset]),
@@ -1044,8 +1084,11 @@ else:
                 "--dataset", dataset, "--source-split", "val",
                 "--dataset-root", str(DATASET_ROOTS[dataset]),
                 "--output-root", str(destination),
-                "--checkpoint-root", str(CAMPAIGN_ROOT / "state/audit-catalog"),
             ]
+            if dataset != "cityscapes":
+                command.extend([
+                    "--checkpoint-root", str(CAMPAIGN_ROOT / "state/audit-catalog")
+                ])
             for manifest in DATA_MANIFESTS:
                 command.extend(["--source-manifest", str(manifest)])
             run_colab_command(command)
@@ -1058,16 +1101,35 @@ else:
 
     if RUN_FREEZE_SOURCE_VALIDATION:
         validation_root = MANIFEST_ROOT / "official-validation"
-        for dataset in SECONDARY_SCIENTIFIC_DATASETS:
-            candidate = (
-                WORK_ROOT / "audit" / f"{dataset}-val/{dataset}_val_audit/dataset_manifest.candidate.json"
-            )
+        for dataset in OFFICIAL_VALIDATION_DATASETS:
+            report_name = "dataset_audit" if dataset == "cityscapes" else f"{dataset}_val_audit"
+            candidate = WORK_ROOT / "audit" / f"{dataset}-val" / report_name / "dataset_manifest.candidate.json"
             frozen = validation_root / f"{dataset}.frozen.json"
-            if not frozen.is_file():
+            review_receipt = MANIFEST_REVIEW_RECEIPT_ROOT / f"{dataset}-official-val.review.json"
+            if not candidate.is_file() or not review_receipt.is_file():
+                raise PermissionError(
+                    "Official validation freeze requires candidate and review receipt for "
+                    f"{dataset}"
+                )
+            reuse = False
+            if frozen.is_file():
+                frozen_payload = json.loads(frozen.read_text())
+                reuse = (
+                    frozen_payload.get("approved_candidate_sha256") == sha256_file(candidate)
+                    and frozen_payload.get("human_review_receipt_sha256")
+                    == sha256_file(review_receipt)
+                    and frozen_payload.get("project_commit") == PROJECT_COMMIT
+                )
+            if not reuse:
+                if frozen.exists():
+                    quarantine = frozen.with_name(f"{frozen.name}.stale-{PROJECT_COMMIT[:12]}")
+                    frozen.replace(quarantine)
                 run_colab_command([
                     str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/audit_dataset.py"),
                     "--dataset", dataset, "--output-root", str(validation_root),
                     "--split-manifest", str(candidate), "--freeze-approved",
+                    "--review-receipt", str(review_receipt),
+                    "--campaign-id", CAMPAIGN_ID, "--project-commit", PROJECT_COMMIT,
                 ])
         sync_work_snapshot("frozen-official-validation-manifests")
 
@@ -1197,6 +1259,72 @@ if TRAINING_STAGES:
             sync_work_snapshot(f"training-{stage}-{model}")
 else:
     print("Bu hedef GPU eğitimi gerektirmiyor.")
+"""
+    training_text = """FAILURE_REPORTER.set_stage("resumable-python-orchestrator")
+RUN_ROOT = WORK_ROOT / "runs"
+
+
+def ensure_checkpoint(stage, model):
+    return latest_checkpoint(RUN_ROOT / stage / model / "ce")
+
+
+PIPELINE_TARGETS = {"smoke", "pilot", "screening", "hpo", "final", "evaluate", "export", "report"}
+if LOCAL_TEST_MODE:
+    print("LOCAL_TEST_MODE: hermetic GPU pipeline execution skipped.")
+elif CAMPAIGN_TARGET in PIPELINE_TARGETS:
+    if RUN_ACCEPT_RELEASE:
+        if ACCEPTED_RELEASE.is_file():
+            print("Existing accepted release will be hash-verified by the orchestrator.")
+        elif not RELEASE_CANDIDATE.is_file() or not RELEASE_REVIEW_RECEIPT.is_file():
+            raise PermissionError("Release acceptance requires candidate and human review receipt")
+        else:
+            run_colab_command([
+                str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/accept_colab_release.py"),
+                "--candidate", str(RELEASE_CANDIDATE),
+                "--review-receipt", str(RELEASE_REVIEW_RECEIPT),
+                "--output", str(ACCEPTED_RELEASE),
+            ])
+    if not all(path.is_file() for path in DATA_MANIFESTS):
+        raise RuntimeError("All reviewed/frozen scientific source manifests are required")
+    pipeline_command = [
+        str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/colab_pipeline.py"), "run",
+        "--target", CAMPAIGN_TARGET,
+        "--project-root", str(PROJECT_ROOT), "--project-commit", PROJECT_COMMIT,
+        "--runtime-receipt", str(CONTENT_ROOT / "edgeguard-evidence/runtime_receipt.json"),
+        "--mmseg-root", str(MMSEG_ROOT), "--work-root", str(WORK_ROOT),
+        "--recovery-root", str(RECOVERY_ROOT),
+        "--config", str(PROJECT_ROOT / "configs/rescue/semantic_first.yaml"),
+        "--rare-classes-file", str(RARE), "--class-weights-file", str(WEIGHTS),
+    ]
+    for manifest in DATA_MANIFESTS:
+        pipeline_command.extend(["--data-manifest", str(manifest)])
+    candidate_table = WORK_ROOT / "reports/screening/candidate_table.json"
+    if CAMPAIGN_TARGET in {"hpo", "final", "evaluate", "export", "report"}:
+        if not candidate_table.is_file():
+            raise RuntimeError("HPO/final target requires the reviewed screening candidate table")
+        pipeline_command.extend(["--candidate-table", str(candidate_table)])
+    if CAMPAIGN_TARGET in {"final", "evaluate", "export", "report"}:
+        if len(FINAL_MODELS) != 3:
+            raise RuntimeError("Final and accepted-release targets require three frozen finalists")
+        for model in FINAL_MODELS:
+            pipeline_command.extend(["--final-model", model])
+        pipeline_command.extend(["--ablation-model", FINAL_MODELS[0]])
+    if CAMPAIGN_TARGET in {"evaluate", "export", "report"}:
+        if not ACCEPTED_RELEASE.is_file():
+            raise PermissionError("Accepted-release targets require ACCEPTED_RELEASE")
+        pipeline_command.extend(["--accepted-release", str(ACCEPTED_RELEASE)])
+        validation_root = WORK_ROOT / "manifests/official-validation"
+        for dataset in OFFICIAL_VALIDATION_DATASETS:
+            manifest = validation_root / f"{dataset}.frozen.json"
+            if not manifest.is_file():
+                raise PermissionError(
+                    f"Accepted-release targets require frozen official validation: {manifest}"
+                )
+            pipeline_command.extend(["--evaluation-manifest", str(manifest)])
+    run_colab_command(pipeline_command)
+    sync_work_snapshot(f"pipeline-{CAMPAIGN_TARGET}")
+else:
+    print("Bu hedef GPU eğitim orchestrator'ını gerektirmiyor.")
 """
     training["source"] = _source(training_text)
 
@@ -1368,6 +1496,14 @@ if RUN_HPO:
             )
         ]
         print("HPO ile dondurulan finalistler:", FINAL_MODELS)
+"""
+    evaluation_text = """FAILURE_REPORTER.set_stage("pipeline-artifact-review")
+pipeline_state = WORK_ROOT / "pipeline-v2"
+if pipeline_state.is_dir():
+    completed = sorted(path.parent.name for path in pipeline_state.glob("*/completion.json"))
+    print("Hash-doğrulanmış pipeline fazları:", completed)
+else:
+    print("Henüz bir v2 pipeline fazı tamamlanmadı.")
 """
     evaluation["source"] = _source(evaluation_text)
 
@@ -1556,6 +1692,13 @@ if "final" in TRAINING_STAGES:
             )
     sync_work_snapshot("class-imbalance-ablation")
 """
+    final_training_text = """FAILURE_REPORTER.set_stage("final-training-owned-by-orchestrator")
+if CAMPAIGN_TARGET == "final":
+    print(
+        "Final eğitim, HPO parametreleri ve CE/weighted-CE ablation "
+        "orchestrator tarafından işlendi."
+    )
+"""
     final_training = _cell("code", final_training_text)
 
     cells = [
@@ -1591,7 +1734,7 @@ else:
     CONTENT_ROOT = Path("/content")
 
 REPOSITORY = "https://github.com/emrealmaoglu/edgeguard-road.git"
-BRANCH = "rescue/semantic-first"
+BRANCH = "stabilize/colab-v2"
 EXPECTED_PROJECT_COMMIT = "5cc578cb9f15aa7a560108840f3055ae2f4e4733"
 LOCAL_DATA_ROOT = CONTENT_ROOT / "edgeguard-data"
 CITYSCAPES_ROOT = LOCAL_DATA_ROOT / "cityscapes"
@@ -1606,23 +1749,31 @@ DATASET_ROOTS = {
 }
 SCIENTIFIC_SOURCE_DATASETS = ["cityscapes", "idd20k"]
 SECONDARY_SCIENTIFIC_DATASETS = [dataset for dataset in SCIENTIFIC_SOURCE_DATASETS if dataset != "cityscapes"]
+OFFICIAL_VALIDATION_DATASETS = list(SCIENTIFIC_SOURCE_DATASETS)
 PROVISIONAL_ENGINEERING_DATASETS = ["bdd100k"]
 STAGE_PROVISIONAL_BDD = False  # Yalnız açık mühendislik audit'i için True.
 OPTIONAL_EVALUATION_DATASETS = []  # Model freeze sonrası ör. ["acdc"]
 WORK_ROOT = CONTENT_ROOT / "edgeguard-work"
-CAMPAIGN_ID = "semantic-cs-idd-v1"
-CAMPAIGN_TARGET = "audit"  # audit|smoke|pilot|screening|hpo|final|source_eval|export|review
+CAMPAIGN_ID = "semantic-cs-idd-v2"
+CAMPAIGN_TARGET = "audit"  # audit|smoke|pilot|screening|hpo|final|evaluate|export|report
 RUN_STAGE = CAMPAIGN_TARGET  # Legacy report naming; execution uses TRAINING_STAGES.
 AUTO_RESUME = True
 DEEP_VERIFY_ARCHIVES = False
 ALLOW_FINAL_DATA = False
-RUN_MODELS = ["segformer_b0", "fast_scnn", "pidnet_s", "ddrnet_23_slim", "bisenetv2"]
+CORE_MODELS = ["segformer_b0", "fast_scnn", "pidnet_s"]
+EXTENSION_MODELS = ["ddrnet_23_slim", "bisenetv2"]
+RUN_MODELS = CORE_MODELS if CAMPAIGN_TARGET in {"smoke", "pilot"} else CORE_MODELS + EXTENSION_MODELS
 ALLOW_INELIGIBLE_BDD_SMOKE = True  # Provisional audit için; DATA_MANIFESTS listesine girmez.
 RUN_DATA_STAGING = not LOCAL_TEST_MODE
 RUN_MULTIDOMAIN_AUDIT = not LOCAL_TEST_MODE
 RUN_FREEZE = False  # Cityscapes + IDD candidate manifestleri incelendikten sonra True.
 RUN_SOURCE_VALIDATION_AUDIT = False
 RUN_FREEZE_SOURCE_VALIDATION = False
+MANIFEST_REVIEW_RECEIPT_ROOT = WORK_ROOT / "reviews/manifest-freeze"
+RELEASE_CANDIDATE = WORK_ROOT / "accepted_release.candidate.json"
+RELEASE_REVIEW_RECEIPT = WORK_ROOT / "reviews/release.review.json"
+ACCEPTED_RELEASE = WORK_ROOT / "accepted_release.json"
+RUN_ACCEPT_RELEASE = False  # İnsan review receipt'i hazırlandıktan sonra açıkça True.
 FINAL_MODELS = []
 RUN_ACDC = False
 RUN_SHIFT_CALIBRATION = False
@@ -1727,7 +1878,7 @@ from edgeguard.rescue.colab_recovery import (  # noqa: E402
     quarantine_incomplete,
     write_completion_receipt,
 )
-from edgeguard.serialization import sha256_file, sha256_payload  # noqa: E402
+from edgeguard.serialization import canonical_json, sha256_file, sha256_payload  # noqa: E402
 
 ACTION_PLAN = action_requirements(
     CAMPAIGN_TARGET,
@@ -1740,21 +1891,16 @@ PLANNED_STAGES = ACTION_PLAN["stages"]
 TRAINING_STAGES = ACTION_PLAN["training_stages"]
 RUNTIME_REQUIRED = ACTION_PLAN["runtime_required"]
 RUN_HPO = "hpo" in PLANNED_STAGES
-RUN_FINAL_EVALUATION = "source_eval" in PLANNED_STAGES
-if RUN_FINAL_EVALUATION and not ALLOW_FINAL_DATA:
+RUN_FINAL_EVALUATION = "evaluate" in PLANNED_STAGES
+if CAMPAIGN_TARGET in {"evaluate", "export", "report"} and not ALLOW_FINAL_DATA:
     raise RuntimeError(
         "Source/external final data is sealed. First complete CAMPAIGN_TARGET='final'; "
-        "then set CAMPAIGN_TARGET='source_eval' and ALLOW_FINAL_DATA=True."
+        "then provide ACCEPTED_RELEASE and set ALLOW_FINAL_DATA=True."
     )
 RUN_MULTIDOMAIN_AUDIT = RUN_MULTIDOMAIN_AUDIT and "audit" in PLANNED_STAGES
 RUN_DATA_STAGING = RUN_DATA_STAGING and bool(ACTION_PLAN["datasets"])
-RUN_FREEZE = RUN_FREEZE or bool(TRAINING_STAGES) or RUN_HPO or RUN_FINAL_EVALUATION
-RUN_SOURCE_VALIDATION_AUDIT = RUN_SOURCE_VALIDATION_AUDIT or (
-    RUN_FINAL_EVALUATION and ALLOW_FINAL_DATA
-)
-RUN_FREEZE_SOURCE_VALIDATION = RUN_FREEZE_SOURCE_VALIDATION or (
-    RUN_FINAL_EVALUATION and ALLOW_FINAL_DATA
-)
+if (TRAINING_STAGES or RUN_HPO or RUN_FINAL_EVALUATION) and RUN_FREEZE:
+    print("RUN_FREEZE açık: yalnız hash-bağlı insan review receipt'leri kullanılacak.")
 print("EDGEGUARD ACTION PLAN:", ACTION_PLAN)
 
 FAILURE_REPORTER = ColabFailureReporter(
@@ -1807,6 +1953,8 @@ run_colab_command(
 )
 LOCAL_STATE_ARCHIVE = CONTENT_ROOT / "edgeguard-campaign-state.tar.gz"
 STATE_INCLUDE = [
+    "accepted_release.candidate.json",
+    "accepted_release.json",
     "audit",
     "calibration",
     "evaluation",
@@ -1816,6 +1964,7 @@ STATE_INCLUDE = [
     "multidomain-statistics",
     "preview",
     "reports",
+    "reviews",
     "runs",
 ]
 run_colab_command(
@@ -1978,12 +2127,30 @@ if DOWNLOAD_LATEST_FAILURE_REPORT:
 """,
         ),
     ]
+    _pin_delivery(cells, branch=branch, project_commit=project_commit)
     _write(NOTEBOOK_ROOT / "EdgeGuard_Road_Colab.ipynb", cells)
 
 
 def main() -> int:
-    build_preflight_notebook()
-    build_training_notebook()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--branch", default="stabilize/colab-v2")
+    parser.add_argument("--project-commit")
+    args = parser.parse_args()
+    project_commit = (
+        args.project_commit
+        or subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+    if re.fullmatch(r"[0-9a-f]{40}", project_commit) is None:
+        raise ValueError("notebook project commit must be a full lowercase Git SHA")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", args.branch) is None:
+        raise ValueError("notebook delivery branch is invalid")
+    build_preflight_notebook(branch=args.branch, project_commit=project_commit)
+    build_training_notebook(branch=args.branch, project_commit=project_commit)
     subprocess.run(
         [
             "ruff",

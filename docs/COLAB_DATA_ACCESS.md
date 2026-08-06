@@ -148,13 +148,15 @@ the project maps only exact ontology matches and sends ambiguous classes to igno
 
 ## Colab runtime rule
 
-The current hosted Colab stack is not assumed. Colab announced Python 3.12 and Torch 2.8
-for the hosted image, while the pinned MMSeg stack predates that image. The notebook first
-attempts hosted Torch unchanged and then falls back to isolated Python 3.11, Torch 2.1.1
-and CUDA 12.1. Both paths run dependency checks, delivery-package imports, five-model
-forward/backward and checkpoint reload. Training no longer uses a hard-coded interpreter:
-it resolves the selected Python and MMSeg checkout from the verified compatibility
-receipt and rejects project/framework commit drift.
+The current hosted Colab stack is not assumed. The notebook installs exactly uv 0.8.8 and
+creates one managed Python 3.11.13 runtime. A hash-locked sync installs NumPy 1.26.4,
+Torch 2.1.1/cu121 and all normal dependencies; mmcv-lite is separately hash-verified with
+MMEngine in a two-wheel OpenMMLab lock and dependency resolution disabled. The main lock
+must contain only headless OpenCV and directly supplies MMEngine's normal dependencies.
+No hosted/fallback cascade exists. The verified runtime
+receipt binds both lock files, project/framework commits, CUDA 12.1, headless OpenCV and
+the three-model FP32/AMP/checkpoint canary. Any mismatch fails without selecting another
+matrix.
 
 References: <https://github.com/googlecolab/colabtools/issues/5483>,
 <https://mmsegmentation.readthedocs.io/en/main/notes/faq.html>, and

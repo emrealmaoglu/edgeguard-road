@@ -279,11 +279,13 @@ def _write_audit_figures(
     return True
 
 
-def audit_cityscapes(root: Path, output_root: Path) -> dict[str, Any]:
+def audit_cityscapes(root: Path, output_root: Path, *, split: str = "train") -> dict[str, Any]:
     """Audit real Cityscapes pairs and emit deterministic scientific input evidence."""
+    if split not in {"train", "val"}:
+        raise ValueError("Cityscapes audit split must be train or val")
     report_root = output_root / "dataset_audit"
     report_root.mkdir(parents=True, exist_ok=False)
-    samples, missing_masks = discover_cityscapes(root)
+    samples, missing_masks = discover_cityscapes(root, split=split)
     pixel_counts = np.zeros(19, dtype=np.int64)
     image_counts = np.zeros(19, dtype=np.int64)
     ignore_pixels = 0
@@ -505,7 +507,8 @@ def audit_cityscapes(root: Path, output_root: Path) -> dict[str, Any]:
     summary = {
         "schema_version": "1.0",
         "record_type": "cityscapes_dataset_audit",
-        "dataset": "cityscapes_fine_train",
+        "dataset": f"cityscapes_fine_{split}",
+        "source_split": split,
         "discovered_pairs": len(samples),
         "valid_pairs": len(valid_samples),
         "missing_masks": sorted(missing_masks),

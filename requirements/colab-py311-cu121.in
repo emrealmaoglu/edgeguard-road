@@ -1,0 +1,33 @@
+# EdgeGuard-Road hermetic Colab runtime inputs.
+# Compile for CPython 3.11 / manylinux x86_64 with uv 0.8.8 and commit the hash lock.
+
+numpy==1.26.4
+torch @ https://download.pytorch.org/whl/cu121/torch-2.1.1%2Bcu121-cp311-cp311-linux_x86_64.whl
+torchvision @ https://download.pytorch.org/whl/cu121/torchvision-0.16.1%2Bcu121-cp311-cp311-linux_x86_64.whl
+torchaudio @ https://download.pytorch.org/whl/cu121/torchaudio-2.1.1%2Bcu121-cp311-cp311-linux_x86_64.whl
+
+opencv-python-headless==4.10.0.84
+addict==2.4.0
+packaging==24.2
+prettytable==3.16.0
+rich==15.0.0
+termcolor==3.1.0
+tqdm==4.67.1
+yapf==0.43.0
+tensorboard==2.19.0
+Pillow==11.3.0
+pydantic==2.11.7
+PyYAML==6.0.2
+matplotlib==3.10.5
+scipy==1.16.1
+terminaltables==3.1.10
+ftfy==6.3.1
+regex==2024.11.6
+
+onnx==1.18.0
+onnxruntime==1.22.1
+optuna==4.4.0
+streamlit==1.48.1
+certifi==2025.8.3
+setuptools==83.0.0
+wheel==0.47.0

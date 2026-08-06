@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,7 @@ from edgeguard.rescue.mmseg_runtime import (
     materialize_role_file,
     validate_scientific_split,
 )
+from edgeguard.rescue.multidomain import build_cityscapes_official_validation_manifest
 from edgeguard.rescue.reporting import build_evidence_report
 from edgeguard.rescue.selection import select_top_two
 from edgeguard.rescue.stress import build_stress_dataset
@@ -128,6 +130,34 @@ def test_cityscapes_audit_blocks_black_and_all_ignore_samples(tmp_path: Path) ->
     assert summary["audit_passed"] is False
     assert summary["black_image_count"] == 1
     assert summary["all_ignore_mask_count"] == 1
+
+
+def test_cityscapes_official_val_manifest_is_separate_and_review_required(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cityscapes"
+    identifier = "valcity_000001_000019"
+    image_path = root / f"leftImg8bit/val/valcity/{identifier}_leftImg8bit.png"
+    mask_path = root / f"gtFine/val/valcity/{identifier}_gtFine_labelTrainIds.png"
+    image_path.parent.mkdir(parents=True)
+    mask_path.parent.mkdir(parents=True)
+    intensity = np.tile(np.arange(19, dtype=np.uint8) * 10, (3, 1))
+    Image.fromarray(np.stack((intensity, intensity, intensity), axis=-1), mode="RGB").save(
+        image_path
+    )
+    Image.fromarray(np.tile(np.arange(19, dtype=np.uint8), (3, 1)), mode="L").save(mask_path)
+    summary = audit_cityscapes(root, tmp_path / "val-audit", split="val")
+    candidate_path = tmp_path / "cityscapes-val.candidate.json"
+    candidate = build_cityscapes_official_validation_manifest(
+        root,
+        summary,
+        candidate_path,
+        source_manifests=(),
+        strict_count=False,
+    )
+    assert candidate["split_state"] == "candidate_requires_human_freeze"
+    assert set(candidate["roles"]) == {"official_source_val"}
+    assert candidate["scientific_eligible"] is True
 
 
 def test_split_statistics_are_derived_for_every_role(tmp_path: Path) -> None:
@@ -435,15 +465,15 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert 'copy_receipt.get("sha256") or copy_receipt.get("copied_sha256")' in preflight_source
     assert 'loaded_module.startswith("edgeguard.")' in preflight_source
     assert "shutil.rmtree(CACHE_ROOT)" not in preflight_source
-    assert (
-        'EXPECTED_PROJECT_COMMIT = "5cc578cb9f15aa7a560108840f3055ae2f4e4733"' in preflight_source
-    )
+    preflight_pins = re.findall(r'EXPECTED_PROJECT_COMMIT = "([0-9a-f]{40})"', preflight_source)
+    assert len(preflight_pins) == 1
+    assert 'BRANCH = "stabilize/colab-v2"' in preflight_source
     source = "\n".join("".join(cell.get("source", [])) for cell in payload["cells"])
     assert "scripts/audit_dataset.py" in source
-    assert "scripts/train.py" in source
+    assert "scripts/colab_pipeline.py" in source
     assert "scripts/evaluate.py" in source
     assert "scripts/predict.py" in source
-    assert "scripts/export_onnx.py" in source
+    assert "pipeline-artifact-review" in source
     assert "calibrate-shift" in source
     assert "evaluate-shift" in source
     assert "--emit-regions" in source
@@ -451,20 +481,31 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "--local-root" in source
     assert "sync_work_snapshot" in source
     assert 'CAMPAIGN_TARGET = "audit"' in source
-    assert 'CAMPAIGN_ID = "semantic-cs-idd-v1"' in source
+    assert "audit|smoke|pilot|screening|hpo|final|evaluate|export|report" in source
+    assert 'CAMPAIGN_ID = "semantic-cs-idd-v2"' in source
     assert "completion_is_valid" in source
     assert "package-interruption" in source
     assert "audit-catalog" in source
     assert "--quarantine-invalid-source-samples" in source
+    assert "--review-receipt" in source
+    assert "ACCEPTED_RELEASE" in source
+    assert (
+        'PIPELINE_TARGETS = {"smoke", "pilot", "screening", "hpo", "final", '
+        '"evaluate", "export", "report"}' in source
+    )
     assert '"status": "data_review_required"' in source
     assert "audit_process.returncode not in {0, 2}" in source
-    assert "resumable-final-training-and-export" in source
+    assert "final-training-owned-by-orchestrator" in source
     assert "bdd100k.frozen.json" not in source
-    assert "runtime-compatibility-cascade" in source
+    assert "runtime-hermetic-install" in source
+    assert 'CORE_MODELS = ["segformer_b0", "fast_scnn", "pidnet_s"]' in source
+    assert "runtime_receipt.json" in source
     assert "failure-report.zip" in source
     assert "run_logged_command" in source
     assert "cwd=PROJECT_ROOT" in source
-    assert 'EXPECTED_PROJECT_COMMIT = "5cc578cb9f15aa7a560108840f3055ae2f4e4733"' in source
+    training_pins = re.findall(r'EXPECTED_PROJECT_COMMIT = "([0-9a-f]{40})"', source)
+    assert training_pins == preflight_pins
+    assert 'BRANCH = "stabilize/colab-v2"' in source
 
 
 def test_synthetic_stress_fallback_preserves_labels_and_claim_boundary(tmp_path: Path) -> None:

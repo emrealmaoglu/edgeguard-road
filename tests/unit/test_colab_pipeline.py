@@ -1,0 +1,216 @@
+"""Tests for the semantic-cs-idd-v2 Colab orchestrator contract."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from edgeguard.rescue.colab_pipeline import (
+    ALL_MODELS,
+    CORE_MODELS,
+    EXTENSION_MODELS,
+    ColabPipeline,
+    PipelineInputs,
+    models_for_phase,
+    phases_for_target,
+)
+from edgeguard.rescue.colab_recovery import publish_recovery_file
+from edgeguard.serialization import sha256_file
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _pipeline(tmp_path: Path, *, final_models: tuple[str, ...] = ()) -> ColabPipeline:
+    commit = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    runtime = tmp_path / "runtime_receipt.json"
+    runtime.write_text(
+        json.dumps(
+            {
+                "record_type": "semantic_hermetic_runtime_receipt",
+                "runtime_profile": "py311-cu121",
+                "project_commit": commit,
+                "lock_sha256": {"lock": "a" * 64},
+                "environment": {"cuda_available": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifests = (tmp_path / "cityscapes.frozen.json", tmp_path / "idd20k.frozen.json")
+    for manifest in manifests:
+        manifest.write_text('{"status":"accepted"}\n', encoding="utf-8")
+    config = tmp_path / "semantic_first.yaml"
+    config.write_text("seed: 20260728\n", encoding="utf-8")
+    mmseg = tmp_path / "mmsegmentation"
+    mmseg.mkdir()
+    return ColabPipeline(
+        PipelineInputs(
+            project_root=REPO_ROOT,
+            project_commit=commit,
+            runtime_receipt=runtime,
+            mmseg_root=mmseg,
+            work_root=tmp_path / "work",
+            recovery_root=tmp_path / "drive-recovery",
+            config_path=config,
+            data_manifests=manifests,
+            final_models=final_models,
+        )
+    )
+
+
+def test_target_closure_and_three_to_five_model_gate_are_frozen() -> None:
+    assert phases_for_target("pilot") == (
+        "preflight",
+        "restore",
+        "stage-data",
+        "smoke",
+        "pilot",
+    )
+    assert "extension-smoke" in phases_for_target("screening")
+    assert models_for_phase("smoke") == CORE_MODELS
+    assert models_for_phase("pilot") == CORE_MODELS
+    assert models_for_phase("extension-smoke") == EXTENSION_MODELS
+    assert models_for_phase("screening") == ALL_MODELS
+
+
+def test_final_stage_requires_exactly_three_supported_models(tmp_path: Path) -> None:
+    pipeline = _pipeline(tmp_path, final_models=CORE_MODELS[:2])
+    with pytest.raises(ValueError, match="exactly three"):
+        pipeline._run_training_phase("final")  # noqa: SLF001 - phase gate under test
+
+
+def _accepted_release(tmp_path: Path, pipeline: ColabPipeline) -> Path:
+    release_root = tmp_path / "release"
+    release_root.mkdir()
+    checkpoint = release_root / "segformer.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    resolved = release_root / "segformer.py"
+    resolved.write_text("model = {}\n", encoding="utf-8")
+    evidence = release_root / "metrics.json"
+    evidence.write_text('{"mIoU":0.6}\n', encoding="utf-8")
+    release = release_root / "accepted_release.json"
+    release.write_text(
+        json.dumps(
+            {
+                "record_type": "edgeguard_accepted_release",
+                "release_id": "semantic-cs-idd-v2-rc1",
+                "status": "accepted",
+                "campaign_id": "semantic-cs-idd-v2",
+                "project_commit": pipeline.inputs.project_commit,
+                "data_manifest_sha256": pipeline.identity["data_manifest_sha256"],
+                "models": [
+                    {
+                        "model": "segformer_b0",
+                        "checkpoint": {
+                            "path": checkpoint.name,
+                            "sha256": sha256_file(checkpoint),
+                        },
+                        "resolved_config": {
+                            "path": resolved.name,
+                            "sha256": sha256_file(resolved),
+                        },
+                    }
+                ],
+                "artifacts": [
+                    {
+                        "path": evidence.name,
+                        "sha256": sha256_file(evidence),
+                        "scientific_status": "accepted",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return release
+
+
+def test_evaluate_export_report_require_hash_verified_accepted_release(tmp_path: Path) -> None:
+    pipeline = _pipeline(tmp_path)
+    with pytest.raises(PermissionError, match="--accepted-release"):
+        pipeline._accepted_release()  # noqa: SLF001 - release gate under test
+
+    release = _accepted_release(tmp_path, pipeline)
+    accepted = ColabPipeline(replace(pipeline.inputs, accepted_release=release))
+    payload, models = accepted._accepted_release()  # noqa: SLF001 - release gate under test
+    assert payload["release_id"] == "semantic-cs-idd-v2-rc1"
+    assert [model.model for model in models] == ["segformer_b0"]
+
+    models[0].checkpoint.write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="artifact identity mismatch"):
+        accepted._accepted_release()  # noqa: SLF001 - tamper rejection under test
+
+
+def test_restore_recovers_the_checkpoint_bound_by_the_accepted_release(tmp_path: Path) -> None:
+    pipeline = _pipeline(tmp_path)
+    release = _accepted_release(tmp_path, pipeline)
+    accepted = ColabPipeline(replace(pipeline.inputs, accepted_release=release))
+    _, models = accepted._accepted_release()  # noqa: SLF001 - release fixture resolution
+    checkpoint = models[0].checkpoint
+    expected = checkpoint.read_bytes()
+    publish_recovery_file(
+        checkpoint,
+        accepted.inputs.recovery_root,
+        artifact_id="final-segformer-b0-ce",
+        campaign_id="semantic-cs-idd-v2",
+        project_commit=accepted.inputs.project_commit,
+    )
+    checkpoint.unlink()
+    restored = accepted._restore_accepted_release_checkpoints()  # noqa: SLF001
+    assert checkpoint.read_bytes() == expected
+    assert restored[0]["artifact_id"] == "final-segformer-b0-ce"
+
+
+def test_final_release_candidate_is_measured_and_requires_later_acceptance(
+    tmp_path: Path,
+) -> None:
+    pipeline = _pipeline(tmp_path, final_models=CORE_MODELS)
+    for model in CORE_MODELS:
+        run = pipeline.inputs.work_root / "runs/final" / model / "ce"
+        run.mkdir(parents=True)
+        (run / "iter_40000.pth").write_bytes(model.encode())
+        (run / "last_checkpoint").write_text("iter_40000.pth\n", encoding="utf-8")
+        (run / "resolved.py").write_text("model = {}\n", encoding="utf-8")
+        (run / "summary.json").write_text('{"status":"measured"}\n', encoding="utf-8")
+    candidate = pipeline._write_release_candidate()  # noqa: SLF001 - candidate contract
+    payload = json.loads(candidate.read_text(encoding="utf-8"))
+    assert payload["status"] == "candidate_requires_human_acceptance"
+    assert [record["model"] for record in payload["models"]] == list(CORE_MODELS)
+    assert {item["scientific_status"] for item in payload["artifacts"]} == {"measured"}
+
+
+def test_preflight_and_data_phases_resume_only_with_verified_artifacts(tmp_path: Path) -> None:
+    pipeline = _pipeline(tmp_path)
+
+    for phase in ("preflight", "restore", "stage-data"):
+        pipeline._run_phase(phase)  # noqa: SLF001 - prerequisite persistence under test
+        assert pipeline._phase_complete(phase)  # noqa: SLF001
+
+    metrics = pipeline.state_root / "stage-data/metrics.json"
+    metrics.write_text("{}\n", encoding="utf-8")
+    assert not pipeline._phase_complete("stage-data")  # noqa: SLF001
+
+
+def test_uniform_artifact_statuses_never_treat_smoke_as_scientific_result(
+    tmp_path: Path,
+) -> None:
+    pipeline = _pipeline(tmp_path)
+    pipeline._complete_phase(  # noqa: SLF001 - the contract writer is the subject under test
+        "smoke",
+        elapsed_seconds=1.0,
+        scientific_status="not_run",
+        command_results=[],
+    )
+    manifest = json.loads((pipeline.state_root / "smoke/run_manifest.json").read_text())
+    index = json.loads((pipeline.state_root / "smoke/artifact_index.json").read_text())
+    assert manifest["synthetic_or_smoke"] is True
+    assert manifest["scientific_status"] == "not_run"
+    assert index["scientific_status"] == "not_run"
