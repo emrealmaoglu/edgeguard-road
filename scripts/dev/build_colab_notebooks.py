@@ -53,7 +53,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import traceback
 import uuid
 from datetime import datetime, timezone
@@ -77,6 +76,12 @@ DRIVE_ROOT = (
     else Path("/content/drive/MyDrive")
 )
 RESULT_PATH = CONTENT_ROOT / "edgeguard-master-result.json"
+NOTEBOOK_LOG = CONTENT_ROOT / "edgeguard-notebook.log"
+MASTER_CHILD_LOG = CONTENT_ROOT / "edgeguard-master-child.log"
+MASTER_CHILD_FAILURE = CONTENT_ROOT / "edgeguard-master-child-failure.json"
+MASTER_STAGE = CONTENT_ROOT / "edgeguard-master-stage.json"
+BOOTSTRAP_FAILURE = CONTENT_ROOT / "bootstrap-failure.json"
+EXECUTION_MODE_ARGS = ["--execution-mode", "production"]
 AUTO_DOWNLOAD_JETSON_RELEASE = True
 
 
@@ -87,9 +92,16 @@ def persist_failure(stage, error):
         return None
     root = DRIVE_ROOT / "EdgeGuard/failures" / CAMPAIGN_ID / "master-notebook"
     root.mkdir(parents=True, exist_ok=True)
-    identifier = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ") + "-" + uuid.uuid4().hex[:8]
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    identifier = timestamp + "-" + uuid.uuid4().hex[:8]
     report_root = root / identifier
     report_root.mkdir()
+    child_failure = None
+    if MASTER_CHILD_FAILURE.is_file():
+        try:
+            child_failure = json.loads(MASTER_CHILD_FAILURE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            child_failure = None
     payload = {{
         "schema_version": "1.0",
         "record_type": "edgeguard_master_notebook_failure",
@@ -99,6 +111,7 @@ def persist_failure(stage, error):
         "error_type": type(error).__name__,
         "message": str(error)[:2000],
         "traceback": rendered[-20000:],
+        "root_failure": child_failure,
         "safe_restart": "Select L4 + High-RAM and run all again; verified state is retained.",
     }}
     report = report_root / "failure.json"
@@ -106,7 +119,21 @@ def persist_failure(stage, error):
     package = report_root / "failure-report.zip"
     with ZipFile(package, "w", compression=ZIP_DEFLATED) as archive:
         archive.write(report, arcname="failure.json")
+        for diagnostic in (MASTER_CHILD_FAILURE, MASTER_STAGE, BOOTSTRAP_FAILURE):
+            if diagnostic.is_file():
+                archive.write(diagnostic, arcname=diagnostic.name)
+        for diagnostic in (NOTEBOOK_LOG, MASTER_CHILD_LOG):
+            if diagnostic.is_file():
+                tail_path = report_root / f"{{diagnostic.stem}}-tail.log"
+                with diagnostic.open("rb") as source:
+                    source.seek(0, 2)
+                    source.seek(max(0, source.tell() - 256000))
+                    tail_path.write_bytes(source.read())
+                archive.write(tail_path, arcname=tail_path.name)
     print("Hata raporu Drive'a yazıldı:", package)
+    if child_failure:
+        print("GERÇEK DURMA AŞAMASI:", child_failure.get("stage"))
+        print("GERÇEK HATA:", child_failure.get("message"))
     return package
 
 
@@ -125,9 +152,32 @@ else:
             """
 def run_visible(command, *, cwd=None, env=None):
     print("Çalıştırılıyor:", " ".join(str(value) for value in command), flush=True)
-    completed = subprocess.run(command, cwd=cwd, env=env)
-    if completed.returncode:
-        raise RuntimeError(f"Komut {completed.returncode} koduyla durdu: {command}")
+    NOTEBOOK_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with NOTEBOOK_LOG.open("a", encoding="utf-8") as sink:
+        sink.write("\\nCOMMAND: " + " ".join(str(value) for value in command) + "\\n")
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        assert process.stdout is not None
+        tail = []
+        tail_size = 0
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            sink.write(line)
+            tail.append(line)
+            tail_size += len(line)
+            while tail_size > 24000 and len(tail) > 1:
+                tail_size -= len(tail.pop(0))
+        return_code = process.wait()
+        sink.write(f"RETURN_CODE: {return_code}\\n")
+    if return_code:
+        raise RuntimeError(f"Komut {return_code} koduyla durdu: {command}\\n" + "".join(tail))
 
 
 try:
@@ -141,7 +191,16 @@ try:
         if PROJECT_ROOT.exists() and not (PROJECT_ROOT / ".git").is_dir():
             shutil.rmtree(PROJECT_ROOT)
         if not (PROJECT_ROOT / ".git").is_dir():
-            run_visible(["git", "clone", "--filter=blob:none", "--no-checkout", REPOSITORY, str(PROJECT_ROOT)])
+            run_visible(
+                [
+                    "git",
+                    "clone",
+                    "--filter=blob:none",
+                    "--no-checkout",
+                    REPOSITORY,
+                    str(PROJECT_ROOT),
+                ]
+            )
         dirty = subprocess.run(
             ["git", "-C", str(PROJECT_ROOT), "status", "--porcelain"],
             check=True,
@@ -150,10 +209,21 @@ try:
         ).stdout.strip()
         if dirty:
             shutil.rmtree(PROJECT_ROOT)
-            run_visible(["git", "clone", "--filter=blob:none", "--no-checkout", REPOSITORY, str(PROJECT_ROOT)])
+            run_visible(
+                [
+                    "git",
+                    "clone",
+                    "--filter=blob:none",
+                    "--no-checkout",
+                    REPOSITORY,
+                    str(PROJECT_ROOT),
+                ]
+            )
         run_visible(["git", "-C", str(PROJECT_ROOT), "fetch", "origin", BRANCH])
         run_visible(["git", "-C", str(PROJECT_ROOT), "fetch", "origin", EXPECTED_PROJECT_COMMIT])
-        run_visible(["git", "-C", str(PROJECT_ROOT), "checkout", "--detach", EXPECTED_PROJECT_COMMIT])
+        run_visible(
+            ["git", "-C", str(PROJECT_ROOT), "checkout", "--detach", EXPECTED_PROJECT_COMMIT]
+        )
         checked_commit = subprocess.run(
             ["git", "-C", str(PROJECT_ROOT), "rev-parse", "HEAD"],
             check=True,
@@ -182,17 +252,21 @@ try:
         }
     else:
         environment = os.environ.copy()
-        environment["PYTHONPATH"] = str(PROJECT_ROOT / "src")
         run_visible(
             [
                 "/usr/bin/python3",
                 str(PROJECT_ROOT / "scripts/run_colab_master.py"),
-                "--project-root", str(PROJECT_ROOT),
-                "--project-commit", EXPECTED_PROJECT_COMMIT,
-                "--drive-root", str(DRIVE_ROOT),
-                "--content-root", str(CONTENT_ROOT),
-                "--execution-mode", "production",
-                "--result", str(RESULT_PATH),
+                "--project-root",
+                str(PROJECT_ROOT),
+                "--project-commit",
+                EXPECTED_PROJECT_COMMIT,
+                "--drive-root",
+                str(DRIVE_ROOT),
+                "--content-root",
+                str(CONTENT_ROOT),
+                *EXECUTION_MODE_ARGS,
+                "--result",
+                str(RESULT_PATH),
             ],
             cwd=PROJECT_ROOT,
             env=environment,

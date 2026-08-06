@@ -45,6 +45,10 @@ def test_master_notebook_is_thin_immutable_and_run_all_only() -> None:
     assert "EdgeGuard_Jetson_Release.zip" in source
     assert "persist_failure" in source
     assert "safe_restart" in source
+    assert "GERÇEK DURMA AŞAMASI" in source
+    assert "edgeguard-master-child-failure.json" in source
+    assert "edgeguard-master-child.log" in source
+    assert 'environment["PYTHONPATH"]' not in source
     lowered = source.lower()
     for prohibited in ("api_key", "password=", "token=", "credential="):
         assert prohibited not in lowered
