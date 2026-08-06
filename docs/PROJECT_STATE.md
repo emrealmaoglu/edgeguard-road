@@ -5,7 +5,7 @@ Updated 2026-08-07 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`55e13db49f6becc640b3d3d7816ee3c888d4eeb7`. The only generated notebook is
+`005eb035e515902cfd4cdd7c8a4426ae3fa52437`. The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -73,7 +73,9 @@ libraries ahead of Colab toolkit libraries while retaining the host driver paths
 isolates every dependency import and CUDA initialization with preserved stderr, and
 validates the standard-library bootstrap receipt instead of uninstalling/reinstalling the
 environment. Setuptools is held at 80.9.0 so MMEngine's `pkg_resources` runtime path
-remains available.
+remains available. A failed, receipt-less canary evidence root is preserved under a
+timestamped quarantine name before retry, preventing old failure state from contaminating
+the next Run-all attempt.
 
 All five models pass the runtime canary contract. Core smoke intentionally interrupts at
 step 25 of 50 and must resume from the same optimizer/checkpoint identity. Checkpoints are

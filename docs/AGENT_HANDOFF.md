@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `55e13db49f6becc640b3d3d7816ee3c888d4eeb7`
+  `005eb035e515902cfd4cdd7c8a4426ae3fa52437`
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -32,6 +32,8 @@
   second destructive package sync.
 - Reports the exact failed module or CUDA initialization stderr and retains MMEngine's
   required `pkg_resources` path through the Setuptools 80.9.0 lock.
+- Preserves failed canary evidence under a timestamped quarantine root before retry, so
+  repeated Run-all attempts start with clean runtime evidence without deleting history.
 
 ## Local gates
 
@@ -45,8 +47,11 @@
 - All master notebook code cells execute in local claim-safe mode with
   `scientific_status=not_run`.
 - The notebook SHA-256 after pinning is
-  `206d3ca916dce38efac4e74257e20572d311b313ec792a901609aa08711d0321`.
+  `f904ee16a5ed479b9d15f1b8fb6f08272ad10b74dda96d8a9bfc19417fd78d4b`.
 - ZIP writer verifies CRC, member set and every member payload after creation.
+- Remote Linux run `31128538612` passed the exact 92-package Colab lock imports plus
+  `pkg_resources` and MMEngine Runner import before continuing through the broader CPU
+  closure.
 
 ## Next external action
 
