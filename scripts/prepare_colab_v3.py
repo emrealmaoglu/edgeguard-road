@@ -40,9 +40,7 @@ def _stage_data(drive_root: Path, local_root: Path) -> None:
 
 def _verify_staged_data(local_root: Path) -> dict[str, list[str]]:
     """Fail before training unless every frozen train/val source directory exists."""
-    plan = load_colab_data_access(
-        REPOSITORY_ROOT / "configs/dataset/colab_data_access_v1.yaml"
-    )
+    plan = load_colab_data_access(REPOSITORY_ROOT / "configs/dataset/colab_data_access_v1.yaml")
     verified: dict[str, list[str]] = {}
     for dataset in ("cityscapes", "idd20k"):
         definition = plan["datasets"][dataset]

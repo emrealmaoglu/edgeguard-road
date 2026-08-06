@@ -100,9 +100,7 @@ def main() -> int:
             data_roots=_data_roots(args.data_root),
             campaign_id=args.campaign_id,
             execution_mode=args.execution_mode,
-            state_store_root=(
-                args.state_store_root.resolve() if args.state_store_root else None
-            ),
+            state_store_root=(args.state_store_root.resolve() if args.state_store_root else None),
         )
     )
     result = pipeline.plan(args.target) if args.mode == "plan" else pipeline.run(args.target)

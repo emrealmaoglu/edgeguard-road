@@ -92,17 +92,13 @@ def generate_gallery(
     selected_rows: list[dict[str, Any]] = []
     artifact_paths: list[Path] = []
     for manifest_path in manifests:
-        manifest = validate_dataset_manifest(
-            manifest_path, allowed_roles=("official_source_val",)
-        )
+        manifest = validate_dataset_manifest(manifest_path, allowed_roles=("official_source_val",))
         dataset = str(manifest["dataset_id"])
         records = manifest["roles"]["official_source_val"]
         if not isinstance(records, list) or not records:
             raise ValueError("gallery manifest has no official validation records")
         count = min(24, len(records))
-        indices = sorted(
-            {round(value) for value in np.linspace(0, len(records) - 1, count)}
-        )
+        indices = sorted({round(value) for value in np.linspace(0, len(records) - 1, count)})
         measured: list[dict[str, Any]] = []
         for index in indices:
             record = records[index]

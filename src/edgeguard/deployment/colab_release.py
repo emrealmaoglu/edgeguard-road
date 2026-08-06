@@ -63,9 +63,10 @@ def build_colab_release_packages(
 ) -> dict[str, Any]:
     """Package five verified models for Jetson handoff, thesis, and Streamlit."""
     release = json.loads(accepted_release.read_text(encoding="utf-8"))
-    if release.get("record_type") != "edgeguard_accepted_release" or release.get(
-        "status"
-    ) != "accepted":
+    if (
+        release.get("record_type") != "edgeguard_accepted_release"
+        or release.get("status") != "accepted"
+    ):
         raise ValueError("Colab packaging requires an accepted release")
     if output_root.exists():
         index_path = output_root / "release_index.json"
@@ -207,9 +208,7 @@ def build_colab_release_packages(
                 "sha256": hashlib.sha256(
                     source if isinstance(source, bytes) else source.read_bytes()
                 ).hexdigest(),
-                "byte_size": len(source)
-                if isinstance(source, bytes)
-                else source.stat().st_size,
+                "byte_size": len(source) if isinstance(source, bytes) else source.stat().st_size,
             }
             for name, source in sorted(jetson_members.items())
         },
@@ -223,9 +222,7 @@ def build_colab_release_packages(
         model = str(record["model"])
         onnx = work_root / "exports/export" / release_id / model / f"{model}.onnx"
         demo_members[f"models/{model}.onnx"] = onnx
-        demo_members[f"models/{model}.validation.json"] = onnx.with_suffix(
-            ".validation.json"
-        )
+        demo_members[f"models/{model}.validation.json"] = onnx.with_suffix(".validation.json")
     demo_manifest = {
         "schema_version": "1.0",
         "record_type": "edgeguard_accepted_demo_bundle",
@@ -259,9 +256,7 @@ def build_colab_release_packages(
         ),
     )
     writer.writeheader()
-    writer.writerows(
-        {name: row.get(name) for name in writer.fieldnames} for row in candidate_rows
-    )
+    writer.writerows({name: row.get(name) for name in writer.fieldnames} for row in candidate_rows)
     demo_members["comparison/metrics_table.csv"] = comparison.getvalue().encode()
     final_resource = work_root / "pipeline-v3/final/resource.csv"
     if final_resource.is_file():

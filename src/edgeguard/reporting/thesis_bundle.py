@@ -418,8 +418,7 @@ def _measured_evidence(
                 points = [
                     (row["mean_confidence"], row["accuracy"])
                     for row in bins
-                    if row.get("mean_confidence") is not None
-                    and row.get("accuracy") is not None
+                    if row.get("mean_confidence") is not None and row.get("accuracy") is not None
                 ]
                 if points:
                     axis.plot(

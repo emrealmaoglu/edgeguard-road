@@ -125,9 +125,10 @@ def accept_release_candidate_by_policy(
         raise ValueError("release policy campaign mismatch")
     expected_models = tuple(str(value) for value in policy.get("final_models", []))
     models = candidate.get("models")
-    if not isinstance(models, list) or tuple(
-        record.get("model") for record in models
-    ) != expected_models:
+    if (
+        not isinstance(models, list)
+        or tuple(record.get("model") for record in models) != expected_models
+    ):
         raise ValueError("release candidate does not contain the authorized model order")
     if selection.get("recommended_model") not in expected_models:
         raise ValueError("release selection does not recommend an authorized model")

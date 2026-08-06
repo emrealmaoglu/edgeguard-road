@@ -282,9 +282,7 @@ def run_hpo_study(
                     fit_calibrator=False,
                     temperature_file=None,
                     max_reliability_pixels=1,
-                    rare_classes_file=(
-                        rare_classes_file if rung == maximum_steps else None
-                    ),
+                    rare_classes_file=(rare_classes_file if rung == maximum_steps else None),
                     dataset_manifest=manifest,
                     collect_classwise=rung == maximum_steps,
                 )

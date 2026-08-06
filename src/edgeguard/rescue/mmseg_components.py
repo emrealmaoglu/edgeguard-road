@@ -275,9 +275,7 @@ def register_mmseg_components() -> None:
                 and iteration % self.accumulation == 0
             )
             due_final = iteration >= int(runner.max_iters)
-            interrupt_marker = (
-                Path(runner.work_dir) / ".intentional-interruption-complete.json"
-            )
+            interrupt_marker = Path(runner.work_dir) / ".intentional-interruption-complete.json"
             optimizer_step = iteration // self.accumulation
             due_interrupt = (
                 self.intentional_interrupt_optimizer_step is not None
@@ -348,9 +346,7 @@ def register_mmseg_components() -> None:
                     + "\n",
                     encoding="utf-8",
                 )
-                raise RuntimeError(
-                    "EDGEGUARD_INTENTIONAL_INTERRUPTION_AFTER_VERIFIED_CHECKPOINT"
-                )
+                raise RuntimeError("EDGEGUARD_INTENTIONAL_INTERRUPTION_AFTER_VERIFIED_CHECKPOINT")
             recovery_files = sorted(
                 Path(runner.work_dir).glob("recovery_*.pth"),
                 key=lambda path: path.stat().st_mtime_ns,
@@ -393,8 +389,7 @@ def register_mmseg_components() -> None:
                 return
             optimizer_step = iteration // self.accumulation
             if (
-                iteration % self.iteration_interval
-                and iteration < int(runner.max_iters)
+                iteration % self.iteration_interval and iteration < int(runner.max_iters)
             ) or optimizer_step in self.seen:
                 return
             scalars: dict[str, float] = {}

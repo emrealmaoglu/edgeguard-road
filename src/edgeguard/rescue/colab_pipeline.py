@@ -151,14 +151,18 @@ class PipelineInputs:
                 raise FileNotFoundError(f"pipeline identity input is missing: {path}")
         runtime = json.loads(self.runtime_receipt.read_text(encoding="utf-8"))
         probe = runtime.get("core_model_probe")
-        stable_probe = {
-            key: probe.get(key)
-            for key in (
-                "model_count",
-                "fp16_finite_model_count",
-                "checkpoint_resume_verified",
-            )
-        } if isinstance(probe, dict) else None
+        stable_probe = (
+            {
+                key: probe.get(key)
+                for key in (
+                    "model_count",
+                    "fp16_finite_model_count",
+                    "checkpoint_resume_verified",
+                )
+            }
+            if isinstance(probe, dict)
+            else None
+        )
         runtime_identity = {
             "record_type": runtime.get("record_type"),
             "project_commit": runtime.get("project_commit"),
@@ -740,11 +744,7 @@ class ColabPipeline:
         crop_size: tuple[int, int] | None = None,
     ) -> list[str]:
         training_stage = (
-            "smoke"
-            if phase == "extension-smoke"
-            else "final"
-            if phase == "ablation"
-            else phase
+            "smoke" if phase == "extension-smoke" else "final" if phase == "ablation" else phase
         )
         command = [
             str(Path(sys_executable())),
@@ -775,9 +775,7 @@ class ColabPipeline:
         if run_name is not None:
             command.extend(("--run-name", run_name))
         if crop_size is not None:
-            command.extend(
-                ("--crop-height", str(crop_size[0]), "--crop-width", str(crop_size[1]))
-            )
+            command.extend(("--crop-height", str(crop_size[0]), "--crop-width", str(crop_size[1])))
         if self.inputs.execution_mode == "acceptance":
             command.extend(("--max-steps", "2", "--workers", "0", "--precision", "fp32"))
             if phase == "hpo":
@@ -848,11 +846,7 @@ class ColabPipeline:
 
     def _recovery_artifact_id(self, phase: str, model: str, suffix: str) -> str:
         actual_phase = (
-            "smoke"
-            if phase == "extension-smoke"
-            else "final"
-            if phase == "ablation"
-            else phase
+            "smoke" if phase == "extension-smoke" else "final" if phase == "ablation" else phase
         )
         return f"{actual_phase}-{model}-{suffix}".replace("_", "-")
 
@@ -875,11 +869,7 @@ class ColabPipeline:
 
     def _run_directory(self, phase: str, model: str, loss: str = "ce") -> Path:
         actual_phase = (
-            "smoke"
-            if phase == "extension-smoke"
-            else "final"
-            if phase == "ablation"
-            else phase
+            "smoke" if phase == "extension-smoke" else "final" if phase == "ablation" else phase
         )
         return self.inputs.work_root / "runs" / actual_phase / model / loss
 
@@ -1063,10 +1053,9 @@ class ColabPipeline:
             validation = onnx.with_suffix(".validation.json")
             if validation.is_file() and onnx.is_file():
                 recorded = json.loads(validation.read_text(encoding="utf-8"))
-                if (
-                    recorded.get("checkpoint_sha256") != sha256_file(checkpoint)
-                    or recorded.get("onnx_sha256") != sha256_file(onnx)
-                ):
+                if recorded.get("checkpoint_sha256") != sha256_file(checkpoint) or recorded.get(
+                    "onnx_sha256"
+                ) != sha256_file(onnx):
                     raise ValueError("existing final selection ONNX identity mismatch")
             else:
                 if export_dir.exists() and any(export_dir.iterdir()):
@@ -1184,9 +1173,7 @@ class ColabPipeline:
                         retry_stderr = str(retry_error.stderr or "").lower()
                         if "edgeguard_intentional_interruption" not in retry_stderr:
                             raise
-                        result = self._run_command(
-                            phase, f"{label}-oom-retry-resume", retry
-                        )
+                        result = self._run_command(phase, f"{label}-oom-retry-resume", retry)
                     result["oom_recovery"] = {
                         "attempts": 1,
                         "device_batch": 2,
@@ -1244,12 +1231,8 @@ class ColabPipeline:
                     run_name=run_name,
                     crop_size=crop_size,
                 )
-                retry = self._prepare_oom_retry(
-                    "ablation", model, run_name, run_dir, retry
-                )
-                results.append(
-                    self._run_command("ablation", f"train-{run_name}-oom-retry", retry)
-                )
+                retry = self._prepare_oom_retry("ablation", model, run_name, run_dir, retry)
+                results.append(self._run_command("ablation", f"train-{run_name}-oom-retry", retry))
             checkpoint = self._checkpoint("ablation", model, run_name)
             for manifest in self.inputs.data_manifests:
                 payload = json.loads(manifest.read_text(encoding="utf-8"))
@@ -1345,12 +1328,8 @@ class ColabPipeline:
         artifacts.append(selection_record)
         selection_sources = [
             self.inputs.work_root / "reports/selection/candidate_table.json",
-            *sorted(
-                (self.inputs.work_root / "evaluation/selection").glob("**/evaluation.json")
-            ),
-            *sorted(
-                (self.inputs.work_root / "exports/selection").glob("**/*.validation.json")
-            ),
+            *sorted((self.inputs.work_root / "evaluation/selection").glob("**/evaluation.json")),
+            *sorted((self.inputs.work_root / "exports/selection").glob("**/*.validation.json")),
         ]
         for path in selection_sources:
             artifacts.append(
@@ -1449,9 +1428,7 @@ class ColabPipeline:
                 )
                 continue
             audit_root = audit_base / dataset
-            report_name = (
-                "dataset_audit" if dataset == "cityscapes" else "idd20k_val_audit"
-            )
+            report_name = "dataset_audit" if dataset == "cityscapes" else "idd20k_val_audit"
             candidate = audit_root / report_name / "dataset_manifest.candidate.json"
             report_root = audit_root / report_name
             if report_root.exists() and not candidate.is_file():
@@ -1492,9 +1469,7 @@ class ColabPipeline:
                 "--project-commit",
                 self.inputs.project_commit,
             ]
-            results.append(
-                self._run_command("validation-data", f"freeze-{dataset}-val", freeze)
-            )
+            results.append(self._run_command("validation-data", f"freeze-{dataset}-val", freeze))
             validate_dataset_manifest(frozen, allowed_roles=("official_source_val",))
         return results
 
@@ -1644,12 +1619,9 @@ class ColabPipeline:
             selection = self.inputs.work_root / "exports/selection" / source.model
             selection_onnx = selection / f"{source.model}.onnx"
             selection_validation = selection_onnx.with_suffix(".validation.json")
-            selection_payload = json.loads(
-                selection_validation.read_text(encoding="utf-8")
-            )
+            selection_payload = json.loads(selection_validation.read_text(encoding="utf-8"))
             if (
-                selection_payload.get("checkpoint_sha256")
-                != sha256_file(source.checkpoint)
+                selection_payload.get("checkpoint_sha256") != sha256_file(source.checkpoint)
                 or selection_payload.get("onnx_sha256") != sha256_file(selection_onnx)
                 or selection_payload.get("allclose_atol_1e_4_rtol_1e_4") is not True
             ):
@@ -1721,9 +1693,7 @@ class ColabPipeline:
                 "release_id": release["release_id"],
                 "bundle_manifest_sha256": sha256_file(manifest),
                 "thesis_archive_sha256": sha256_file(archive),
-                "gallery_manifest_sha256": sha256_file(
-                    gallery / "gallery_manifest.json"
-                ),
+                "gallery_manifest_sha256": sha256_file(gallery / "gallery_manifest.json"),
             },
         )
         return results
