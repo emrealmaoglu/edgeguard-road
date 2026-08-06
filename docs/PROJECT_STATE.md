@@ -5,7 +5,7 @@ Updated 2026-08-06 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`2495354d02e45cc4f8748e94cfcf1862ae48a295`. The only generated notebook is
+`1da25ef405fcf36180d0b223973ff768296a228f`. The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -44,6 +44,19 @@ The hermetic stack is uv 0.8.8, CPython 3.11.13, NumPy 1.26.4, PyTorch
 MMSegmentation commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`. The host uv and
 host Python stack are not training inputs. GUI OpenCV and dependency re-resolution are
 rejected.
+
+The hosted Colab interpreter now imports only Python standard-library modules. A
+standard-library bootstrap installs the entire hash-locked environment before any
+EdgeGuard, NumPy, Pydantic, Torch, MMCV, or MMSegmentation import. Restore, data staging,
+canary, training, evaluation, export, and reporting then run only through the verified
+Python 3.11 interpreter. The v3 work root is isolated at `/content/edgeguard-work-v3`.
+Ephemeral evidence from another application commit is preserved under an incompatible
+suffix and never resumed; a Drive state from another commit is preserved and skipped.
+
+The first real master run at application commit `2495354d…` stopped before useful child
+diagnostics were retained. The corrected notebook streams and records the complete child
+output, current stage, bootstrap failure, and a bounded log tail in its Drive failure ZIP,
+so a future external failure cannot collapse into an unactionable exit-code-only traceback.
 
 All five models pass the runtime canary contract. Core smoke intentionally interrupts at
 step 25 of 50 and must resume from the same optimizer/checkpoint identity. Checkpoints are
