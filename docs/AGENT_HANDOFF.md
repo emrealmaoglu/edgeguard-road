@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `005eb035e515902cfd4cdd7c8a4426ae3fa52437`
+  `3f3ef8f7d065f739650d75f7921fd8c7e748fe81`
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -34,20 +34,28 @@
   required `pkg_resources` path through the Setuptools 80.9.0 lock.
 - Preserves failed canary evidence under a timestamped quarantine root before retry, so
   repeated Run-all attempts start with clean runtime evidence without deleting history.
+- Firewalls Colab's hosted Matplotlib/Python/virtualenv/pip/uv state before bootstrap and
+  every locked-runtime child; forces `Agg` and isolated cache roots.
+- Runs a real headless PNG probe before the five-model canary and records the non-secret
+  environment-contract identity in runtime evidence.
+- Resumes correctly when the one permitted OOM batch reduction is followed by the forced
+  smoke interruption; the resumed command and checkpoint identity are both verified.
+- Marks every acceptance-mode phase `not_run`, preventing fixture execution from becoming
+  measured or accepted scientific evidence.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 470 passed, 2 environment-gated skipped.
-- Mypy passes for all 116 configured source modules and the three changed runtime
-  entrypoints; full-repository Ruff lint/format passes.
+- Full pytest passes: 477 passed, 2 environment-gated skipped.
+- Mypy passes for all 120 configured source modules and changed runtime entrypoints;
+  full-repository Ruff lint/format passes.
 - Both hosted entrypoints load with site packages disabled (`python -S`).
 - Master notebook generation is byte-identical across two runs.
 - All master notebook code cells execute in local claim-safe mode with
   `scientific_status=not_run`.
 - The notebook SHA-256 after pinning is
-  `f904ee16a5ed479b9d15f1b8fb6f08272ad10b74dda96d8a9bfc19417fd78d4b`.
+  `2d06b7afdfd75561ddcc6409d476351a6469113b813900f5f70dad7b6e1a1e9a`.
 - ZIP writer verifies CRC, member set and every member payload after creation.
 - Remote Linux run `31128538612` passed the exact 92-package Colab lock imports,
   `pkg_resources` and MMEngine Runner import, five-model CPU probe, real-codepath closure,

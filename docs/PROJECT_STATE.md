@@ -5,7 +5,7 @@ Updated 2026-08-07 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`005eb035e515902cfd4cdd7c8a4426ae3fa52437`. The only generated notebook is
+`3f3ef8f7d065f739650d75f7921fd8c7e748fe81`. The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -77,6 +77,17 @@ remains available. A failed, receipt-less canary evidence root is preserved unde
 timestamped quarantine name before retry, preventing old failure state from contaminating
 the next Run-all attempt.
 
+The next L4 run at application commit `005eb03…` proved that the exact locked environment
+and all editable installs completed, then exposed one remaining hosted-notebook leak:
+Colab exported `MPLBACKEND=module://matplotlib_inline.backend_inline`, while the locked
+headless runtime intentionally does not install `matplotlib-inline`. Application commit
+`3f3ef8f…` now removes hosted Python/virtualenv/pip/uv routing state, forces Matplotlib
+`Agg`, isolates plotting and framework caches, records a non-secret environment-contract
+hash, and renders a real headless PNG before the model canary. The same firewall reaches
+bootstrap, canary, training, evaluation, export and report children. The combined
+OOM → reduced device batch → intentional interruption path now adds `--resume` and verifies
+the interruption checkpoint instead of reopening a non-empty run directory.
+
 All five models pass the runtime canary contract. Core smoke intentionally interrupts at
 step 25 of 50 and must resume from the same optimizer/checkpoint identity. Checkpoints are
 published every 500 optimizer steps or ten minutes. A single OOM retry may change device
@@ -99,6 +110,10 @@ checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson tele
 
 Local Ruff, mypy, pytest, deterministic notebook generation and claim-safe local cell
 execution validate engineering contracts only. No local test creates a scientific metric.
+The current delivery passes 477 tests with two environment-gated skips. The master notebook
+was generated twice byte-identically at SHA-256
+`2d06b7afdfd75561ddcc6409d476351a6469113b813900f5f70dad7b6e1a1e9a`, and all four
+cells pass local claim-safe execution with `scientific_status=not_run`.
 Remote Linux workflow `31128538612` also completed the exact Colab lock imports,
 `pkg_resources`/MMEngine Runner check, five-model CPU probe, real-codepath closure, ONNX
 classification and pre-Colab deployment evidence successfully.
