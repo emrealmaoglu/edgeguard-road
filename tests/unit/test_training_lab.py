@@ -36,6 +36,7 @@ from edgeguard.training.logits import validate_native_logits_tensor
 from edgeguard.training.registry import append_registry, load_registry
 from scripts.train.install_semantic_stack import (
     BootstrapError,
+    _environment_probe,
     _record_failure,
     _resolve_uv_executable,
     _validate_lock_contract,
@@ -53,6 +54,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = REPO_ROOT / "configs/training/segmentation"
 COMMIT = "1" * 40
 SHA = "2" * 64
+
+
+def test_environment_probe_names_the_first_failed_import_and_preserves_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "scripts.train.install_semantic_stack.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=1,
+            stdout="probe stdout",
+            stderr="exact loader failure",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="exact loader failure") as captured:
+        _environment_probe(tmp_path / "python", tmp_path / "mmseg")
+    assert "failed for cv2" in str(captured.value)
 
 
 def _suite() -> tuple[object, object, tuple[object, ...]]:

@@ -361,6 +361,37 @@ def build_hermetic_commands(
 
 
 def _environment_probe(interpreter: Path, checkout: Path) -> dict[str, Any]:
+    import_modules = (
+        "cv2",
+        "matplotlib",
+        "mmcv",
+        "mmengine",
+        "mmseg",
+        "numpy",
+        "onnx",
+        "onnxruntime",
+        "optuna",
+        "streamlit",
+        "torch",
+        "torchaudio",
+        "torchvision",
+    )
+    for module in import_modules:
+        completed = subprocess.run(
+            [
+                str(interpreter),
+                "-c",
+                f"import importlib; importlib.import_module({module!r}); print({module!r})",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode:
+            raise RuntimeError(
+                f"hermetic runtime import failed for {module}\n"
+                f"stdout:\n{completed.stdout[-4000:]}\n"
+                f"stderr:\n{completed.stderr[-12000:]}"
+            )
     script = """
 import importlib.metadata, json, platform
 import cv2, matplotlib, mmcv, mmengine, mmseg, numpy, onnx, onnxruntime, optuna, streamlit

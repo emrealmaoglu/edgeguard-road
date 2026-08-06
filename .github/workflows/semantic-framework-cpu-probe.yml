@@ -27,6 +27,22 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Probe exact Colab lock imports
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          probe_root="${RUNNER_TEMP}/edgeguard-colab"
+          mkdir -p "${probe_root}"
+          python scripts/bootstrap_colab_runtime.py \
+            --project-root "${GITHUB_WORKSPACE}" \
+            --project-commit "$(git rev-parse HEAD)" \
+            --content-root "${probe_root}" \
+            --runtime-root "${probe_root}/edgeguard-runtime" \
+            --checkout-root "${probe_root}/edgeguard-checkouts" \
+            --cache-root "${probe_root}/edgeguard-cache" \
+            --log "${probe_root}/bootstrap.log" \
+            --output "${probe_root}/bootstrap-receipt.json"
+          "${probe_root}/edgeguard-runtime/bin/python" -c \
+            "from pathlib import Path; from scripts.train.install_semantic_stack import _environment_probe; print(_environment_probe(Path('${probe_root}/edgeguard-runtime/bin/python'), Path('${probe_root}/edgeguard-checkouts/mmsegmentation')))"
       - name: Install CPU framework dependencies
         run: |
           python -m pip install -e '.[dev]'
