@@ -5,13 +5,14 @@
 - **Classification:** locally tested engineering implementation plus one real Colab data
   audit; GPU canary/training, accepted-release, and Jetson measurements are not run.
 - **Publication state:** the current application commit is
-  `bcfff06bae511da2646fc034291bb5cd33e28405`; both regenerated notebooks pin that exact
+  `5f665cdbe0caad011ff66ad7b210ab8121d9fad1`; both regenerated notebooks pin that exact
   commit. Its notebook-delivery commit and replacement remote CI are pending. No merge,
   tag, release, training, or artifact promotion occurred.
 
 ## Root causes closed in code
 
-- uv is exactly `0.8.8`; the removed `--upgrade-strategy only-if-needed` option is gone.
+- uv is exactly `0.8.8`; a differing hosted uv is ignored and the pinned binary is installed
+  under the EdgeGuard cache prefix. The removed `--upgrade-strategy only-if-needed` option is gone.
 - A single managed Python 3.11.13 environment replaces hosted/fallback resolution.
 - NumPy 1.26.4 and PyTorch 2.1.1/cu121 are installed by one hash-locked `uv pip sync`.
 - MMEngine 0.10.7 and mmcv-lite 2.1.0 are removed from the main dependency solution and
@@ -55,8 +56,8 @@
 - Pytest: 460 passed and 2 environment-gated skips after both tracked notebooks were
   regenerated against the immutable application commit.
 - Both tracked notebooks compile and regenerate byte-identically. Their SHA-256 values are
-  `a2938d3aeb2e56772a472650ccfef77344fb450b4d0dfe76704fb1707ec6aa45` (preflight) and
-  `f433ae7a155528249657ecb4e847a606cfb6a7ec131ee019095bba8073632535` (training).
+  `db3cfe28e525dd43ace13d902eeef44081bf243aabf6388869a7c27504d315f5` (preflight) and
+  `dd56a9ffd39f9175193d7f2207e05cf62686c4aa5bf2635789c4643147487d86` (training).
 - Runtime lock SHA-256 values are
   `ecf59a924106d68ca49cc8e4a6c52e1206fc22fa91fb7e41a0f18069fa25865d` (main) and
   `bf96b00b6753d4eacd3a62e18eda6c96e0f26fcd5679d7926f66cc930fd4e924` (OpenMMLab).

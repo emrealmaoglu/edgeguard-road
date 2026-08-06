@@ -3,7 +3,7 @@
 Updated 2026-08-06 on branch `stabilize/colab-v2`.
 
 The current Colab v2 application is frozen at commit
-`bcfff06bae511da2646fc034291bb5cd33e28405`. Both generated delivery notebooks pin and
+`5f665cdbe0caad011ff66ad7b210ab8121d9fad1`. Both generated delivery notebooks pin and
 verify that exact commit; their double-generation hashes are recorded in the handoff.
 The approved application and notebook-delivery commits were pushed to
 `origin/stabilize/colab-v2`. The first remote CI run exposed one test-only Streamlit
@@ -34,6 +34,12 @@ mmcv-lite 2.1.0, headless OpenCV 4.10.0.84, and MMSegmentation commit
 manylinux_2_28 hash lock. mmcv-lite uses a separate hash lock with `--no-deps` so its
 GUI-OpenCV metadata cannot replace the headless runtime. A failure never selects another
 matrix automatically.
+
+The first smoke attempt found hosted `uv 0.11.19`. The installer now treats any missing,
+newer, malformed, or non-executable host uv as an untrusted bootstrap input, installs
+`uv==0.8.8` under `cache/bootstrap/uv-0.8.8`, verifies that private executable, and passes
+its absolute path to every runtime command. A real temporary-prefix installation verified
+the expected `bin/uv` layout and exact version before publication.
 
 The Colab-resilience revision replaces the previous snapshot model with content-addressed,
 current/previous-generation recovery. Training publishes full optimizer/scheduler/AMP/RNG
