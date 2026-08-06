@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +46,30 @@ def test_bootstrap_validates_the_checked_in_lock_contract() -> None:
     assert config.name == "framework_mmseg.yaml"
     assert main_lock.name == "colab-py311-cu121.lock"
     assert openmmlab_lock.name == "colab-openmmlab.lock"
+
+
+@pytest.mark.parametrize("relative", ("bin/uv", "local/bin/uv"))
+def test_private_uv_discovery_accepts_both_posix_prefix_layouts(
+    tmp_path: Path, relative: str
+) -> None:
+    executable = tmp_path / relative
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\necho 'uv 0.8.8'\n", encoding="utf-8")
+    executable.chmod(0o755)
+    assert bootstrap_colab_runtime._find_private_uv(tmp_path) == executable.resolve()
+
+
+def test_runtime_path_uses_the_discovered_local_bin_layout(tmp_path: Path) -> None:
+    private_uv = tmp_path / "cache/bootstrap/uv-0.8.8/local/bin/uv"
+    private_uv.parent.mkdir(parents=True)
+    private_uv.touch()
+    environment = run_colab_master._runtime_environment(
+        project_root=ROOT,
+        cache_root=tmp_path / "cache",
+        runtime_python=tmp_path / "runtime/bin/python",
+        uv_executable=private_uv,
+    )
+    assert environment["PATH"].split(os.pathsep)[0] == str(private_uv.parent)
 
 
 def test_master_child_command_streams_and_preserves_failure_tail(tmp_path: Path) -> None:

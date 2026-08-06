@@ -160,11 +160,10 @@ def _resource_gate(content_root: Path) -> dict[str, object]:
 
 
 def _runtime_environment(
-    *, project_root: Path, cache_root: Path, runtime_python: Path
+    *, project_root: Path, cache_root: Path, runtime_python: Path, uv_executable: Path
 ) -> dict[str, str]:
     environment = os.environ.copy()
-    private_uv = cache_root / "bootstrap/uv-0.8.8/bin"
-    environment["PATH"] = str(private_uv) + os.pathsep + environment.get("PATH", "")
+    environment["PATH"] = str(uv_executable.parent) + os.pathsep + environment.get("PATH", "")
     environment["PYTHONPATH"] = str(project_root / "src")
     environment["UV_CACHE_DIR"] = str(cache_root / "uv")
     environment["UV_PYTHON_INSTALL_DIR"] = str(cache_root / "python")
@@ -354,10 +353,14 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
     )
     bootstrap_payload = json.loads(bootstrap_receipt.read_text(encoding="utf-8"))
     runtime_python = Path(str(bootstrap_payload["interpreter"]))
+    uv_executable = Path(str(bootstrap_payload["uv"]["path"]))
+    if not uv_executable.is_file():
+        raise FileNotFoundError("verified private uv executable disappeared after bootstrap")
     environment = _runtime_environment(
         project_root=project_root,
         cache_root=cache_root,
         runtime_python=runtime_python,
+        uv_executable=uv_executable,
     )
 
     stage("five-model-runtime-canary")

@@ -136,22 +136,38 @@ def _validate_contract(project_root: Path) -> tuple[Path, Path, Path]:
 
 
 def _uv_version(uv: Path) -> str | None:
-    completed = subprocess.run([str(uv), "--version"], capture_output=True, text=True)
+    try:
+        completed = subprocess.run([str(uv), "--version"], capture_output=True, text=True)
+    except OSError:
+        return None
     if completed.returncode:
         return None
     match = re.fullmatch(r"uv\s+([^\s]+)(?:\s+.*)?", completed.stdout.strip())
     return match.group(1) if match else None
 
 
+def _find_private_uv(prefix: Path) -> Path | None:
+    """Resolve both POSIX prefix layouts used by hosted Colab pip builds."""
+    candidates = [prefix / "bin/uv", prefix / "local/bin/uv"]
+    candidates.extend(path for path in sorted(prefix.glob("*/bin/uv")) if path not in candidates)
+    for candidate in candidates:
+        if (
+            candidate.is_file()
+            and not candidate.is_symlink()
+            and os.access(candidate, os.X_OK)
+            and _uv_version(candidate) == UV_VERSION
+        ):
+            return candidate.resolve()
+    return None
+
+
 def _private_uv(
     *, cache_root: Path, project_root: Path, environment: dict[str, str], log: Path
 ) -> Path:
     prefix = cache_root / "bootstrap" / f"uv-{UV_VERSION}"
-    executable = prefix / "bin/uv"
-    if executable.is_file() and os.access(executable, os.X_OK):
-        if _uv_version(executable) == UV_VERSION:
-            return executable
-        executable.unlink()
+    executable = _find_private_uv(prefix)
+    if executable is not None:
+        return executable
     _run(
         [
             sys.executable,
@@ -170,8 +186,15 @@ def _private_uv(
         environment=environment,
         log=log,
     )
-    if _uv_version(executable) != UV_VERSION:
-        raise RuntimeError("private uv bootstrap did not produce exact uv 0.8.8")
+    executable = _find_private_uv(prefix)
+    if executable is None:
+        discovered = sorted(
+            path.relative_to(prefix).as_posix() for path in prefix.rglob("uv") if path.is_file()
+        )
+        raise RuntimeError(
+            "private uv bootstrap did not produce an executable exact uv 0.8.8; "
+            f"discovered candidates: {discovered}"
+        )
     return executable
 
 

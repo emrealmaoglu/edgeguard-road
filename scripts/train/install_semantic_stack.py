@@ -136,29 +136,47 @@ def _resolve_uv_executable(
             "pinned uv installation command failed",
         ) from error
 
-    executable = (scripts_root / "uv").resolve()
-    if not executable.is_file() or not os.access(executable, os.X_OK):
+    candidates = [scripts_root / "uv"]
+    if bootstrap_root is not None:
+        candidates.extend(
+            (
+                bootstrap_root / "bin/uv",
+                bootstrap_root / "local/bin/uv",
+                *sorted(bootstrap_root.glob("*/bin/uv")),
+            )
+        )
+    viable = [
+        candidate.resolve()
+        for candidate in candidates
+        if candidate.is_file() and not candidate.is_symlink() and os.access(candidate, os.X_OK)
+    ]
+    if not viable:
         raise BootstrapError(
             "uv_resolution",
             "uv_executable_not_found",
             "uv installation completed but the private prefix has no uv executable",
         )
-    try:
-        version_output = version_probe(executable)
-    except (OSError, subprocess.CalledProcessError) as error:
+    version_outputs: list[str] = []
+    for executable in viable:
+        try:
+            version_output = version_probe(executable)
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        version_outputs.append(version_output)
+        actual_version = _parse_uv_version(version_output)
+        if actual_version == Version(UV_VERSION):
+            return executable, str(actual_version), receipts
+    if not version_outputs:
         raise BootstrapError(
             "uv_version_validation",
             "uv_version_probe_failed",
-            "uv version probe failed",
-        ) from error
-    actual_version = _parse_uv_version(version_output)
-    if actual_version != Version(UV_VERSION):
-        raise BootstrapError(
-            "uv_version_validation",
-            "uv_version_mismatch",
-            f"expected uv {UV_VERSION}, found: {version_output}",
+            "uv version probe failed for every private-prefix candidate",
         )
-    return executable, str(actual_version), receipts
+    raise BootstrapError(
+        "uv_version_validation",
+        "uv_version_mismatch",
+        f"expected uv {UV_VERSION}, found: {version_outputs}",
+    )
 
 
 def _checkout_head(checkout: Path) -> str | None:

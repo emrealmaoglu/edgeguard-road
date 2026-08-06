@@ -413,6 +413,28 @@ def test_uv_unexpected_host_version_bootstraps_private_exact_version(tmp_path: P
     assert version == "0.8.8"
 
 
+def test_uv_private_bootstrap_accepts_colab_local_bin_prefix(tmp_path: Path) -> None:
+    bootstrap_root = tmp_path / "private"
+    private_uv = bootstrap_root / "local/bin/uv"
+
+    class BootstrapRunner:
+        def run(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            private_uv.parent.mkdir(parents=True)
+            private_uv.write_text("placeholder", encoding="utf-8")
+            private_uv.chmod(0o755)
+            return {"stage": "bootstrap-uv", "return_code": 0}
+
+    resolved, version, receipts = _resolve_uv_executable(  # type: ignore[arg-type]
+        BootstrapRunner(),
+        which=lambda _name: None,
+        bootstrap_root=bootstrap_root,
+        version_probe=lambda _path: "uv 0.8.8",
+    )
+    assert resolved == private_uv.resolve()
+    assert version == "0.8.8"
+    assert receipts == [{"stage": "bootstrap-uv", "return_code": 0}]
+
+
 def test_uv_newer_version_with_platform_suffix_is_privately_replaced(
     tmp_path: Path,
 ) -> None:
