@@ -99,6 +99,9 @@ checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson tele
 
 Local Ruff, mypy, pytest, deterministic notebook generation and claim-safe local cell
 execution validate engineering contracts only. No local test creates a scientific metric.
+Remote Linux workflow `31128538612` also completed the exact Colab lock imports,
+`pkg_resources`/MMEngine Runner check, five-model CPU probe, real-codepath closure, ONNX
+classification and pre-Colab deployment evidence successfully.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4
 five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
 result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is

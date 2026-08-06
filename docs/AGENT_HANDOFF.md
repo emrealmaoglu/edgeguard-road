@@ -49,9 +49,9 @@
 - The notebook SHA-256 after pinning is
   `f904ee16a5ed479b9d15f1b8fb6f08272ad10b74dda96d8a9bfc19417fd78d4b`.
 - ZIP writer verifies CRC, member set and every member payload after creation.
-- Remote Linux run `31128538612` passed the exact 92-package Colab lock imports plus
-  `pkg_resources` and MMEngine Runner import before continuing through the broader CPU
-  closure.
+- Remote Linux run `31128538612` passed the exact 92-package Colab lock imports,
+  `pkg_resources` and MMEngine Runner import, five-model CPU probe, real-codepath closure,
+  ONNX classification and pre-Colab deployment-evidence build.
 
 ## Next external action
 
