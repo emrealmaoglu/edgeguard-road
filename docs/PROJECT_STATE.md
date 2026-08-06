@@ -114,9 +114,11 @@ The current delivery passes 477 tests with two environment-gated skips. The mast
 was generated twice byte-identically at SHA-256
 `2d06b7afdfd75561ddcc6409d476351a6469113b813900f5f70dad7b6e1a1e9a`, and all four
 cells pass local claim-safe execution with `scientific_status=not_run`.
-Remote Linux workflow `31128538612` also completed the exact Colab lock imports,
+Remote Linux workflow `31129018003` completed successfully with the exact Colab failure
+context injected (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and
+virtualenv state). It passed the exact lock imports, Agg PNG probe,
 `pkg_resources`/MMEngine Runner check, five-model CPU probe, real-codepath closure, ONNX
-classification and pre-Colab deployment evidence successfully.
+classification and pre-Colab deployment evidence.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4
 five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
 result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is
