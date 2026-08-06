@@ -955,6 +955,9 @@ else:
 
     MANIFEST_ROOT.mkdir(parents=True, exist_ok=True)
     if RUN_MULTIDOMAIN_AUDIT:
+        source_manifest_candidates = {
+            "cityscapes": cityscapes_audit / "dataset_manifest.candidate.json"
+        }
         provisional = PROVISIONAL_ENGINEERING_DATASETS if STAGE_PROVISIONAL_BDD else []
         for dataset in [*provisional, *SECONDARY_SCIENTIFIC_DATASETS]:
             dataset_root = DATASET_ROOTS[dataset]
@@ -964,7 +967,15 @@ else:
                 "preparation": preparation_identity(dataset_root),
                 "ontology": sha256_file(PROJECT_ROOT / "configs/dataset/semantic_ontology_v2.yaml"),
             }
+            audit_inputs.update({
+                f"source_manifest:{source_dataset}": sha256_file(source_manifest)
+                for source_dataset, source_manifest in source_manifest_candidates.items()
+            })
             if completion_is_valid(report_root, expected_inputs=audit_inputs):
+                if dataset in SECONDARY_SCIENTIFIC_DATASETS:
+                    source_manifest_candidates[dataset] = (
+                        report_root / "dataset_manifest.candidate.json"
+                    )
                 continue
             quarantine_incomplete(report_root)
             command = [
@@ -972,6 +983,8 @@ else:
                 "--dataset", dataset, "--dataset-root", str(dataset_root),
                 "--output-root", str(destination),
             ]
+            for source_manifest in source_manifest_candidates.values():
+                command.extend(["--source-manifest", str(source_manifest)])
             if dataset == "idd20k":
                 command.extend([
                     "--checkpoint-root",
@@ -1012,6 +1025,10 @@ else:
                 ],
                 inputs=audit_inputs, metadata={"dataset": dataset},
             )
+            if dataset in SECONDARY_SCIENTIFIC_DATASETS:
+                source_manifest_candidates[dataset] = (
+                    report_root / "dataset_manifest.candidate.json"
+                )
             sync_work_snapshot(f"audit-{dataset}")
 
     if RUN_FREEZE:

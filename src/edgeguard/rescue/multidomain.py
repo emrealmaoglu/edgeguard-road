@@ -771,9 +771,15 @@ def audit_training_dataset(
     source_hashes: set[str] = set()
     source_perceptual: list[tuple[str, int]] = []
     for manifest_path in source_manifests:
-        source = validate_dataset_manifest(manifest_path)
+        source = validate_dataset_manifest(manifest_path, require_frozen=False)
         if source["dataset_id"] not in TRAINING_DATASETS:
             raise ValueError("source overlap audit accepts only training-domain manifests")
+        if source.get("split_state") not in {"candidate_requires_human_freeze", "frozen"}:
+            raise ValueError(
+                "source overlap audit requires a reviewed candidate or frozen manifest"
+            )
+        if source.get("audit_passed") is not True:
+            raise ValueError("source overlap audit requires an audit-passed source manifest")
         source_root = Path(source["dataset_root"])
         for source_records in source["roles"].values():
             for record in source_records:

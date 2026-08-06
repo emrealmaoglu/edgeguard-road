@@ -276,14 +276,18 @@ def test_training_audits_freeze_and_pool_statistics(tmp_path: Path) -> None:
         ontology_path=ONTOLOGY,
         seed=3,
         strict_count=False,
+        source_manifests=(tmp_path / "audit-bdd/bdd100k_audit/dataset_manifest.candidate.json",),
     )
     bdd_frozen = tmp_path / "bdd.frozen.json"
     idd_frozen = tmp_path / "idd.frozen.json"
     bdd_candidate = tmp_path / "audit-bdd/bdd100k_audit/dataset_manifest.candidate.json"
+    idd_candidate = tmp_path / "audit-idd/idd20k_audit/dataset_manifest.candidate.json"
+    idd_candidate_payload = json.loads(idd_candidate.read_text())
+    assert idd_candidate_payload["source_manifest_sha256s"] == [sha256_file(bdd_candidate)]
     with pytest.raises(PermissionError, match="review receipt"):
         freeze_candidate_manifest(bdd_candidate, bdd_frozen)
     _freeze(bdd_candidate, bdd_frozen)
-    _freeze(tmp_path / "audit-idd/idd20k_audit/dataset_manifest.candidate.json", idd_frozen)
+    _freeze(idd_candidate, idd_frozen)
     assert json.loads(bdd_frozen.read_text())["scientific_eligible"] is False
     result = write_multidomain_statistics((bdd_frozen, idd_frozen), tmp_path / "statistics")
     weights = json.loads((tmp_path / "statistics/class_weights.json").read_text())["weights"]
