@@ -17,7 +17,7 @@ files, login data, cookies, temporary signed URLs, and license receipts never en
   tar, and then starts audit/training. This follows Colab's recommendation to avoid many
   small Drive reads.
 
-Run `notebooks/EdgeGuard_Data_Preflight_Colab.ipynb` first. It creates this layout:
+`notebooks/EdgeGuard_Master_Colab.ipynb` discovers and reuses this layout automatically:
 
 ```text
 MyDrive/EdgeGuard/
@@ -129,22 +129,17 @@ the project maps only exact ontology matches and sends ambiguous classes to igno
 
 1. Leave current uploads under `private_inputs/`; future official archives may use
    `archives/<dataset_id>/`. Do not move or extract source archives in Drive.
-2. Run the preflight notebook. Preserve the JSON inventory. `DEEP_VERIFY_ARCHIVES=False`
-   reuses a pinned digest receipt when size/mtime identity is unchanged.
-   Hashing a mounted Drive file is best-effort at this discovery stage: a transient read
-   failure is recorded per archive and no longer destroys the whole inventory. Full digest
-   verification remains mandatory after the bounded-retry copy into `/content`.
-3. Use Run all; preparation is enabled by default outside local-test mode. It prepares
-   Cityscapes and IDD only, enforces the 3× estimate plus 25 GiB reserve, and resumes IDD
-   from verified 500-sample shards. BDD requires an explicit provisional switch.
+2. Open `EdgeGuard_Master_Colab.ipynb`, select L4 + High-RAM, and use Run all. The master
+   command stages Cityscapes and IDD only and resumes IDD from verified shards.
+3. Full digest verification remains mandatory after copying data into `/content`.
 4. Do not replace a bundle unless its archives/source profile changed intentionally and
    all scientific manifests will be regenerated.
-5. Open `EdgeGuard_Road_Colab.ipynb`. Its stage command refuses missing receipts, altered
-   hashes, partial destinations, unsafe tar members, or storage plans over budget.
-6. Start with `CAMPAIGN_TARGET="audit"`, then advance through smoke/pilot/screening/HPO/final.
-7. After each stage, inspect `review_packages/*-review.zip`. Class distribution, pooled
-   imbalance/weights, split sizes and deterministic source examples are generated only
-   from measured `train_fit` manifests; fixture plots are never thesis evidence.
+5. The master stage refuses missing receipts, altered hashes, partial destinations, unsafe
+   tar members, absent train/val roots, or storage plans over budget.
+6. Do not choose stages manually. After a reset, use Run all again; hash-verified phases
+   are skipped and incomplete runs restore from immutable recovery generations.
+7. Use only the final thesis/release bundles for scientific reporting. Fixture plots and
+   smoke output are never thesis evidence.
 
 ## Colab runtime rule
 
@@ -155,14 +150,13 @@ MMEngine in a two-wheel OpenMMLab lock and dependency resolution disabled. The m
 must contain only headless OpenCV and directly supplies MMEngine's normal dependencies.
 No hosted/fallback cascade exists. The verified runtime
 receipt binds both lock files, project/framework commits, CUDA 12.1, headless OpenCV and
-the three-model FP32/AMP/checkpoint canary. Any mismatch fails without selecting another
+the five-model FP32/AMP/checkpoint canary. Any mismatch fails without selecting another
 matrix.
 
 References: <https://github.com/googlecolab/colabtools/issues/5483>,
 <https://mmsegmentation.readthedocs.io/en/main/notes/faq.html>, and
 <https://mmcv.readthedocs.io/en/2.x/get_started/installation.html>.
 
-Any unhandled notebook/subprocess error creates a redacted JSON and downloadable ZIP
-under `EdgeGuard/failures/`. Set `DOWNLOAD_LATEST_FAILURE_REPORT=True` and rerun the last
-notebook cell to download it. The exact contents and recovery procedure are defined in
-`docs/COLAB_FAILURE_REPORTING.md`.
+Any unhandled notebook/subprocess error creates a redacted JSON and ZIP under
+`EdgeGuard/failures/semantic-cs-idd-v3/master-notebook/`. Rerun all in a new compliant
+runtime after inspecting the report; verified Drive state is preserved.

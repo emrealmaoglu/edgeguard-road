@@ -97,13 +97,17 @@ python scripts/check_detection_gate.py --help
 streamlit run app.py
 ```
 
-Use `notebooks/EdgeGuard_Road_Colab.ipynb` for the complete Drive-backed Colab
-workflow. It defaults to audit-only and will not start GPU training until
-`RUN_TRAINING` is explicitly enabled.
+Use `notebooks/EdgeGuard_Master_Colab.ipynb` as the only Colab entry point. Select an
+L4 GPU and High-RAM, then choose **Runtime → Run all**. The notebook checks out its
+immutable application commit and runs the `semantic-cs-idd-v3` pipeline through verified
+Drive staging, five-model training/HPO/final selection, official-source evaluation, ONNX
+export, thesis figures, Streamlit packaging, and Jetson handoff. If Colab disconnects,
+open the same notebook in a new L4 High-RAM runtime and choose **Run all** again; only
+hash-verified phases are skipped and incomplete training resumes from Drive checkpoints.
 
-Run `notebooks/EdgeGuard_Data_Preflight_Colab.ipynb` before the training notebook. See
-`docs/SEMANTIC_FIRST_RUNBOOK.md` for the ordered data, experiment, external-evaluation,
-ONNX, Jetson, and conditional detector gates.
+The notebook refuses an unsuitable GPU/RAM/disk allocation. TensorRT engines and real
+Jetson power/latency/thermal measurements are never fabricated in Colab; they remain
+`not_run` until produced on the target device. See `docs/SEMANTIC_FIRST_RUNBOOK.md`.
 
 ## Scientific boundaries
 

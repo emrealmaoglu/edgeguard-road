@@ -437,78 +437,24 @@ def test_reporting_uses_only_present_evidence(tmp_path: Path) -> None:
     assert json.loads((output / "top_two.json").read_text())["edge_candidate"] == "fast_scnn"
 
 
-def test_semantic_first_notebook_is_valid_and_output_free() -> None:
-    preflight = json.loads(Path("notebooks/EdgeGuard_Data_Preflight_Colab.ipynb").read_text())
-    payload = json.loads(Path("notebooks/EdgeGuard_Road_Colab.ipynb").read_text())
-    for notebook in (preflight, payload):
-        assert notebook["nbformat"] == 4
-        assert all(not cell.get("outputs") for cell in notebook["cells"])
-        for index, cell in enumerate(notebook["cells"]):
-            if cell["cell_type"] == "code":
-                compile("".join(cell["source"]), f"colab-cell-{index}", "exec")
-    preflight_source = "\n".join("".join(cell.get("source", [])) for cell in preflight["cells"])
-    assert "scripts/prepare_colab_data.py" in preflight_source
-    assert "scripts/prepare_dataset.py" in preflight_source
-    assert "DEEP_VERIFY_ARCHIVES = False" in preflight_source
-    assert "RUN_ARCHIVE_PREPARATION = not LOCAL_TEST_MODE" in preflight_source
-    assert "CREATE_BUNDLES = True" in preflight_source
-    assert 'BDD_SOURCE_PROFILE = "kaggle_mirror"' in preflight_source
-    assert 'SCIENTIFIC_SOURCE_DATASETS = ["cityscapes", "idd20k"]' in preflight_source
-    assert "ColabFailureReporter" in preflight_source
-    assert "run_logged_command" in preflight_source
-    assert "cwd=PROJECT_ROOT" in preflight_source
-    assert "persist_bootstrap_failure" in preflight_source
-    assert '"--idd-shard-size", "500"' in preflight_source
-    assert "idd20k.shards.json" in preflight_source
-    assert "reuse_or_copy_archive" in preflight_source
-    assert "Yerel cache SHA-256 doğrulanıyor" in preflight_source
-    assert 'copy_receipt.get("sha256") or copy_receipt.get("copied_sha256")' in preflight_source
-    assert 'loaded_module.startswith("edgeguard.")' in preflight_source
-    assert "shutil.rmtree(CACHE_ROOT)" not in preflight_source
-    preflight_pins = re.findall(r'EXPECTED_PROJECT_COMMIT = "([0-9a-f]{40})"', preflight_source)
-    assert len(preflight_pins) == 1
-    assert 'BRANCH = "stabilize/colab-v2"' in preflight_source
+def test_semantic_first_master_notebook_is_valid_and_output_free() -> None:
+    payload = json.loads(Path("notebooks/EdgeGuard_Master_Colab.ipynb").read_text())
+    assert payload["nbformat"] == 4
+    assert all(not cell.get("outputs") for cell in payload["cells"])
+    for index, cell in enumerate(payload["cells"]):
+        if cell["cell_type"] == "code":
+            compile("".join(cell["source"]), f"colab-cell-{index}", "exec")
     source = "\n".join("".join(cell.get("source", [])) for cell in payload["cells"])
-    assert "scripts/audit_dataset.py" in source
-    assert "scripts/colab_pipeline.py" in source
-    assert "scripts/evaluate.py" in source
-    assert "scripts/predict.py" in source
-    assert "pipeline-artifact-review" in source
-    assert "calibrate-shift" in source
-    assert "evaluate-shift" in source
-    assert "--emit-regions" in source
-    assert "scripts/jetson/benchmark.py" in source
-    assert "--local-root" in source
-    assert "sync_work_snapshot" in source
-    assert 'CAMPAIGN_TARGET = "audit"' in source
-    assert "audit|smoke|pilot|screening|hpo|final|evaluate|export|report" in source
-    assert 'CAMPAIGN_ID = "semantic-cs-idd-v2"' in source
-    assert "completion_is_valid" in source
-    assert "package-interruption" in source
-    assert "audit-catalog" in source
-    assert "--quarantine-invalid-source-samples" in source
-    assert 'f"source_manifest:{source_dataset}"' in source
-    assert 'command.extend(["--source-manifest", str(source_manifest)])' in source
-    assert "quarantine_incomplete(report_root, expected_inputs=audit_inputs)" in source
-    assert "--review-receipt" in source
-    assert "ACCEPTED_RELEASE" in source
-    assert (
-        'PIPELINE_TARGETS = {"smoke", "pilot", "screening", "hpo", "final", '
-        '"evaluate", "export", "report"}' in source
-    )
-    assert '"status": "data_review_required"' in source
-    assert "audit_process.returncode not in {0, 2}" in source
-    assert "final-training-owned-by-orchestrator" in source
-    assert "bdd100k.frozen.json" not in source
-    assert "runtime-hermetic-install" in source
-    assert 'CORE_MODELS = ["segformer_b0", "fast_scnn", "pidnet_s"]' in source
-    assert "runtime_receipt.json" in source
-    assert "failure-report.zip" in source
-    assert "run_logged_command" in source
-    assert "cwd=PROJECT_ROOT" in source
-    training_pins = re.findall(r'EXPECTED_PROJECT_COMMIT = "([0-9a-f]{40})"', source)
-    assert training_pins == preflight_pins
+    pins = re.findall(r'EXPECTED_PROJECT_COMMIT = "([0-9a-f]{40})"', source)
+    assert len(pins) == 1
     assert 'BRANCH = "stabilize/colab-v2"' in source
+    assert 'CAMPAIGN_ID = "semantic-cs-idd-v3"' in source
+    assert "scripts/run_colab_master.py" in source
+    assert '"--execution-mode", "production"' in source
+    assert "EdgeGuard_Jetson_Release.zip" in source
+    assert "LOCAL_TEST_MODE" in source
+    assert "scientific_status" in source and '"not_run"' in source
+    assert "pip install -e" not in source
 
 
 def test_synthetic_stress_fallback_preserves_labels_and_claim_boundary(tmp_path: Path) -> None:
