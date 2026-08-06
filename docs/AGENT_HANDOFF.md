@@ -2,14 +2,12 @@
 
 - **Milestone:** Colab v2 hermetic runtime and resumable semantic campaign implementation.
 - **Branch:** `stabilize/colab-v2`, based on `origin/rescue/semantic-first`.
-- **Classification:** locally tested engineering implementation; real Colab, Drive training,
-  scientific, accepted-release, and Jetson measurements are not run.
+- **Classification:** locally tested engineering implementation plus one real Colab data
+  audit; GPU canary/training, accepted-release, and Jetson measurements are not run.
 - **Publication state:** the approved application commit is
-  `24b59a282e0bd7239ec3bd9edc179288dcca7460`; both generated notebooks pin that exact
-  commit. Delivery commit `1cdce46cd9b1bef5735733b0783fadb18139e28e` was pushed to the
-  branch. CI portability correction `5e1a6dc5473fa04dd78649187e939bca2b4d8355`
-  passed the complete remote Python 3.10/3.11 matrix. No merge, tag, release, Drive write,
-  or artifact promotion occurred.
+  `0cf886443afe5be5c5c47c9598e3faae3f5ba896`; both regenerated notebooks pin that exact
+  commit. Its notebook-delivery commit and replacement remote CI are pending. No merge,
+  tag, release, training, or artifact promotion occurred.
 
 ## Root causes closed in code
 
@@ -38,6 +36,9 @@
 - Training/validation manifests cannot be frozen merely by selecting a later target.
   Candidate SHA-256, campaign, project commit, reviewer, and decision must match an explicit
   human review receipt. Cityscapes official val now has a separate final-only manifest.
+- Every secondary scientific-domain audit is bound to the SHA-256 identities of earlier
+  source candidates. Candidate manifests are accepted for overlap checking only after
+  their own audit passes; old completion receipts without these source hashes are rejected.
 - Accepted final checkpoints are restored from immutable Drive generations before later
   phases, then rechecked against the accepted release hash.
 - Streamlit accepted-bundle mode, cached tables/models, single active model resource, CPU
@@ -52,8 +53,8 @@
 - Pytest: 460 passed and 2 environment-gated skips after both tracked notebooks were
   regenerated against the immutable application commit.
 - Both tracked notebooks compile and regenerate byte-identically. Their SHA-256 values are
-  `baab1bbeb40923f1ea4e0a1dd80f4f9a2beb620f16e0b845efe45f0312c45369` (preflight) and
-  `6bb5c05b49117ada827fda15ab939fa15f08321976801def8e84d5c761594359` (training).
+  `b9ee9e863c85f2e1efb321b9f41d00d6d43aa51a45c4d2fc3b8e50d9b14848d6` (preflight) and
+  `bc180ffa8059bfb496ccc62a300b20c2fc88eb5e1b72e0591c16914f3d64dc35` (training).
 - Runtime lock SHA-256 values are
   `ecf59a924106d68ca49cc8e4a6c52e1206fc22fa91fb7e41a0f18069fa25865d` (main) and
   `bf96b00b6753d4eacd3a62e18eda6c96e0f26fcd5679d7926f66cc930fd4e924` (OpenMMLab).
@@ -65,6 +66,10 @@
   the repository root instead of depending on Streamlit's version-specific caller path.
 - Replacement CI run `31107068048` passed every install, Ruff, format, mypy, and pytest
   step on both Python 3.10 and 3.11.
+- The real audit package hash and all 31 indexed files verified. Cityscapes was 2975/2975;
+  IDD accounted for 14,027 records with 14,018 valid and nine accepted all-ignore-source
+  exclusions. Three cross-role dHash candidates were visually and numerically confirmed as
+  distinct highway scenes. The rerun must now bind IDD to the Cityscapes candidate hash.
 
 ## External acceptance sequence
 

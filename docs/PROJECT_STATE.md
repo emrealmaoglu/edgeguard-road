@@ -2,8 +2,8 @@
 
 Updated 2026-08-06 on branch `stabilize/colab-v2`.
 
-The Colab v2 application is frozen at approved commit
-`24b59a282e0bd7239ec3bd9edc179288dcca7460`. Both generated delivery notebooks pin and
+The current Colab v2 application is frozen at commit
+`0cf886443afe5be5c5c47c9598e3faae3f5ba896`. Both generated delivery notebooks pin and
 verify that exact commit; their double-generation hashes are recorded in the handoff.
 The approved application and notebook-delivery commits were pushed to
 `origin/stabilize/colab-v2`. The first remote CI run exposed one test-only Streamlit
@@ -12,6 +12,16 @@ closure probe now use a repository-root absolute path. Merge, tag, release, Driv
 and real training remain outside the approval. Replacement CI run `31107068048` passed the
 complete Python 3.10/3.11 matrix. The new runtime still cannot be presented as real Colab
 evidence until G1/G3 run in clean Colab sessions.
+
+The first real `audit` target produced a hash-valid 31-file review package. Cityscapes
+passed 2975/2975; IDD accounted for all 14,027 official train records, retained 14,018 and
+accepted nine known no-usable-class exclusions under the 0.1% quarantine policy. Three
+cross-role dHash candidates were visually reviewed as distinct highway scenes. Review then
+found that the IDD candidate's `source_manifest_sha256s` was empty: its reported zero
+cross-source overlap was therefore not provenance-bound. The new application passes the
+Cityscapes candidate to the IDD audit and includes its hash in the completion identity.
+Restored legacy IDD audit output is invalidated, while the persistent audit catalog remains
+reusable; extraction and full pixel re-audit are not required.
 
 The previous hosted/fallback cascade is replaced by one hermetic runtime: uv 0.8.8,
 managed CPython 3.11.13, NumPy 1.26.4, PyTorch 2.1.1/cu121, MMEngine 0.10.7,
