@@ -938,7 +938,7 @@ else:
     cityscapes_audit = AUDIT_ROOT / "dataset_audit"
     city_inputs = {"preparation": preparation_identity(CITYSCAPES_ROOT)}
     if not completion_is_valid(cityscapes_audit, expected_inputs=city_inputs):
-        quarantine_incomplete(cityscapes_audit)
+        quarantine_incomplete(cityscapes_audit, expected_inputs=city_inputs)
         run_colab_command([
             str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/audit_dataset.py"),
             "--dataset-root", str(CITYSCAPES_ROOT), "--output-root", str(AUDIT_ROOT),
@@ -977,7 +977,7 @@ else:
                         report_root / "dataset_manifest.candidate.json"
                     )
                 continue
-            quarantine_incomplete(report_root)
+            quarantine_incomplete(report_root, expected_inputs=audit_inputs)
             command = [
                 str(RUNTIME_PYTHON), str(PROJECT_ROOT / "scripts/audit_dataset.py"),
                 "--dataset", dataset, "--dataset-root", str(dataset_root),

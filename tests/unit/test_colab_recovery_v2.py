@@ -80,6 +80,9 @@ def test_completion_receipt_rejects_changed_immutable_inputs(tmp_path: Path) -> 
     )
     assert completion_is_valid(output, expected_inputs={"checkpoint_sha256": "a" * 64})
     assert not completion_is_valid(output, expected_inputs={"checkpoint_sha256": "b" * 64})
+    quarantined = quarantine_incomplete(output, expected_inputs={"checkpoint_sha256": "b" * 64})
+    assert quarantined is not None and quarantined.is_dir()
+    assert not output.exists()
 
 
 def test_latest_checkpoint_uses_marker_or_numeric_iteration(tmp_path: Path) -> None:

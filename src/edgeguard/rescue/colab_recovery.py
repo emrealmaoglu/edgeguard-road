@@ -359,9 +359,13 @@ def completion_is_valid(
     return True
 
 
-def quarantine_incomplete(output_root: Path) -> Path | None:
-    """Move a partial stage aside so a clean idempotent retry cannot mistake it for success."""
-    if not output_root.exists() or completion_is_valid(output_root):
+def quarantine_incomplete(
+    output_root: Path, *, expected_inputs: dict[str, str] | None = None
+) -> Path | None:
+    """Move stale or partial output aside before a clean idempotent retry."""
+    if not output_root.exists() or completion_is_valid(
+        output_root, expected_inputs=expected_inputs
+    ):
         return None
     suffix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     quarantine = output_root.with_name(f"{output_root.name}.incomplete-{suffix}")

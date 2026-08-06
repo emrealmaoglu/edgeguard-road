@@ -489,6 +489,7 @@ def test_semantic_first_notebook_is_valid_and_output_free() -> None:
     assert "--quarantine-invalid-source-samples" in source
     assert 'f"source_manifest:{source_dataset}"' in source
     assert 'command.extend(["--source-manifest", str(source_manifest)])' in source
+    assert "quarantine_incomplete(report_root, expected_inputs=audit_inputs)" in source
     assert "--review-receipt" in source
     assert "ACCEPTED_RELEASE" in source
     assert (
