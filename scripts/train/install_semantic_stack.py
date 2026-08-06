@@ -80,44 +80,62 @@ def _resolve_uv_executable(
     *,
     which: WhichFunction = shutil.which,
     scripts_directory: Path | None = None,
+    bootstrap_root: Path | None = None,
     version_probe: VersionProbe = _uv_version,
 ) -> tuple[Path, str, list[dict[str, Any]]]:
-    """Install uv only when absent and require the exact audited version."""
+    """Resolve exact uv, privately bootstrapping it when the host version differs."""
     receipts: list[dict[str, Any]] = []
-    scripts_root = scripts_directory or Path(sysconfig.get_path("scripts"))
+    scripts_root = scripts_directory or (
+        bootstrap_root / "bin" if bootstrap_root else Path(sysconfig.get_path("scripts"))
+    )
     resolved = which("uv")
-    if resolved is None:
-        try:
-            receipts.append(
-                runner.run(
-                    "bootstrap-uv",
-                    (sys.executable, "-m", "pip", "install", f"uv=={UV_VERSION}"),
-                    stage_index=1,
-                    stage_total=1,
-                )
+    if resolved is not None:
+        hosted = Path(resolved).resolve()
+        if hosted.is_file() and os.access(hosted, os.X_OK):
+            try:
+                hosted_output = version_probe(hosted)
+            except (OSError, subprocess.CalledProcessError):
+                hosted_output = ""
+            hosted_version = _parse_uv_version(hosted_output)
+            if hosted_version == Version(UV_VERSION):
+                return hosted, str(hosted_version), receipts
+
+    command = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-input",
+        "--no-deps",
+        "--force-reinstall",
+    ]
+    if bootstrap_root is not None:
+        bootstrap_root.mkdir(parents=True, exist_ok=True)
+        command.extend(["--prefix", str(bootstrap_root)])
+    command.append(f"uv=={UV_VERSION}")
+    try:
+        receipts.append(
+            runner.run(
+                "bootstrap-uv",
+                tuple(command),
+                stage_index=1,
+                stage_total=1,
             )
-        except (OSError, subprocess.CalledProcessError) as error:
-            raise BootstrapError(
-                "uv_install",
-                "uv_install_failed",
-                "pinned uv installation command failed",
-            ) from error
-        resolved = which("uv")
-        if resolved is None:
-            scripts_candidate = scripts_root / "uv"
-            resolved = str(scripts_candidate) if scripts_candidate.exists() else None
-    if resolved is None:
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise BootstrapError(
+            "uv_install",
+            "uv_install_failed",
+            "pinned uv installation command failed",
+        ) from error
+
+    executable = (scripts_root / "uv").resolve()
+    if not executable.is_file() or not os.access(executable, os.X_OK):
         raise BootstrapError(
             "uv_resolution",
             "uv_executable_not_found",
-            "uv installation completed but PATH and interpreter scripts have no uv executable",
-        )
-    executable = Path(resolved).resolve()
-    if not executable.is_file() or not os.access(executable, os.X_OK):
-        raise BootstrapError(
-            "uv_executable_validation",
-            "uv_executable_invalid",
-            "resolved uv path is not an executable regular file",
+            "uv installation completed but the private prefix has no uv executable",
         )
     try:
         version_output = version_probe(executable)
@@ -630,7 +648,10 @@ def install_hermetic_runtime(
         if completed is not None:
             return completed
         runner = LiveCommandRunner(paths.log_root, status)
-        uv_executable, uv_version, bootstrap_receipts = _resolve_uv_executable(runner)
+        uv_executable, uv_version, bootstrap_receipts = _resolve_uv_executable(
+            runner,
+            bootstrap_root=paths.cache_root / "bootstrap" / f"uv-{UV_VERSION}",
+        )
         checkout = paths.checkout_root / "mmsegmentation"
         probe = paths.evidence_root / "hermetic-core-model-probe"
         cleanup_actions = repair_owned_path(

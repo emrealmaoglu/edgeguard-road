@@ -376,46 +376,71 @@ def test_uv_install_without_resolvable_executable_is_rejected(tmp_path: Path) ->
     assert captured.value.classification == "uv_executable_not_found"
 
 
-def test_uv_unexpected_version_and_non_executable_are_rejected(tmp_path: Path) -> None:
-    executable = tmp_path / "uv"
+def test_uv_unexpected_host_version_bootstraps_private_exact_version(tmp_path: Path) -> None:
+    executable = tmp_path / "host" / "uv"
+    executable.parent.mkdir()
     executable.write_text("placeholder", encoding="utf-8")
     executable.chmod(0o755)
+    bootstrap_root = tmp_path / "private"
+    private_uv = bootstrap_root / "bin/uv"
 
-    class NoBootstrapRunner:
-        pass
+    class BootstrapRunner:
+        def run(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            private_uv.parent.mkdir(parents=True, exist_ok=True)
+            private_uv.write_text("placeholder", encoding="utf-8")
+            private_uv.chmod(0o755)
+            return {"stage": "bootstrap-uv", "return_code": 0}
 
-    with pytest.raises(BootstrapError, match="expected uv 0.8.8") as version_error:
-        _resolve_uv_executable(  # type: ignore[arg-type]
-            NoBootstrapRunner(),
-            which=lambda _name: str(executable),
-            version_probe=lambda _path: "uv 9.9.9",
-        )
-    assert version_error.value.classification == "uv_version_mismatch"
+    resolved, version, receipts = _resolve_uv_executable(  # type: ignore[arg-type]
+        BootstrapRunner(),
+        which=lambda _name: str(executable),
+        bootstrap_root=bootstrap_root,
+        version_probe=lambda path: "uv 0.11.19" if path == executable else "uv 0.8.8",
+    )
+    assert resolved == private_uv.resolve()
+    assert version == "0.8.8"
+    assert receipts == [{"stage": "bootstrap-uv", "return_code": 0}]
 
     executable.chmod(0o644)
-    with pytest.raises(BootstrapError, match="not an executable") as executable_error:
-        _resolve_uv_executable(  # type: ignore[arg-type]
-            NoBootstrapRunner(), which=lambda _name: str(executable)
-        )
-    assert executable_error.value.classification == "uv_executable_invalid"
+    private_uv.unlink()
+    resolved, version, _ = _resolve_uv_executable(  # type: ignore[arg-type]
+        BootstrapRunner(),
+        which=lambda _name: str(executable),
+        bootstrap_root=bootstrap_root,
+        version_probe=lambda _path: "uv 0.8.8",
+    )
+    assert resolved == private_uv.resolve()
+    assert version == "0.8.8"
 
 
-def test_uv_newer_version_with_platform_suffix_is_rejected(
+def test_uv_newer_version_with_platform_suffix_is_privately_replaced(
     tmp_path: Path,
 ) -> None:
-    executable = tmp_path / "uv"
+    executable = tmp_path / "host-uv"
     executable.write_text("placeholder", encoding="utf-8")
     executable.chmod(0o755)
+    scripts = tmp_path / "private-bin"
+    scripts.mkdir()
 
-    class NoBootstrapRunner:
-        pass
+    class BootstrapRunner:
+        def run(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            private = scripts / "uv"
+            private.write_text("placeholder", encoding="utf-8")
+            private.chmod(0o755)
+            return {"return_code": 0}
 
-    with pytest.raises(BootstrapError, match="expected uv 0.8.8"):
-        _resolve_uv_executable(  # type: ignore[arg-type]
-            NoBootstrapRunner(),
-            which=lambda _name: str(executable),
-            version_probe=lambda _path: "uv 0.11.19 (x86_64-unknown-linux-gnu)",
-        )
+    resolved, version, _ = _resolve_uv_executable(  # type: ignore[arg-type]
+        BootstrapRunner(),
+        which=lambda _name: str(executable),
+        scripts_directory=scripts,
+        version_probe=lambda path: (
+            "uv 0.11.19 (x86_64-unknown-linux-gnu)"
+            if path == executable
+            else "uv 0.8.8 (x86_64-unknown-linux-gnu)"
+        ),
+    )
+    assert resolved == (scripts / "uv").resolve()
+    assert version == "0.8.8"
 
 
 def test_bootstrap_failure_writes_terminal_receipt_and_logs(tmp_path: Path) -> None:
