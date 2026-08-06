@@ -1144,23 +1144,9 @@ class ColabPipeline:
                     stderr = str(error.stderr or "").lower()
                     intentional = "edgeguard_intentional_interruption" in stderr
                     if intentional:
-                        resume_command = list(command)
-                        if "--resume" not in resume_command:
-                            resume_command.append("--resume")
-                        result = self._run_command(
-                            phase, f"{label}-intentional-resume", resume_command
+                        result = self._resume_after_intentional_interruption(
+                            phase, label, command, run_dir, error
                         )
-                        marker = run_dir / ".intentional-interruption-complete.json"
-                        if not marker.is_file():
-                            raise RuntimeError(
-                                "intentional interruption marker is missing"
-                            ) from error
-                        proof = json.loads(marker.read_text(encoding="utf-8"))
-                        result["interruption_resume"] = {
-                            "verified": True,
-                            "optimizer_step": proof["optimizer_step"],
-                            "checkpoint_sha256": proof["checkpoint_sha256"],
-                        }
                         results.append(result)
                         continue
                     if "out of memory" not in stderr and "cuda oom" not in stderr:
@@ -1173,7 +1159,9 @@ class ColabPipeline:
                         retry_stderr = str(retry_error.stderr or "").lower()
                         if "edgeguard_intentional_interruption" not in retry_stderr:
                             raise
-                        result = self._run_command(phase, f"{label}-oom-retry-resume", retry)
+                        result = self._resume_after_intentional_interruption(
+                            phase, f"{label}-oom-retry", retry, run_dir, retry_error
+                        )
                     result["oom_recovery"] = {
                         "attempts": 1,
                         "device_batch": 2,
@@ -1183,6 +1171,39 @@ class ColabPipeline:
         if phase == "screening":
             results.extend(self._screening_evidence())
         return results
+
+    def _resume_after_intentional_interruption(
+        self,
+        phase: str,
+        label: str,
+        command: list[str],
+        run_dir: Path,
+        error: subprocess.CalledProcessError,
+    ) -> dict[str, Any]:
+        """Resume exactly once from the checkpoint proven by the interruption marker."""
+        marker = run_dir / ".intentional-interruption-complete.json"
+        if not marker.is_file():
+            raise RuntimeError("intentional interruption marker is missing") from error
+        proof = json.loads(marker.read_text(encoding="utf-8"))
+        optimizer_step = proof.get("optimizer_step")
+        checkpoint_sha256 = proof.get("checkpoint_sha256")
+        if (
+            not isinstance(optimizer_step, int)
+            or optimizer_step <= 0
+            or not isinstance(checkpoint_sha256, str)
+            or len(checkpoint_sha256) != 64
+        ):
+            raise ValueError("intentional interruption proof is invalid") from error
+        resume_command = list(command)
+        if "--resume" not in resume_command:
+            resume_command.append("--resume")
+        result = self._run_command(phase, f"{label}-resume", resume_command)
+        result["interruption_resume"] = {
+            "verified": True,
+            "optimizer_step": optimizer_step,
+            "checkpoint_sha256": checkpoint_sha256,
+        }
+        return result
 
     def _recommended_model(self) -> str:
         selection_path = self.inputs.work_root / "reports/selection/recommended_model.json"
@@ -1769,7 +1790,8 @@ class ColabPipeline:
         elapsed = time.perf_counter() - started
         scientific_status: Literal["measured", "accepted", "failed", "not_run"] = (
             "not_run"
-            if phase
+            if self.inputs.execution_mode == "acceptance"
+            or phase
             in {
                 "preflight",
                 "restore",

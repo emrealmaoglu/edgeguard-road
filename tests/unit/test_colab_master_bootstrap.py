@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -99,6 +101,110 @@ def test_runtime_environment_prioritizes_wheel_cuda_libraries(tmp_path: Path) ->
     assert entries[:2] == [str(torch_lib), str(nvidia_lib)]
     assert entries[-2:] == ["/usr/local/cuda/lib64", "/usr/lib64-nvidia"]
     assert environment["PYTHONNOUSERSITE"] == "1"
+
+
+def test_runtime_environment_firewalls_hosted_colab_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    hostile = {
+        "MPLBACKEND": "module://matplotlib_inline.backend_inline",
+        "PYTHONHOME": "/host/python",
+        "PYTHONSTARTUP": "/host/startup.py",
+        "PYTHONUSERBASE": "/host/userbase",
+        "VIRTUAL_ENV": "/host/venv",
+        "CONDA_PREFIX": "/host/conda",
+        "PIP_TARGET": "/host/target",
+        "PIP_PREFIX": "/host/prefix",
+        "PIP_REQUIRE_VIRTUALENV": "1",
+        "UV_CACHE_DIR": "/host/uv-cache",
+        "UV_PYTHON": "/host/python",
+        "CUDA_VISIBLE_DEVICES": "0",
+        "HTTPS_PROXY": "http://proxy.invalid",
+    }
+    for key, value in hostile.items():
+        monkeypatch.setenv(key, value)
+    uv = tmp_path / "uv-prefix/local/bin/uv"
+    uv.parent.mkdir(parents=True)
+    uv.touch()
+
+    environment = run_colab_master._runtime_environment(
+        project_root=ROOT,
+        cache_root=tmp_path / "cache",
+        runtime_python=tmp_path / "runtime/bin/python",
+        uv_executable=uv,
+    )
+
+    assert environment["MPLBACKEND"] == "Agg"
+    assert environment["CUDA_VISIBLE_DEVICES"] == "0"
+    assert environment["HTTPS_PROXY"] == "http://proxy.invalid"
+    assert environment["UV_PYTHON_PREFERENCE"] == "only-managed"
+    assert environment["UV_CACHE_DIR"] == str(tmp_path / "cache/uv")
+    assert re.fullmatch(r"[0-9a-f]{64}", environment["EDGEGUARD_ENVIRONMENT_CONTRACT_SHA256"])
+    for key in (
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "PYTHONUSERBASE",
+        "VIRTUAL_ENV",
+        "CONDA_PREFIX",
+        "PIP_TARGET",
+        "PIP_PREFIX",
+        "PIP_REQUIRE_VIRTUALENV",
+        "UV_PYTHON",
+    ):
+        assert key not in environment
+    for key in ("MPLCONFIGDIR", "XDG_CACHE_HOME", "TORCH_HOME", "HF_HOME"):
+        assert Path(environment[key]).is_dir()
+
+
+def test_bootstrap_environment_ignores_host_uv_and_inline_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MPLBACKEND", "module://matplotlib_inline.backend_inline")
+    monkeypatch.setenv("UV_CACHE_DIR", "/host/uv-0.11.19")
+    monkeypatch.setenv("VIRTUAL_ENV", "/host/venv")
+    environment = bootstrap_colab_runtime._bootstrap_environment(tmp_path / "cache")
+    assert environment["MPLBACKEND"] == "Agg"
+    assert environment["UV_CACHE_DIR"] == str(tmp_path / "cache/uv")
+    assert environment["UV_PYTHON_PREFERENCE"] == "only-managed"
+    assert "VIRTUAL_ENV" not in environment
+
+
+def test_runtime_environment_renders_headless_png_under_hostile_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pytest.importorskip("matplotlib")
+    monkeypatch.setenv("MPLBACKEND", "module://matplotlib_inline.backend_inline")
+    uv = tmp_path / "uv-prefix/local/bin/uv"
+    uv.parent.mkdir(parents=True)
+    uv.touch()
+    environment = run_colab_master._runtime_environment(
+        project_root=ROOT,
+        cache_root=tmp_path / "cache",
+        runtime_python=Path(sys.executable),
+        uv_executable=uv,
+    )
+    script = """
+import json, tempfile
+from pathlib import Path
+import matplotlib
+from matplotlib.figure import Figure
+with tempfile.TemporaryDirectory() as directory:
+    output = Path(directory) / 'probe.png'
+    figure = Figure(figsize=(1, 1))
+    figure.subplots().plot([0, 1], [0, 1])
+    figure.savefig(output)
+    print(json.dumps({'backend': matplotlib.get_backend().lower(), 'bytes': output.stat().st_size}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        env=environment,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    assert payload["backend"] == "agg"
+    assert payload["bytes"] > 0
 
 
 def test_master_child_command_streams_and_preserves_failure_tail(tmp_path: Path) -> None:

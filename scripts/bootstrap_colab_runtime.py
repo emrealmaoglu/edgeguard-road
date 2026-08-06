@@ -20,6 +20,16 @@ MMSEG_REPOSITORY = "https://github.com/open-mmlab/mmsegmentation.git"
 MMSEG_COMMIT = "c685fe6767c4cadf6b051983ca6208f1b9d1ccb8"
 MAIN_LOCK = "requirements/colab-py311-cu121.lock"
 OPENMMLAB_LOCK = "requirements/colab-openmmlab.lock"
+_HOST_ENVIRONMENT_KEYS = (
+    "CONDA_PREFIX",
+    "PIP_PREFIX",
+    "PIP_REQUIRE_VIRTUALENV",
+    "PIP_TARGET",
+    "PYTHONHOME",
+    "PYTHONSTARTUP",
+    "PYTHONUSERBASE",
+    "VIRTUAL_ENV",
+)
 
 
 def _canonical_json(payload: object) -> str:
@@ -248,6 +258,35 @@ def _prepare_checkout(
     )
 
 
+def _bootstrap_environment(cache_root: Path) -> dict[str, str]:
+    """Isolate the stdlib bootstrap from hosted Python and notebook state."""
+    environment = os.environ.copy()
+    for key in _HOST_ENVIRONMENT_KEYS:
+        environment.pop(key, None)
+    for key in tuple(environment):
+        if key.startswith("UV_"):
+            environment.pop(key, None)
+    cache_directories = {
+        "HF_HOME": cache_root / "huggingface",
+        "MPLCONFIGDIR": cache_root / "matplotlib",
+        "TORCH_HOME": cache_root / "torch",
+        "XDG_CACHE_HOME": cache_root / "xdg",
+    }
+    for path in cache_directories.values():
+        path.mkdir(parents=True, exist_ok=True)
+    environment.update({key: str(path) for key, path in cache_directories.items()})
+    environment.update(
+        {
+            "MPLBACKEND": "Agg",
+            "PYTHONNOUSERSITE": "1",
+            "UV_CACHE_DIR": str(cache_root / "uv"),
+            "UV_PYTHON_INSTALL_DIR": str(cache_root / "python"),
+            "UV_PYTHON_PREFERENCE": "only-managed",
+        }
+    )
+    return environment
+
+
 def bootstrap(args: argparse.Namespace) -> dict[str, object]:
     """Create the locked runtime before any EdgeGuard module is imported."""
     project_root = args.project_root.resolve()
@@ -264,14 +303,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, object]:
     log = args.log.resolve()
     _validate_source(project_root, args.project_commit)
     _, main_lock, openmmlab_lock = _validate_contract(project_root)
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "UV_CACHE_DIR": str(cache_root / "uv"),
-            "UV_PYTHON_INSTALL_DIR": str(cache_root / "python"),
-            "UV_PYTHON_PREFERENCE": "only-managed",
-        }
-    )
+    environment = _bootstrap_environment(cache_root)
     uv = _private_uv(
         cache_root=cache_root,
         project_root=project_root,
@@ -363,6 +395,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, object]:
         ],
         check=True,
         capture_output=True,
+        env=environment,
         text=True,
     )
     identity = json.loads(probe.stdout)

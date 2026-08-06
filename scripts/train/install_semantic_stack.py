@@ -431,6 +431,52 @@ print(json.dumps(payload, sort_keys=True))
             "hermetic CUDA probe could not access a GPU; "
             f"reported identity: {cuda_identity}; stderr: {cuda_completed.stderr[-4000:]}"
         )
+    headless_script = """
+import json, os, tempfile
+import matplotlib
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+backend = str(matplotlib.get_backend()).lower()
+if backend != 'agg':
+    raise RuntimeError(f'headless matplotlib backend is not Agg: {backend}')
+with tempfile.TemporaryDirectory() as directory:
+    output = os.path.join(directory, 'probe.png')
+    figure = Figure(figsize=(1, 1))
+    FigureCanvasAgg(figure)
+    axis = figure.subplots()
+    axis.plot([0, 1], [0, 1])
+    figure.savefig(output)
+    if os.path.getsize(output) <= 0:
+        raise RuntimeError('headless matplotlib probe produced an empty PNG')
+print(json.dumps({
+  'matplotlib_backend': backend,
+  'matplotlib_headless_png_verified': True,
+  'matplotlib_config_dir': os.environ.get('MPLCONFIGDIR'),
+  'xdg_cache_home': os.environ.get('XDG_CACHE_HOME'),
+  'torch_home': os.environ.get('TORCH_HOME'),
+  'hf_home': os.environ.get('HF_HOME'),
+  'environment_contract_sha256': os.environ.get(
+      'EDGEGUARD_ENVIRONMENT_CONTRACT_SHA256'
+  ),
+}, sort_keys=True))
+"""
+    headless_completed = subprocess.run(
+        [str(interpreter), "-c", headless_script], capture_output=True, text=True
+    )
+    if headless_completed.returncode:
+        raise RuntimeError(
+            "hermetic headless matplotlib probe failed\n"
+            f"stdout:\n{headless_completed.stdout[-4000:]}\n"
+            f"stderr:\n{headless_completed.stderr[-12000:]}"
+        )
+    try:
+        headless_identity = json.loads(headless_completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            "hermetic headless matplotlib probe returned invalid output\n"
+            f"stdout:\n{headless_completed.stdout[-4000:]}\n"
+            f"stderr:\n{headless_completed.stderr[-12000:]}"
+        ) from error
     script = """
 import importlib.metadata, json, platform
 import cv2, matplotlib, mmcv, mmengine, mmseg, numpy, onnx, onnxruntime, optuna, streamlit
@@ -472,6 +518,7 @@ print(json.dumps(payload, sort_keys=True))
     if not isinstance(payload, dict):
         raise ValueError("environment probe did not return an object")
     payload.update(cuda_identity)
+    payload.update(headless_identity)
     payload["mmsegmentation_commit"] = subprocess.run(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"],
         check=True,
@@ -513,6 +560,14 @@ def _validate_identity(identity: dict[str, Any], config: SemanticFrameworkConfig
         raise ValueError("hermetic runtime does not expose the locked CUDA 12.1 stack")
     if identity.get("delivery_imports_verified") is not True:
         raise ValueError("Colab delivery dependency imports were not verified")
+    if (
+        identity.get("matplotlib_backend") != "agg"
+        or identity.get("matplotlib_headless_png_verified") is not True
+    ):
+        raise ValueError("headless Matplotlib Agg contract was not verified")
+    contract_sha = identity.get("environment_contract_sha256")
+    if not isinstance(contract_sha, str) or re.fullmatch(r"[0-9a-f]{64}", contract_sha) is None:
+        raise ValueError("Colab environment firewall identity is missing")
 
 
 def _probe_command(

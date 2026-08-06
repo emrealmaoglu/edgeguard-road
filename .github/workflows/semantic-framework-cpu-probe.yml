@@ -29,6 +29,11 @@ jobs:
           cache: pip
       - name: Probe exact Colab lock imports
         if: github.event_name == 'workflow_dispatch'
+        env:
+          MPLBACKEND: module://matplotlib_inline.backend_inline
+          UV_CACHE_DIR: /tmp/host-uv-0.11.19
+          UV_PYTHON: /tmp/host-python
+          VIRTUAL_ENV: /tmp/host-virtualenv
         run: |
           probe_root="${RUNNER_TEMP}/edgeguard-colab"
           mkdir -p "${probe_root}"
@@ -41,10 +46,48 @@ jobs:
             --cache-root "${probe_root}/edgeguard-cache" \
             --log "${probe_root}/bootstrap.log" \
             --output "${probe_root}/bootstrap-receipt.json"
-          "${probe_root}/edgeguard-runtime/bin/python" -c \
-            "from pathlib import Path; from scripts.train.install_semantic_stack import _environment_probe; print(_environment_probe(Path('${probe_root}/edgeguard-runtime/bin/python'), Path('${probe_root}/edgeguard-checkouts/mmsegmentation'), require_cuda=False))"
-          "${probe_root}/edgeguard-runtime/bin/python" -c \
-            "import pkg_resources; from mmengine.runner import Runner; print('pkg_resources and MMEngine runner: OK')"
+          PROBE_ROOT="${probe_root}" python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          from scripts.run_colab_master import _runtime_environment
+
+          root = Path(os.environ["PROBE_ROOT"])
+          runtime = root / "edgeguard-runtime/bin/python"
+          uv = Path(
+              __import__("json").loads(
+                  (root / "bootstrap-receipt.json").read_text(encoding="utf-8")
+              )["uv"]["path"]
+          )
+          environment = _runtime_environment(
+              project_root=Path.cwd(),
+              cache_root=root / "edgeguard-cache",
+              runtime_python=runtime,
+              uv_executable=uv,
+          )
+          probe = (
+              "from pathlib import Path; "
+              "from scripts.train.install_semantic_stack import _environment_probe; "
+              f"print(_environment_probe(Path({str(runtime)!r}), "
+              f"Path({str(root / 'edgeguard-checkouts/mmsegmentation')!r}), "
+              "require_cuda=False))"
+          )
+          subprocess.run([str(runtime), "-c", probe], check=True, env=environment)
+          subprocess.run(
+              [
+                  str(runtime),
+                  "-c",
+                  "import pkg_resources; from mmengine.runner import Runner; "
+                  "print('pkg_resources and MMEngine runner: OK')",
+              ],
+              check=True,
+              env=environment,
+          )
+          assert environment["MPLBACKEND"] == "Agg"
+          assert environment["UV_CACHE_DIR"] == str(root / "edgeguard-cache/uv")
+          assert "VIRTUAL_ENV" not in environment
+          PY
       - name: Install CPU framework dependencies
         run: |
           python -m pip install -e '.[dev]'

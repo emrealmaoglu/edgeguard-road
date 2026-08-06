@@ -252,6 +252,22 @@ try:
         }
     else:
         environment = os.environ.copy()
+        for key in (
+            "CONDA_PREFIX",
+            "PIP_PREFIX",
+            "PIP_REQUIRE_VIRTUALENV",
+            "PIP_TARGET",
+            "PYTHONHOME",
+            "PYTHONSTARTUP",
+            "PYTHONUSERBASE",
+            "VIRTUAL_ENV",
+        ):
+            environment.pop(key, None)
+        for key in tuple(environment):
+            if key.startswith("UV_"):
+                environment.pop(key, None)
+        environment["MPLBACKEND"] = "Agg"
+        environment["PYTHONNOUSERSITE"] = "1"
         run_visible(
             [
                 "/usr/bin/python3",

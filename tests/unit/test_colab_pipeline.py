@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import edgeguard.rescue.colab_pipeline as colab_pipeline_module
 from edgeguard.rescue.colab_pipeline import (
     ALL_MODELS,
     CORE_MODELS,
@@ -211,3 +212,73 @@ def test_smoke_command_enforces_cut_and_acceptance_command_stays_short(tmp_path:
     command = acceptance._train_command("final", "segformer_b0")  # noqa: SLF001
     assert command[command.index("--max-steps") + 1] == "2"
     assert command[command.index("--precision") + 1] == "fp32"
+
+
+def test_oom_retry_interruption_resumes_with_same_proven_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pipeline = _pipeline(tmp_path)
+    model = "segformer_b0"
+    run_dir = pipeline._run_directory("smoke", model)  # noqa: SLF001
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(colab_pipeline_module, "models_for_phase", lambda phase: (model,))
+
+    def fake_run_command(phase: str, label: str, command: list[str]) -> dict[str, object]:
+        calls.append(list(command))
+        if len(calls) == 1:
+            raise subprocess.CalledProcessError(
+                1, command, output="CUDA out of memory", stderr="CUDA out of memory"
+            )
+        if len(calls) == 2:
+            run_dir.mkdir(parents=True)
+            (run_dir / ".intentional-interruption-complete.json").write_text(
+                json.dumps(
+                    {
+                        "record_type": "edgeguard_intentional_interruption",
+                        "optimizer_step": 25,
+                        "checkpoint_sha256": "a" * 64,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            raise subprocess.CalledProcessError(
+                1,
+                command,
+                output="EDGEGUARD_INTENTIONAL_INTERRUPTION",
+                stderr="EDGEGUARD_INTENTIONAL_INTERRUPTION",
+            )
+        return {"label": label, "return_code": 0, "command": command}
+
+    monkeypatch.setattr(pipeline, "_run_command", fake_run_command)
+    results = pipeline._run_training_phase("smoke")  # noqa: SLF001
+
+    assert len(calls) == 3
+    assert "--device-batch" in calls[1]
+    assert calls[1][calls[1].index("--device-batch") + 1] == "2"
+    assert "--resume" not in calls[1]
+    assert calls[2][-1] == "--resume"
+    assert results[0]["oom_recovery"] == {
+        "attempts": 1,
+        "device_batch": 2,
+        "effective_batch": 4,
+    }
+    assert results[0]["interruption_resume"] == {
+        "verified": True,
+        "optimizer_step": 25,
+        "checkpoint_sha256": "a" * 64,
+    }
+
+
+def test_acceptance_mode_never_writes_measured_or_accepted_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    production = _pipeline(tmp_path)
+    pipeline = ColabPipeline(replace(production.inputs, execution_mode="acceptance"))
+    monkeypatch.setattr(pipeline, "_run_training_phase", lambda phase: [])
+
+    result = pipeline._run_phase("pilot")  # noqa: SLF001
+
+    assert result["status"] == "completed"
+    manifest = json.loads((pipeline.state_root / "pilot/run_manifest.json").read_text())
+    assert manifest["scientific_status"] == "not_run"

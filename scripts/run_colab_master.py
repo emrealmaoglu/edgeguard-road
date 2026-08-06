@@ -15,6 +15,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+_HOST_ENVIRONMENT_KEYS = (
+    "CONDA_PREFIX",
+    "PIP_PREFIX",
+    "PIP_REQUIRE_VIRTUALENV",
+    "PIP_TARGET",
+    "PYTHONHOME",
+    "PYTHONSTARTUP",
+    "PYTHONUSERBASE",
+    "VIRTUAL_ENV",
+)
+
 
 def _canonical_json(payload: object) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
@@ -159,10 +170,34 @@ def _resource_gate(content_root: Path) -> dict[str, object]:
     return observed
 
 
+def _host_environment(cache_root: Path) -> dict[str, str]:
+    """Remove hosted-notebook state before launching any project subprocess."""
+    environment = os.environ.copy()
+    for key in _HOST_ENVIRONMENT_KEYS:
+        environment.pop(key, None)
+    for key in tuple(environment):
+        if key.startswith("UV_"):
+            environment.pop(key, None)
+
+    cache_directories = {
+        "HF_HOME": cache_root / "huggingface",
+        "MPLCONFIGDIR": cache_root / "matplotlib",
+        "TORCH_HOME": cache_root / "torch",
+        "XDG_CACHE_HOME": cache_root / "xdg",
+    }
+    for path in cache_directories.values():
+        path.mkdir(parents=True, exist_ok=True)
+    environment.update({key: str(path) for key, path in cache_directories.items()})
+    environment["MPLBACKEND"] = "Agg"
+    environment["PYTHONNOUSERSITE"] = "1"
+    return environment
+
+
 def _runtime_environment(
     *, project_root: Path, cache_root: Path, runtime_python: Path, uv_executable: Path
 ) -> dict[str, str]:
-    environment = os.environ.copy()
+    """Return the only environment allowed to reach the locked training runtime."""
+    environment = _host_environment(cache_root)
     # Colab prepends its current CUDA toolkit directories to LD_LIBRARY_PATH.  Those
     # libraries are not necessarily ABI-compatible with the deliberately pinned
     # PyTorch wheel.  Put the wheel-owned libraries first while retaining the
@@ -181,14 +216,25 @@ def _runtime_environment(
         environment["LD_LIBRARY_PATH"] = os.pathsep.join(library_path)
     environment["PATH"] = str(uv_executable.parent) + os.pathsep + environment.get("PATH", "")
     environment["PYTHONPATH"] = str(project_root / "src")
-    environment["PYTHONNOUSERSITE"] = "1"
-    environment.pop("PYTHONHOME", None)
-    environment.pop("PYTHONSTARTUP", None)
-    environment.pop("PYTHONUSERBASE", None)
     environment["UV_CACHE_DIR"] = str(cache_root / "uv")
     environment["UV_PYTHON_INSTALL_DIR"] = str(cache_root / "python")
     environment["UV_PYTHON_PREFERENCE"] = "only-managed"
     environment["EDGEGUARD_RUNTIME_PYTHON"] = str(runtime_python)
+    contract = {
+        "hf_home": environment["HF_HOME"],
+        "matplotlib_backend": environment["MPLBACKEND"],
+        "matplotlib_config_dir": environment["MPLCONFIGDIR"],
+        "python_no_user_site": environment["PYTHONNOUSERSITE"],
+        "runtime_python": environment["EDGEGUARD_RUNTIME_PYTHON"],
+        "torch_home": environment["TORCH_HOME"],
+        "uv_cache_dir": environment["UV_CACHE_DIR"],
+        "uv_python_install_dir": environment["UV_PYTHON_INSTALL_DIR"],
+        "uv_python_preference": environment["UV_PYTHON_PREFERENCE"],
+        "xdg_cache_home": environment["XDG_CACHE_HOME"],
+    }
+    environment["EDGEGUARD_ENVIRONMENT_CONTRACT_SHA256"] = hashlib.sha256(
+        _canonical_json(contract).encode("utf-8")
+    ).hexdigest()
     return environment
 
 
@@ -364,6 +410,7 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         quarantined_evidence = _quarantine_local_commit_drift(evidence_root, args.project_commit)
     stage("stdlib-hermetic-bootstrap", resources=resources)
     bootstrap_receipt = content_root / "edgeguard-bootstrap-receipt.json"
+    bootstrap_environment = _host_environment(cache_root)
     _run(
         [
             sys.executable,
@@ -387,6 +434,7 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         ],
         project_root=project_root,
         child_log=child_log,
+        environment=bootstrap_environment,
     )
     bootstrap_payload = json.loads(bootstrap_receipt.read_text(encoding="utf-8"))
     runtime_python = Path(str(bootstrap_payload["interpreter"]))
