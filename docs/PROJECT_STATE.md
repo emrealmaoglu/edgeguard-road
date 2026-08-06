@@ -1,6 +1,6 @@
 # Project State
 
-Updated 2026-08-06 on `stabilize/colab-v2`.
+Updated 2026-08-07 on `stabilize/colab-v2`.
 
 ## Current delivery
 
@@ -63,6 +63,17 @@ prefix scripts under `local/bin` rather than the previously assumed `bin`. Both 
 layers now discover, execute, and version-check the exact private uv binary across both
 POSIX prefix layouts, and the verified discovered directory—not a reconstructed path—is
 prepended to the hermetic runtime PATH.
+
+The following L4 run at application commit `55e13db…` completed the full 92-package
+hash sync, the two-wheel OpenMMLab install, and both editable installs. It then failed in
+the old combined import/CUDA probe, which discarded its child stderr and redundantly ran
+the complete dependency sync a second time. The exact lock imports successfully in a
+clean Linux x86 GitHub runner. The corrected runtime now puts wheel-owned Torch/NVIDIA
+libraries ahead of Colab toolkit libraries while retaining the host driver paths,
+isolates every dependency import and CUDA initialization with preserved stderr, and
+validates the standard-library bootstrap receipt instead of uninstalling/reinstalling the
+environment. Setuptools is held at 80.9.0 so MMEngine's `pkg_resources` runtime path
+remains available.
 
 All five models pass the runtime canary contract. Core smoke intentionally interrupts at
 step 25 of 50 and must resume from the same optimizer/checkpoint identity. Checkpoints are

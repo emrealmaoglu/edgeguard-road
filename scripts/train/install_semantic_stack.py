@@ -265,6 +265,8 @@ def _validate_lock_contract(main_lock: Path, openmmlab_lock: Path) -> None:
         raise ValueError("main Colab lock must pin opencv-python-headless==4.10.0.84")
     if not _requirement_present(main_text, "rich", "15.0.0"):
         raise ValueError("main Colab lock must directly pin rich==15.0.0")
+    if not _requirement_present(main_text, "setuptools", "80.9.0"):
+        raise ValueError("main Colab lock must retain pkg_resources via setuptools==80.9.0")
     for forbidden in ("mmengine", "mmcv-lite"):
         if re.search(rf"(?m)^{re.escape(forbidden)}==", main_text):
             raise ValueError(f"{forbidden} must live only in the OpenMMLab lock")
@@ -360,7 +362,9 @@ def build_hermetic_commands(
     )
 
 
-def _environment_probe(interpreter: Path, checkout: Path) -> dict[str, Any]:
+def _environment_probe(
+    interpreter: Path, checkout: Path, *, require_cuda: bool = True
+) -> dict[str, Any]:
     import_modules = (
         "cv2",
         "matplotlib",
@@ -392,6 +396,41 @@ def _environment_probe(interpreter: Path, checkout: Path) -> dict[str, Any]:
                 f"stdout:\n{completed.stdout[-4000:]}\n"
                 f"stderr:\n{completed.stderr[-12000:]}"
             )
+    cuda_script = """
+import json, torch
+available = bool(torch.cuda.is_available())
+payload = {
+  'cuda_runtime': torch.version.cuda,
+  'cuda_available': available,
+  'cuda_device_count': int(torch.cuda.device_count()),
+  'gpu': torch.cuda.get_device_name(0) if available else None,
+}
+print(json.dumps(payload, sort_keys=True))
+"""
+    cuda_completed = subprocess.run(
+        [str(interpreter), "-c", cuda_script],
+        capture_output=True,
+        text=True,
+    )
+    if cuda_completed.returncode:
+        raise RuntimeError(
+            "hermetic CUDA initialization failed\n"
+            f"stdout:\n{cuda_completed.stdout[-4000:]}\n"
+            f"stderr:\n{cuda_completed.stderr[-12000:]}"
+        )
+    try:
+        cuda_identity = json.loads(cuda_completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            "hermetic CUDA probe returned invalid output\n"
+            f"stdout:\n{cuda_completed.stdout[-4000:]}\n"
+            f"stderr:\n{cuda_completed.stderr[-12000:]}"
+        ) from error
+    if require_cuda and cuda_identity.get("cuda_available") is not True:
+        raise RuntimeError(
+            "hermetic CUDA probe could not access a GPU; "
+            f"reported identity: {cuda_identity}; stderr: {cuda_completed.stderr[-4000:]}"
+        )
     script = """
 import importlib.metadata, json, platform
 import cv2, matplotlib, mmcv, mmengine, mmseg, numpy, onnx, onnxruntime, optuna, streamlit
@@ -407,9 +446,6 @@ payload = {
   'torch_version': importlib.metadata.version('torch'),
   'torchvision_version': importlib.metadata.version('torchvision'),
   'torchaudio_version': importlib.metadata.version('torchaudio'),
-  'cuda_runtime': torch.version.cuda,
-  'cuda_available': bool(torch.cuda.is_available()),
-  'gpu': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
   'mmengine_version': importlib.metadata.version('mmengine'),
   'mmcv_distribution': 'mmcv-lite',
   'mmcv_version': importlib.metadata.version('mmcv-lite'),
@@ -425,15 +461,17 @@ payload = {
 }
 print(json.dumps(payload, sort_keys=True))
 """
-    completed = subprocess.run(
-        [str(interpreter), "-c", script],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    completed = subprocess.run([str(interpreter), "-c", script], capture_output=True, text=True)
+    if completed.returncode:
+        raise RuntimeError(
+            "hermetic identity probe failed\n"
+            f"stdout:\n{completed.stdout[-4000:]}\n"
+            f"stderr:\n{completed.stderr[-12000:]}"
+        )
     payload = json.loads(completed.stdout)
     if not isinstance(payload, dict):
         raise ValueError("environment probe did not return an object")
+    payload.update(cuda_identity)
     payload["mmsegmentation_commit"] = subprocess.run(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"],
         check=True,
@@ -686,6 +724,7 @@ def install_hermetic_runtime(
     project_root: Path,
     project_commit: str,
     config_root: Path,
+    bootstrap_receipt: Path | None = None,
 ) -> dict[str, Any]:
     """Install the sole published runtime; a failure never selects another matrix."""
     config = load_semantic_framework_config(config_path)
@@ -703,10 +742,6 @@ def install_hermetic_runtime(
         if completed is not None:
             return completed
         runner = LiveCommandRunner(paths.log_root, status)
-        uv_executable, uv_version, bootstrap_receipts = _resolve_uv_executable(
-            runner,
-            bootstrap_root=paths.cache_root / "bootstrap" / f"uv-{UV_VERSION}",
-        )
         checkout = paths.checkout_root / "mmsegmentation"
         probe = paths.evidence_root / "hermetic-core-model-probe"
         cleanup_actions = repair_owned_path(
@@ -715,14 +750,45 @@ def install_hermetic_runtime(
             probe=probe,
             expected_commit=config.commit,
         )
-        receipt = _execute_runtime(
-            build_hermetic_commands(
+        commands: tuple[tuple[str, ...], ...]
+        if bootstrap_receipt is not None:
+            bootstrap = json.loads(bootstrap_receipt.read_text(encoding="utf-8"))
+            lock_paths = _lock_paths(config, project_root)
+            expected_locks = {path.name: sha256_file(path) for path in lock_paths}
+            expected_bootstrap = {
+                "record_type": "edgeguard_stdlib_colab_bootstrap",
+                "status": "completed",
+                "project_commit": project_commit,
+                "interpreter": str(_python(paths.runtime_root)),
+                "mmseg_commit": config.commit,
+                "lock_sha256": expected_locks,
+            }
+            for field, expected in expected_bootstrap.items():
+                if bootstrap.get(field) != expected:
+                    raise ValueError(f"bootstrap receipt identity mismatch for {field}")
+            uv_payload = bootstrap.get("uv")
+            if not isinstance(uv_payload, dict) or uv_payload.get("version") != UV_VERSION:
+                raise ValueError("bootstrap receipt does not prove the pinned uv version")
+            uv_executable = Path(str(uv_payload.get("path")))
+            if not uv_executable.is_file():
+                raise FileNotFoundError("bootstrap receipt uv executable is missing")
+            uv_version = UV_VERSION
+            bootstrap_receipts: list[dict[str, Any]] = []
+            commands = ()
+        else:
+            uv_executable, uv_version, bootstrap_receipts = _resolve_uv_executable(
+                runner,
+                bootstrap_root=paths.cache_root / "bootstrap" / f"uv-{UV_VERSION}",
+            )
+            commands = build_hermetic_commands(
                 config,
                 checkout,
                 uv_executable=uv_executable,
                 project_root=project_root,
                 runtime_root=paths.runtime_root,
-            ),
+            )
+        receipt = _execute_runtime(
+            commands,
             interpreter=_python(paths.runtime_root),
             checkout=checkout,
             config=config,
@@ -746,6 +812,7 @@ def install_hermetic_runtime(
                     "executable_basename": uv_executable.name,
                     "bootstrap_commands": bootstrap_receipts,
                 },
+                "preinstalled_bootstrap_verified": bootstrap_receipt is not None,
                 "runtime_contract": {key: str(value) for key, value in paths.as_dict().items()},
             }
         )
@@ -772,6 +839,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--log-root", type=Path, required=True)
     parser.add_argument("--cache-root", type=Path, required=True)
     parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument("--bootstrap-receipt", type=Path)
     parser.add_argument("--execute", action="store_true")
     return parser
 
@@ -794,6 +862,7 @@ def main() -> int:
             project_root=args.project_root,
             project_commit=args.project_commit,
             config_root=args.config_root,
+            bootstrap_receipt=args.bootstrap_receipt,
         )
     else:
         result = {

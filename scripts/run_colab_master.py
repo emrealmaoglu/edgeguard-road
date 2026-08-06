@@ -163,8 +163,28 @@ def _runtime_environment(
     *, project_root: Path, cache_root: Path, runtime_python: Path, uv_executable: Path
 ) -> dict[str, str]:
     environment = os.environ.copy()
+    # Colab prepends its current CUDA toolkit directories to LD_LIBRARY_PATH.  Those
+    # libraries are not necessarily ABI-compatible with the deliberately pinned
+    # PyTorch wheel.  Put the wheel-owned libraries first while retaining the
+    # hosted driver paths (libcuda is supplied by the host, not the wheel).
+    runtime_root = runtime_python.parent.parent
+    bundled_libraries: list[str] = []
+    for site_packages in sorted(runtime_root.glob("lib/python*/site-packages")):
+        candidates = [site_packages / "torch/lib"]
+        candidates.extend(sorted(site_packages.glob("nvidia/*/lib")))
+        bundled_libraries.extend(str(path) for path in candidates if path.is_dir())
+    hosted_libraries = [
+        value for value in environment.get("LD_LIBRARY_PATH", "").split(os.pathsep) if value
+    ]
+    library_path = list(dict.fromkeys((*bundled_libraries, *hosted_libraries)))
+    if library_path:
+        environment["LD_LIBRARY_PATH"] = os.pathsep.join(library_path)
     environment["PATH"] = str(uv_executable.parent) + os.pathsep + environment.get("PATH", "")
     environment["PYTHONPATH"] = str(project_root / "src")
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment.pop("PYTHONHOME", None)
+    environment.pop("PYTHONSTARTUP", None)
+    environment.pop("PYTHONUSERBASE", None)
     environment["UV_CACHE_DIR"] = str(cache_root / "uv")
     environment["UV_PYTHON_INSTALL_DIR"] = str(cache_root / "python")
     environment["UV_PYTHON_PREFERENCE"] = "only-managed"
@@ -388,6 +408,8 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
             str(cache_root),
             "--data-root",
             str(data_root / "cityscapes"),
+            "--bootstrap-receipt",
+            str(bootstrap_receipt),
             "--execute",
         ],
         project_root=project_root,

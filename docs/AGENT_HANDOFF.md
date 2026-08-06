@@ -26,12 +26,20 @@
 - Streams the real child error and packages stage, bootstrap and log-tail diagnostics.
 - Resolves both `bin/uv` and Colab system-pip `local/bin/uv` private-prefix layouts and
   carries the verified executable path into the runtime installer.
+- Prioritizes the pinned wheel's CUDA libraries over Colab's mutable toolkit paths while
+  preserving host driver discovery.
+- Reuses the hash-verified bootstrap receipt for canary execution instead of performing a
+  second destructive package sync.
+- Reports the exact failed module or CUDA initialization stderr and retains MMEngine's
+  required `pkg_resources` path through the Setuptools 80.9.0 lock.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 466 passed, 2 environment-gated skipped.
+- Full pytest passes: 470 passed, 2 environment-gated skipped.
+- Mypy passes for all 116 configured source modules and the three changed runtime
+  entrypoints; full-repository Ruff lint/format passes.
 - Both hosted entrypoints load with site packages disabled (`python -S`).
 - Master notebook generation is byte-identical across two runs.
 - All master notebook code cells execute in local claim-safe mode with

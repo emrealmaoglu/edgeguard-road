@@ -125,6 +125,7 @@ def _validate_contract(project_root: Path) -> tuple[Path, Path, Path]:
     for required in (
         "numpy==1.26.4",
         "opencv-python-headless==4.10.0.84",
+        "setuptools==80.9.0",
         "torch-2.1.1%2Bcu121-cp311-cp311-linux_x86_64.whl",
     ):
         if required not in main_text:

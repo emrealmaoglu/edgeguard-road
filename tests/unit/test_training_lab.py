@@ -41,6 +41,7 @@ from scripts.train.install_semantic_stack import (
     _resolve_uv_executable,
     _validate_lock_contract,
     build_hermetic_commands,
+    install_hermetic_runtime,
     repair_owned_path,
 )
 from scripts.train.train_semantic import (
@@ -71,6 +72,92 @@ def test_environment_probe_names_the_first_failed_import_and_preserves_stderr(
     with pytest.raises(RuntimeError, match="exact loader failure") as captured:
         _environment_probe(tmp_path / "python", tmp_path / "mmseg")
     assert "failed for cv2" in str(captured.value)
+
+
+def test_environment_probe_preserves_cuda_initialization_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        if calls <= 13:
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="ok", stderr="")
+        return subprocess.CompletedProcess(
+            args=args[0], returncode=1, stdout="", stderr="undefined symbol: ncclCommRegister"
+        )
+
+    monkeypatch.setattr("scripts.train.install_semantic_stack.subprocess.run", fake_run)
+    with pytest.raises(RuntimeError, match="ncclCommRegister") as captured:
+        _environment_probe(tmp_path / "python", tmp_path / "mmseg")
+    assert "CUDA initialization failed" in str(captured.value)
+
+
+def test_verified_bootstrap_receipt_skips_second_dependency_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    paths = RuntimePathContract.from_workspace(workspace)
+    interpreter = paths.runtime_root / "bin/python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.touch()
+    uv = workspace / "bootstrap/local/bin/uv"
+    uv.parent.mkdir(parents=True)
+    uv.touch()
+    config = load_semantic_framework_config(CONFIG_ROOT / "framework_mmseg.yaml")
+    lock_paths = (
+        REPO_ROOT / config.lockfile,
+        REPO_ROOT / "requirements/colab-openmmlab.lock",
+    )
+    from edgeguard.serialization import sha256_file
+
+    bootstrap_receipt = workspace / "bootstrap-receipt.json"
+    bootstrap_receipt.write_text(
+        json.dumps(
+            {
+                "record_type": "edgeguard_stdlib_colab_bootstrap",
+                "status": "completed",
+                "project_commit": COMMIT,
+                "interpreter": str(interpreter),
+                "mmseg_commit": config.commit,
+                "lock_sha256": {path.name: sha256_file(path) for path in lock_paths},
+                "uv": {"version": "0.8.8", "path": str(uv)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scripts.train.install_semantic_stack.repair_owned_path", lambda **kwargs: []
+    )
+
+    def fake_execute(commands: tuple[tuple[str, ...], ...], **kwargs: object) -> dict[str, object]:
+        assert commands == ()
+        return {
+            "runtime_profile": "py311-cu121",
+            "commands": [],
+            "core_model_probe": {"evidence_package": "probe.zip"},
+        }
+
+    monkeypatch.setattr("scripts.train.install_semantic_stack._execute_runtime", fake_execute)
+
+    def fake_package(evidence_root: Path, receipt: dict[str, object]) -> Path:
+        package = evidence_root / "runtime.zip"
+        package.parent.mkdir(parents=True, exist_ok=True)
+        package.write_bytes(b"runtime")
+        return package
+
+    monkeypatch.setattr("scripts.train.install_semantic_stack._evidence_zip", fake_package)
+    result = install_hermetic_runtime(
+        CONFIG_ROOT / "framework_mmseg.yaml",
+        paths=paths,
+        project_root=REPO_ROOT,
+        project_commit=COMMIT,
+        config_root=CONFIG_ROOT,
+        bootstrap_receipt=bootstrap_receipt,
+    )
+    assert result["commands"] == []
+    assert result["preinstalled_bootstrap_verified"] is True
 
 
 def _suite() -> tuple[object, object, tuple[object, ...]]:
@@ -298,13 +385,14 @@ def test_colab_locks_reject_gui_opencv(tmp_path: Path) -> None:
     openmmlab = tmp_path / "openmmlab.lock"
     _write_valid_openmmlab_lock(openmmlab)
     main.write_text(
-        "opencv-python-headless==4.10.0.84\nrich==15.0.0\n",
+        "opencv-python-headless==4.10.0.84\nrich==15.0.0\nsetuptools==80.9.0\n",
         encoding="utf-8",
     )
     _validate_lock_contract(main, openmmlab)
 
     main.write_text(
-        "opencv-python==4.11.0.86\nopencv-python-headless==4.10.0.84\nrich==15.0.0\n",
+        "opencv-python==4.11.0.86\nopencv-python-headless==4.10.0.84\n"
+        "rich==15.0.0\nsetuptools==80.9.0\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="GUI opencv-python"):
@@ -316,7 +404,7 @@ def test_colab_locks_require_openmmlab_no_deps_partition(tmp_path: Path) -> None
     openmmlab = tmp_path / "openmmlab.lock"
     _write_valid_openmmlab_lock(openmmlab)
     main.write_text(
-        "opencv-python-headless==4.10.0.84\nrich==15.0.0\nmmengine==0.10.7\n",
+        "opencv-python-headless==4.10.0.84\nrich==15.0.0\nsetuptools==80.9.0\nmmengine==0.10.7\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="only in the OpenMMLab lock"):

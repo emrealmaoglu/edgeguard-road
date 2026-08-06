@@ -42,7 +42,9 @@ jobs:
             --log "${probe_root}/bootstrap.log" \
             --output "${probe_root}/bootstrap-receipt.json"
           "${probe_root}/edgeguard-runtime/bin/python" -c \
-            "from pathlib import Path; from scripts.train.install_semantic_stack import _environment_probe; print(_environment_probe(Path('${probe_root}/edgeguard-runtime/bin/python'), Path('${probe_root}/edgeguard-checkouts/mmsegmentation')))"
+            "from pathlib import Path; from scripts.train.install_semantic_stack import _environment_probe; print(_environment_probe(Path('${probe_root}/edgeguard-runtime/bin/python'), Path('${probe_root}/edgeguard-checkouts/mmsegmentation'), require_cuda=False))"
+          "${probe_root}/edgeguard-runtime/bin/python" -c \
+            "import pkg_resources; from mmengine.runner import Runner; print('pkg_resources and MMEngine runner: OK')"
       - name: Install CPU framework dependencies
         run: |
           python -m pip install -e '.[dev]'

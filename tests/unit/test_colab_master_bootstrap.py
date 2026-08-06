@@ -72,6 +72,35 @@ def test_runtime_path_uses_the_discovered_local_bin_layout(tmp_path: Path) -> No
     assert environment["PATH"].split(os.pathsep)[0] == str(private_uv.parent)
 
 
+def test_runtime_environment_prioritizes_wheel_cuda_libraries(tmp_path: Path) -> None:
+    runtime_python = tmp_path / "runtime/bin/python"
+    torch_lib = tmp_path / "runtime/lib/python3.11/site-packages/torch/lib"
+    nvidia_lib = tmp_path / "runtime/lib/python3.11/site-packages/nvidia/cudnn/lib"
+    torch_lib.mkdir(parents=True)
+    nvidia_lib.mkdir(parents=True)
+    uv = tmp_path / "uv-prefix/local/bin/uv"
+    uv.parent.mkdir(parents=True)
+    uv.touch()
+    previous = os.environ.get("LD_LIBRARY_PATH")
+    os.environ["LD_LIBRARY_PATH"] = "/usr/local/cuda/lib64:/usr/lib64-nvidia"
+    try:
+        environment = run_colab_master._runtime_environment(
+            project_root=ROOT,
+            cache_root=tmp_path / "cache",
+            runtime_python=runtime_python,
+            uv_executable=uv,
+        )
+    finally:
+        if previous is None:
+            os.environ.pop("LD_LIBRARY_PATH", None)
+        else:
+            os.environ["LD_LIBRARY_PATH"] = previous
+    entries = environment["LD_LIBRARY_PATH"].split(os.pathsep)
+    assert entries[:2] == [str(torch_lib), str(nvidia_lib)]
+    assert entries[-2:] == ["/usr/local/cuda/lib64", "/usr/lib64-nvidia"]
+    assert environment["PYTHONNOUSERSITE"] == "1"
+
+
 def test_master_child_command_streams_and_preserves_failure_tail(tmp_path: Path) -> None:
     log = tmp_path / "master.log"
     with pytest.raises(RuntimeError, match="visible-root-cause"):
