@@ -2,12 +2,14 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `42be8d65de32c07b7857d966011254a213f7fed4`
+  `b22fd123e46478c1d7d368b8fbf50a28dbe28fdd`
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
   Jetson evidence remain external. Remote CI and claim-safe notebook execution have not yet
-  been re-run at this commit (see Local gates).
+  been re-run at this commit (see Local gates). A real L4 run at the prior commit
+  (`42be8d6…`) failed `five-model-runtime-canary` on PIDNet-S; this commit's fix for that
+  failure is reasoned, not yet GPU-verified (see Local gates).
 
 ## What changed
 
@@ -69,24 +71,34 @@
   no code change was needed there. Added `scripts/jetson/run_video_demo.py` (DEMO-02): a
   video-frame perception-overlay demo for ONNX Runtime (local/CPU, tested) and target-
   device TensorRT (human-gated per `scripts/jetson/AGENTS.md`, untested here).
+- (Commit `b22fd12…`) A real L4 run at `42be8d6…` failed on PIDNet-S with "AMP/FP16
+  stack-probe gradient is missing or non-finite" — `train_semantic.py::_probe_model`
+  hardcoded `torch.float16` for its mixed-precision canary instead of following the same
+  `precision="auto"` → bf16-on-capable-hardware policy `train_model` already uses, so it
+  tested a precision (fp16) the real training run would never actually select on an L4.
+  Extracted `edgeguard.rescue.mmseg_runtime.resolve_auto_precision()` and made the probe
+  call it. **Not yet GPU-verified** — no CUDA device was available in this environment.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 491 passed, 17 environment-gated skipped without the pinned MMSeg
-  stack; 506 passed, 2 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
+- Full pytest passes: 495 passed, 17 environment-gated skipped without the pinned MMSeg
+  stack; 510 passed, 2 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
   `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout (includes the new real
-  per-architecture `model.loss()` tests, the `resize_train_ids` regression test, and the
-  `run_video_demo.py` ONNX/CPU fixture end-to-end test).
+  per-architecture `model.loss()` tests, the `resize_train_ids` regression test, the
+  `run_video_demo.py` ONNX/CPU fixture end-to-end test, and the `resolve_auto_precision`
+  policy tests). None of this exercises real CUDA/AMP behavior — that only happens on a
+  real L4.
 - Master notebook generation is byte-identical across two runs.
 - The notebook SHA-256 after pinning is
-  `9261c6e136fdec4187ccdc9c857fff6f3e339d8d5e56076e2936bf548ecfba91`.
-- **Pending at this commit:** claim-safe local cell execution has not been re-verified, and
-  remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run. The prior
-  application commit (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact
-  hostile inline backend and host uv/virtualenv state injected; that evidence does not
-  carry over to this commit and should be re-established before a real Colab attempt.
+  `1b7349e03a65dab05ee1a9a3ace840e65ac540be0c50457f01f2691ba4975559`.
+- **Pending at this commit:** claim-safe local cell execution has not been re-verified,
+  remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run, and the
+  AMP-probe fix itself has not been confirmed on real CUDA hardware. The prior application
+  commit (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact hostile inline
+  backend and host uv/virtualenv state injected; that evidence does not carry over to this
+  commit and should be re-established before a real Colab attempt.
 
 ## Next external action
 
@@ -94,7 +106,8 @@ Push this commit, trigger `semantic-framework-cpu-probe.yml` (`workflow_dispatch
 re-establish the hostile-context remote closure at the new commit, then open the master
 notebook from the pushed branch in a fresh Colab L4 + High-RAM runtime and use Run all
 (Colab Pro/Pro+ background execution is recommended so the session survives closing the
-browser tab). If the session ends, repeat Run all in a new compliant runtime — this is a
+browser tab). Watch specifically whether `five-model-runtime-canary` now passes PIDNet-S's
+AMP probe. If the session ends, repeat Run all in a new compliant runtime — this is a
 Colab platform limit, not something the notebook can automate away. Do not change the
 notebook or select stages manually.
 

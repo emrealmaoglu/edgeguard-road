@@ -5,7 +5,7 @@ Updated 2026-08-08 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`42be8d65de32c07b7857d966011254a213f7fed4`. The only generated notebook is
+`b22fd123e46478c1d7d368b8fbf50a28dbe28fdd`. The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -136,9 +136,24 @@ target-device TensorRT engine via `scripts/jetson/benchmark.py`'s `TensorRTTorch
 overlays the semantic mask and derived perception regions, and writes an annotated output
 video plus a JSON summary using the same non-fabrication contract as `scripts/predict.py`.
 Only the ONNX/CPU path is tested here; real TensorRT execution remains a human-gated
-on-device action per `scripts/jetson/AGENTS.md`. The notebook is repinned to commit
-`42be8d6…`; the hostile-context remote Linux workflow and a real L4 canary have not yet
-been re-run against it.
+on-device action per `scripts/jetson/AGENTS.md`.
+
+The first real L4 run at application commit `42be8d6…` proved the bootstrap, hermetic
+92-package sync, and OpenMMLab install all complete cleanly on real hardware, then failed
+`five-model-runtime-canary` on PIDNet-S with "AMP/FP16 stack-probe gradient is missing or
+non-finite." `scripts/train/train_semantic.py::_probe_model` hardcoded `torch.float16` for
+its mixed-precision canary regardless of what the real training path would ever select;
+`train_model`'s own `precision="auto"` policy prefers bf16 whenever the device supports it
+(L4 does) specifically because fp16's narrow exponent range can overflow in wide
+multi-scale modules like PIDNet's SPP even when bf16 would not. Application commit
+`b22fd12…` extracts that decision into
+`edgeguard.rescue.mmseg_runtime.resolve_auto_precision()` and makes the probe call it, so
+the probe validates the precision that will actually run instead of a stricter one that
+never will. This fix is reasoned from the real failure log and the codebase's own stated
+precision policy; no CUDA device was available to verify it empirically in this
+environment, so it remains unconfirmed until the next real L4 run. The notebook is
+repinned to commit `b22fd12…`; the hostile-context remote Linux workflow and a real L4
+canary have not yet been re-run against it.
 
 ## Deliveries
 
@@ -152,20 +167,21 @@ checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson tele
 
 Local Ruff, mypy, pytest, deterministic notebook generation and claim-safe local cell
 execution validate engineering contracts only. No local test creates a scientific metric.
-The current delivery passes 491 tests with seventeen environment-gated skips without the
+The current delivery passes 495 tests with seventeen environment-gated skips without the
 pinned MMSeg stack present; with the pinned stack available (`EDGEGUARD_MMSEG_CHECKOUT`
 pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) it passes
-506 tests with two skips, including the new real per-architecture `model.loss()`
-regression tests, the `resize_train_ids` train-ID-space regression test, and the
-`run_video_demo.py` ONNX/CPU fixture end-to-end test. The master notebook was generated
-twice byte-identically at SHA-256
-`9261c6e136fdec4187ccdc9c857fff6f3e339d8d5e56076e2936bf548ecfba91`.
+510 tests with two skips, including the new real per-architecture `model.loss()`
+regression tests, the `resize_train_ids` train-ID-space regression test, the
+`run_video_demo.py` ONNX/CPU fixture end-to-end test, and the `resolve_auto_precision`
+policy tests. The master notebook was generated twice byte-identically at SHA-256
+`1b7349e03a65dab05ee1a9a3ace840e65ac540be0c50457f01f2691ba4975559`.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
 (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
-has not yet been re-run at the current commit `42be8d6…`, and claim-safe local cell
+has not yet been re-run at the current commit `b22fd12…`, and claim-safe local cell
 execution has not been re-verified at this commit either — both remain pending before the
-next real Colab attempt.
+next real Colab attempt. The AMP-probe precision fix in this commit has also not yet been
+confirmed by an actual L4 run.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4
 five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
 result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is
