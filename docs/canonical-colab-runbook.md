@@ -4,6 +4,27 @@ The sole active notebook is `notebooks/EdgeGuard_Master_Colab.ipynb`. The two fo
 delivery notebooks and all numbered notebooks were removed from the working tree; Git
 history remains the recovery path for them.
 
+## Before every push
+
+Run the real local CPU rehearsal before pushing any change that touches
+`src/edgeguard/rescue/mmseg_runtime.py`, `mmseg_components.py`, or `colab_pipeline.py`:
+
+```bash
+EDGEGUARD_MMSEG_CHECKOUT=.local/mmsegmentation-cpu \
+  pytest tests/integration/test_colab_pipeline_cpu_rehearsal.py -v
+```
+
+This drives the real `ColabPipeline` orchestrator (real subprocesses, real
+`EdgeGuardRecoveryHook` interrupt+resume, real `val_dataloader` build) against tiny
+synthetic fixture data on CPU. It is not the same thing as "claim-safe local cell
+execution" (`scripts/dev/run_campaign_notebook_harness.py`), which only proves the
+generated notebook's cells import and execute correctly — the real training call there is
+stubbed behind a hardcoded `{"scientific_status": "not_run"}` dict and never touches
+`Runner.train()`. Four real bugs (a hardcoded AMP dtype, a wrong `Pad` transform keyword, a
+bare-filename `last_checkpoint` marker, and a `Pad` size-argument dimension-order bug) were
+each discovered one at a time on a real Colab L4 run before this rehearsal existed; the
+last three would all have been caught by it.
+
 ## Run
 
 1. Open the master notebook in Colab.
@@ -33,7 +54,7 @@ evaluate → export → report → package
 ```
 
 The notebook checks out application commit
-`e3f3159a30372997aba00ad5543cdb0cd27a45ab`. It does not use the hosted Python,
+`c4008d9efeabf5bb056919bf9b579138beea6774`. It does not use the hosted Python,
 NumPy, Torch, or uv for training. The managed environment is Python 3.11.13, uv 0.8.8,
 NumPy 1.26.4, PyTorch 2.1.1/cu121, MMEngine 0.10.7, mmcv-lite 2.1.0,
 headless OpenCV 4.10.0.84, and the pinned MMSegmentation v1.2.2 commit.

@@ -2,18 +2,27 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `e3f3159a30372997aba00ad5543cdb0cd27a45ab`
+  `c4008d9efeabf5bb056919bf9b579138beea6774`
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
   Jetson evidence remain external. Remote CI and claim-safe notebook execution have not yet
   been re-run at this commit (see Local gates). A real L4 run at the prior commit
-  (`ff26422…`) confirmed the AMP stack-probe and the `Pad`/`seg_pad_val` fix both work: all
-  five models passed the canary, and `smoke`/`segformer_b0` training actually started and
-  ran to the intentional interruption at step 25. The resume subprocess then failed with
-  `FileNotFoundError: recovery_25.pth can not be found.`; this commit's fix for that failure
-  is reproduced against the real pinned MMSeg/MMEngine stack, not yet re-confirmed on real
-  L4 hardware (see Local gates).
+  (`e3f3159…`) confirmed the `last_checkpoint` absolute-path fix works: `smoke`/
+  `segformer_b0` resumed correctly from `recovery_25.pth` and continued training. This
+  commit fixes a fourth real bug found while building the new local rehearsal harness (see
+  below) — the evaluation `Pad` transform's `size` argument used the wrong `(h, w)`/`(w, h)`
+  order — and adds that harness itself so this bug class no longer requires a real Colab
+  round-trip to discover. Neither is yet re-confirmed on real L4 hardware (see Local gates).
+- **Note on "claim-safe local cell execution":** this check (see
+  `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
+  cells import and execute their own syntax correctly under
+  `EDGEGUARD_NOTEBOOK_LOCAL_TEST=1` — the actual training call is stubbed behind a
+  hardcoded `{"scientific_status": "not_run"}` dict and never touches `Runner.train()`,
+  `EdgeGuardRecoveryHook`, or `val_dataloader`. Do not read "claim-safe local cell execution
+  passed" as "the pipeline was exercised" — the new
+  `tests/integration/test_colab_pipeline_cpu_rehearsal.py` (see below) is what actually
+  does that.
 
 ## What changed
 
@@ -112,42 +121,70 @@
   bare-filename reader in this codebase unaffected. Added
   `tests/unit/test_mmseg_recovery_checkpoint_marker.py`, which reproduces the exact failure
   via MMEngine's real `find_latest_checkpoint()` against the marker the hook writes, and
-  confirmed it fails on the pre-fix code and passes on the fix — not yet re-confirmed on
-  real L4 hardware.
+  confirmed it fails on the pre-fix code and passes on the fix. This fix was later
+  **confirmed on real L4 hardware**: the resume subprocess found and loaded
+  `recovery_25.pth` and continued training.
+- (Commit `d7a4430…`) Building a real local CPU rehearsal harness (see next entry) — the
+  first thing in this repository to ever exercise a real end-of-stage validation pass —
+  surfaced a fourth real bug: `_evaluation_pipeline()`/`_inference_pipeline()`'s `Pad` step
+  passed `config.crop_size` (this codebase's own `(h, w)` convention) directly as `Pad`'s
+  `size`. The pinned mmcv-lite `Pad` documents `size` as `(w, h)` and internally reverses it
+  before calling `mmcv.impad(shape=...)`, which itself expects `(h, w)` — so the pad target
+  was silently transposed. Invisible for a square crop or when the swap happens to survive;
+  real Cityscapes' non-square 512×1024 crop would not have survived it, but no real Colab
+  run had ever reached validation to find out. Fixed by reversing `crop_size` the same way
+  the `Resize` step right above it already does. Added a regression test
+  (`test_evaluation_and_inference_pad_produce_crop_size_shaped_output`) building the real
+  pipeline through `Compose()` with a non-square crop and asserting the packed input
+  tensor's shape matches `crop_size` exactly; confirmed it fails on the pre-fix code and
+  passes on the fix — not yet re-confirmed on real L4 hardware.
+- (Commit `c4008d9…`) Added a real local CPU rehearsal harness
+  (`tests/support/tiny_pipeline_fixture.py`,
+  `tests/integration/test_colab_pipeline_cpu_rehearsal.py`) that drives the real
+  subprocess-spawning `ColabPipeline` (not a mock) through a real smoke-stage
+  interrupt-then-resume cycle for all 5 models on CPU with tiny synthetic fixture data —
+  the exact class of gap that let all four bugs above reach a real Colab GPU before being
+  caught. Confirmed locally: passes end to end for all 3 core models, including a real
+  computed mIoU at the final validation step. Wired into
+  `semantic-framework-cpu-probe.yml` as a mandatory CI step.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 485 passed, 16 environment-gated skipped without the pinned MMSeg
-  stack; 501 passed, 0 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
+- Full pytest passes: 485 passed, 17 environment-gated skipped without the pinned MMSeg
+  stack; 502 passed, 0 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
   `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout (includes the real per-architecture
-  `model.loss()` tests and the new `last_checkpoint` marker regression test). None of this
-  exercises real CUDA/AMP behavior — that only happens on a real L4.
+  `model.loss()` tests, the `last_checkpoint` marker regression test, and the new `Pad`
+  orientation regression test). None of this exercises real CUDA/AMP behavior — that only
+  happens on a real L4.
+- The new `tests/integration/test_colab_pipeline_cpu_rehearsal.py` fast-tier test (3 core
+  models) passes locally end to end against the real pinned stack (confirmed manually,
+  ~8 minutes; not yet run in CI at this commit).
 - Master notebook generation is byte-identical across two runs.
 - The notebook SHA-256 after pinning is
-  `2632be291b08cda6a67a1497e4d2b2c3bbac57c08047088b6c6867754ae1acbc`.
+  `20aca870baa26c0991cb5c547827f084984e9250c50110f3222cfef4fd26ff94`.
 - **Pending at this commit:** claim-safe local cell execution has not been re-verified,
-  remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run, and the
-  `last_checkpoint` absolute-path fix itself has not been confirmed on real CUDA
-  hardware — the AMP-probe fix and the `Pad`/`seg_pad_val` fix both have real-hardware
-  confirmation so far. The prior application commit (`3f3ef8f…`) passed remote run
-  `31129018003` with Colab's exact hostile inline backend and host uv/virtualenv state
-  injected; that evidence does not carry over to this commit and should be re-established
-  before a real Colab attempt.
+  remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run (including
+  the new rehearsal step), and the `Pad`-orientation fix and rehearsal harness have not
+  been confirmed on real CUDA hardware — the AMP-probe, `Pad`/`seg_pad_val`, and
+  `last_checkpoint` fixes all have real-hardware confirmation so far. The prior application
+  commit (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact hostile inline
+  backend and host uv/virtualenv state injected; that evidence does not carry over to this
+  commit and should be re-established before a real Colab attempt.
 
 ## Next external action
 
 Push this commit, then open the master notebook from the pushed branch in a fresh Colab L4
 + High-RAM runtime and use Run all (Colab Pro/Pro+ background execution is recommended so
-the session survives closing the browser tab). The five-model AMP canary and the
-`val_dataloader` build are both already confirmed passing, and `smoke`/`segformer_b0`
-training has already been observed running through the intentional interruption at step
-25; watch specifically whether the resume subprocess now finds and loads `recovery_25.pth`
-and continues training to completion, and whether the remaining four models' smoke stages
-also complete cleanly. If the session ends, repeat Run all in a new compliant runtime —
-this is a Colab platform limit, not something the notebook can automate away. Do not change
-the notebook or select stages manually.
+the session survives closing the browser tab). The five-model AMP canary, the
+`val_dataloader` build, and the `last_checkpoint` resume are all already confirmed passing
+on real hardware; watch specifically whether `smoke` now reaches its end-of-stage
+validation pass cleanly for every model (previously untested on real hardware — this
+commit's `Pad`-orientation fix targets exactly that step) and whether all five models'
+smoke stages complete end to end. If the session ends, repeat Run all in a new compliant
+runtime — this is a Colab platform limit, not something the notebook can automate away. Do
+not change the notebook or select stages manually.
 
 Do not create `colab-v0.1.0-rc1` until two independent clean L4 sessions pass the exact
 lock/five-model FP32/AMP canary and the real 50-step interruption/resume proof. After the
