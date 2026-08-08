@@ -115,6 +115,11 @@ jobs:
           EDGEGUARD_MMSEG_CHECKOUT: /tmp/mmsegmentation
         run: |
           pytest tests/unit/test_mmseg_real_training_step.py -v
+      - name: Run real ColabPipeline CPU rehearsal (smoke + interrupt/resume)
+        env:
+          EDGEGUARD_MMSEG_CHECKOUT: /tmp/mmsegmentation
+        run: |
+          pytest tests/integration/test_colab_pipeline_cpu_rehearsal.py -v
       - name: Run local-first readiness and five-model CPU probe
         run: |
           python scripts/dev/validate_local_readiness.py \
