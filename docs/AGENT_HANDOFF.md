@@ -2,11 +2,12 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `3f3ef8f7d065f739650d75f7921fd8c7e748fe81`
+  `8ed151941bf36195fb77e354b174fbd253227c56`
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
-  Jetson evidence remain external.
+  Jetson evidence remain external. Remote CI and claim-safe notebook execution have not yet
+  been re-run at this commit (see Local gates).
 
 ## What changed
 
@@ -42,31 +43,44 @@
   smoke interruption; the resumed command and checkpoint identity are both verified.
 - Marks every acceptance-mode phase `not_run`, preventing fixture execution from becoming
   measured or accepted scientific evidence.
+- (This commit) Fixed two real training-blocking defects found by a Claude Code cross-file
+  review: PIDNet-S's shared pipeline was missing `GenerateEdge`, crashing `PIDHead`'s
+  boundary loss on the first optimizer step of any stage; the CE-vs-weighted-CE override
+  only matched `CrossEntropyLoss`, silently no-oping for DDRNet-23-Slim and PIDNet-S, whose
+  dominant losses are `OhemCrossEntropy`. Both were reproduced and fixed against the real
+  pinned MMSeg checkout, not just inspected.
+- (This commit) Added `tests/unit/test_mmseg_real_training_step.py`, the first test in the
+  repository to run a real `model.loss()` forward/backward step per architecture against
+  the real resolved MMSeg config; wired into `semantic-framework-cpu-probe.yml`.
+- (This commit) The `stage-data` phase now verifies every manifest-referenced image/mask
+  file exists on local disk instead of only checking the manifest JSON exists
+  (`verify_manifest_data_is_staged`); Drive archive/shard copies now fail closed on a
+  stalled read via a bounded stall-timeout guard instead of risking an indefinite hang.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 477 passed, 2 environment-gated skipped.
-- Mypy passes for all 120 configured source modules and changed runtime entrypoints;
-  full-repository Ruff lint/format passes.
-- Both hosted entrypoints load with site packages disabled (`python -S`).
+- Full pytest passes: 483 passed, 17 environment-gated skipped without the pinned MMSeg
+  stack; 498 passed, 2 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
+  `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout (includes the new real
+  per-architecture `model.loss()` tests).
 - Master notebook generation is byte-identical across two runs.
-- All master notebook code cells execute in local claim-safe mode with
-  `scientific_status=not_run`.
 - The notebook SHA-256 after pinning is
-  `2d06b7afdfd75561ddcc6409d476351a6469113b813900f5f70dad7b6e1a1e9a`.
-- ZIP writer verifies CRC, member set and every member payload after creation.
-- Remote Linux run `31129018003` passed with Colab's exact hostile inline backend plus
-  host uv/virtualenv state injected: exact 92-package lock, Agg PNG, `pkg_resources`,
-  MMEngine Runner, five-model CPU probe, real-codepath closure, ONNX classification and
-  pre-Colab deployment evidence all passed.
+  `85ce3c9a6a2dd8ee66a8ed75e2d2ac981b6f17b0645bacdd2728cdf09963bac6`.
+- **Pending at this commit:** claim-safe local cell execution has not been re-verified, and
+  remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run. The prior
+  application commit (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact
+  hostile inline backend and host uv/virtualenv state injected; that evidence does not
+  carry over to this commit and should be re-established before a real Colab attempt.
 
 ## Next external action
 
-Open the master notebook from the pushed branch in a fresh Colab L4 + High-RAM runtime and
-use Run all. If the session ends, repeat Run all in a new compliant runtime. Do not change
-the notebook or select stages manually.
+Push this commit, trigger `semantic-framework-cpu-probe.yml` (`workflow_dispatch`) to
+re-establish the hostile-context remote closure at the new commit, then open the master
+notebook from the pushed branch in a fresh Colab L4 + High-RAM runtime and use Run all. If
+the session ends, repeat Run all in a new compliant runtime. Do not change the notebook or
+select stages manually.
 
 Do not create `colab-v0.1.0-rc1` until two independent clean L4 sessions pass the exact
 lock/five-model FP32/AMP canary and the real 50-step interruption/resume proof. After the

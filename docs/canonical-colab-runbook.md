@@ -23,7 +23,7 @@ evaluate → export → report → package
 ```
 
 The notebook checks out application commit
-`2495354d02e45cc4f8748e94cfcf1862ae48a295`. It does not use the hosted Python,
+`8ed151941bf36195fb77e354b174fbd253227c56`. It does not use the hosted Python,
 NumPy, Torch, or uv for training. The managed environment is Python 3.11.13, uv 0.8.8,
 NumPy 1.26.4, PyTorch 2.1.1/cu121, MMEngine 0.10.7, mmcv-lite 2.1.0,
 headless OpenCV 4.10.0.84, and the pinned MMSegmentation v1.2.2 commit.

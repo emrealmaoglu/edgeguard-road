@@ -1,11 +1,11 @@
 # Project State
 
-Updated 2026-08-07 on `stabilize/colab-v2`.
+Updated 2026-08-08 on `stabilize/colab-v2`.
 
 ## Current delivery
 
 The Colab v3 application commit is
-`3f3ef8f7d065f739650d75f7921fd8c7e748fe81`. The only generated notebook is
+`8ed151941bf36195fb77e354b174fbd253227c56`. The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -98,6 +98,25 @@ recommended model. Official validation opens after policy acceptance and cannot 
 choice. The selected model receives weighted-CE and 256×512 ablations; deployment remains
 512×1024.
 
+A cross-file review at application commit `8ed15194…` (Claude Code, real-stack review
+against the pinned MMSeg checkout) found that no test in the repository ever ran the real
+`Runner.train()`/`model.loss()` path against the five pinned architectures, and that this
+let two real defects reach every stage without detection: PIDNet-S's shared training
+pipeline was missing the upstream `GenerateEdge` step, so `PIDHead`'s boundary loss raised
+`AttributeError: 'SegDataSample' object has no attribute 'gt_edge_map'` on the first
+optimizer step of any stage; and the CE-versus-weighted-CE override only matched
+`CrossEntropyLoss` nodes, so it silently changed nothing for DDRNet-23-Slim and almost
+nothing for PIDNet-S, whose dominant loss terms are `OhemCrossEntropy`. Both are fixed and
+were confirmed by actually building each real model from its resolved config and running
+one real forward/backward step against the pinned MMSeg checkout
+(`tests/unit/test_mmseg_real_training_step.py`, now wired into
+`semantic-framework-cpu-probe.yml`). The `stage-data` phase previously only checked that
+manifest JSON files existed; it now verifies every referenced image/mask file is present on
+local disk (`verify_manifest_data_is_staged`), and Drive archive/shard copies now fail
+closed on a stalled read via a bounded stall-timeout guard instead of risking an indefinite
+hang. The notebook is repinned to this commit; the hostile-context remote Linux workflow
+and a real L4 canary have not yet been re-run against it.
+
 ## Deliveries
 
 The package stage produces `EdgeGuard_Jetson_Release.zip`,
@@ -110,15 +129,18 @@ checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson tele
 
 Local Ruff, mypy, pytest, deterministic notebook generation and claim-safe local cell
 execution validate engineering contracts only. No local test creates a scientific metric.
-The current delivery passes 477 tests with two environment-gated skips. The master notebook
-was generated twice byte-identically at SHA-256
-`2d06b7afdfd75561ddcc6409d476351a6469113b813900f5f70dad7b6e1a1e9a`, and all four
-cells pass local claim-safe execution with `scientific_status=not_run`.
-Remote Linux workflow `31129018003` completed successfully with the exact Colab failure
-context injected (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and
-virtualenv state). It passed the exact lock imports, Agg PNG probe,
-`pkg_resources`/MMEngine Runner check, five-model CPU probe, real-codepath closure, ONNX
-classification and pre-Colab deployment evidence.
+The current delivery passes 483 tests with seventeen environment-gated skips without the
+pinned MMSeg stack present; with the pinned stack available (`EDGEGUARD_MMSEG_CHECKOUT`
+pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) it passes
+498 tests with two skips, including the new real per-architecture `model.loss()`
+regression tests. The master notebook was generated twice byte-identically at SHA-256
+`85ce3c9a6a2dd8ee66a8ed75e2d2ac981b6f17b0645bacdd2728cdf09963bac6`.
+Remote Linux workflow `31129018003` completed successfully at the prior application commit
+(`3f3ef8f…`) with the exact Colab failure context injected
+(`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
+has not yet been re-run at the current commit `8ed15194…`, and claim-safe local cell
+execution has not been re-verified at this commit either — both remain pending before the
+next real Colab attempt.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4
 five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
 result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is
