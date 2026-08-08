@@ -9,10 +9,20 @@ history remains the recovery path for them.
 1. Open the master notebook in Colab.
 2. Select an L4 GPU and High-RAM runtime.
 3. Choose **Runtime → Run all** once.
-4. Leave the tab running. The long campaign may span several Colab sessions.
-5. After a disconnect, create a new L4 High-RAM runtime and choose **Run all** again.
+4. Leave the tab running, or use Colab Pro/Pro+ **background execution** (Runtime menu)
+   so the session keeps running after the browser tab closes. Background execution
+   extends how long one session can run unattended; it does not change what happens
+   after the session itself ends.
+5. After a disconnect (session limit, idle timeout, or Colab-side interruption), a human
+   must open a new L4 High-RAM runtime and choose **Run all** again. Hash-verified
+   completed phases are skipped automatically and training resumes from the last
+   published checkpoint — but there is no way, from inside the notebook or this
+   codebase, to make a new Colab session start itself after the previous one dies. Full
+   unattended multi-session autonomy is a Colab platform limit, not an engineering gap.
 6. On completion, use the three Drive ZIPs and `release_index.json` printed by the final
-   cell. The Jetson ZIP is also requested as a browser download.
+   cell. The Jetson ZIP is also requested as a browser download. All three ZIPs
+   (checkpoints/configs, thesis figures/tables, Streamlit demo bundle) are meant to be
+   downloaded and kept outside Drive for thesis writing and Jetson deployment.
 
 The public orchestrator sequence is:
 

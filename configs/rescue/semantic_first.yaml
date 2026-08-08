@@ -6,7 +6,7 @@ crop_size: [512, 1024]
 base_scale: [2048, 1024]
 device_batch: 4
 gradient_accumulation: 1
-workers: 2
+workers: 6
 optimizer:
   name: AdamW
   learning_rate: 0.00006
