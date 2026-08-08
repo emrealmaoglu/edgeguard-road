@@ -5,7 +5,7 @@ Updated 2026-08-08 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`1387322646f1f837ab2ed95200a4176ef0e3c4b4`. The only generated notebook is
+`42be8d65de32c07b7857d966011254a213f7fed4`. The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -123,8 +123,22 @@ pass — `resize_train_ids()` validated a resized mask against the source label-
 acquisition status, the eval-config resolution mismatch). The IDD20K native-label-loss
 finding from the same review was deliberately left unresolved as a recorded limitation
 (`docs/TASKS.md`) rather than acted on, since fixing it means re-processing already-staged
-Drive shards. The notebook is repinned to commit `1387322…`; the hostile-context remote
-Linux workflow and a real L4 canary have not yet been re-run against it.
+Drive shards.
+
+Commit `42be8d6…` raised `workers` from 2 to 6 in
+`configs/rescue/semantic_first.yaml` so a Colab High-RAM instance's vCPUs are used more
+fully during data loading; `effective_batch` and every frozen HPO/step budget in
+`PROJECT_CHARTER.md` are unchanged. Training precision was confirmed already optimal
+(`train_model`'s `precision="auto"` selects bf16 on CUDA without any code change). The
+same commit adds `scripts/jetson/run_video_demo.py` (DEMO-02): reads a video frame by
+frame, runs it through the static-shape semantic engine (ONNX Runtime locally, or a
+target-device TensorRT engine via `scripts/jetson/benchmark.py`'s `TensorRTTorchRunner`),
+overlays the semantic mask and derived perception regions, and writes an annotated output
+video plus a JSON summary using the same non-fabrication contract as `scripts/predict.py`.
+Only the ONNX/CPU path is tested here; real TensorRT execution remains a human-gated
+on-device action per `scripts/jetson/AGENTS.md`. The notebook is repinned to commit
+`42be8d6…`; the hostile-context remote Linux workflow and a real L4 canary have not yet
+been re-run against it.
 
 ## Deliveries
 
@@ -138,17 +152,18 @@ checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson tele
 
 Local Ruff, mypy, pytest, deterministic notebook generation and claim-safe local cell
 execution validate engineering contracts only. No local test creates a scientific metric.
-The current delivery passes 484 tests with seventeen environment-gated skips without the
+The current delivery passes 491 tests with seventeen environment-gated skips without the
 pinned MMSeg stack present; with the pinned stack available (`EDGEGUARD_MMSEG_CHECKOUT`
 pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) it passes
-499 tests with two skips, including the new real per-architecture `model.loss()`
-regression tests and the `resize_train_ids` train-ID-space regression test. The master
-notebook was generated twice byte-identically at SHA-256
-`8e9943993a3c6df0292e77e82b32126990c4ddcad6a1a8ca7d1bd1e78c5abedc`.
+506 tests with two skips, including the new real per-architecture `model.loss()`
+regression tests, the `resize_train_ids` train-ID-space regression test, and the
+`run_video_demo.py` ONNX/CPU fixture end-to-end test. The master notebook was generated
+twice byte-identically at SHA-256
+`9261c6e136fdec4187ccdc9c857fff6f3e339d8d5e56076e2936bf548ecfba91`.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
 (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
-has not yet been re-run at the current commit `1387322…`, and claim-safe local cell
+has not yet been re-run at the current commit `42be8d6…`, and claim-safe local cell
 execution has not been re-verified at this commit either — both remain pending before the
 next real Colab attempt.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4

@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `1387322646f1f837ab2ed95200a4176ef0e3c4b4`
+  `42be8d65de32c07b7857d966011254a213f7fed4`
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -62,18 +62,26 @@
   review; recorded the IDD20K native-label-loss-on-shard-packaging limitation in
   `docs/TASKS.md` rather than acting on it (owner decision: needs a separate, costly
   Drive shard re-processing approval).
+- (Commit `42be8d6…`) Raised `configs/rescue/semantic_first.yaml`'s `workers` from 2 to 6
+  to use a Colab High-RAM instance's vCPUs more fully during data loading;
+  `effective_batch` and every frozen HPO/step budget are unchanged. Confirmed training
+  precision already defaults to bf16/AMP on CUDA (`train_model`'s `precision="auto"`), so
+  no code change was needed there. Added `scripts/jetson/run_video_demo.py` (DEMO-02): a
+  video-frame perception-overlay demo for ONNX Runtime (local/CPU, tested) and target-
+  device TensorRT (human-gated per `scripts/jetson/AGENTS.md`, untested here).
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 484 passed, 17 environment-gated skipped without the pinned MMSeg
-  stack; 499 passed, 2 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
+- Full pytest passes: 491 passed, 17 environment-gated skipped without the pinned MMSeg
+  stack; 506 passed, 2 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
   `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout (includes the new real
-  per-architecture `model.loss()` tests and the `resize_train_ids` regression test).
+  per-architecture `model.loss()` tests, the `resize_train_ids` regression test, and the
+  `run_video_demo.py` ONNX/CPU fixture end-to-end test).
 - Master notebook generation is byte-identical across two runs.
 - The notebook SHA-256 after pinning is
-  `8e9943993a3c6df0292e77e82b32126990c4ddcad6a1a8ca7d1bd1e78c5abedc`.
+  `9261c6e136fdec4187ccdc9c857fff6f3e339d8d5e56076e2936bf548ecfba91`.
 - **Pending at this commit:** claim-safe local cell execution has not been re-verified, and
   remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run. The prior
   application commit (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact
@@ -84,9 +92,11 @@
 
 Push this commit, trigger `semantic-framework-cpu-probe.yml` (`workflow_dispatch`) to
 re-establish the hostile-context remote closure at the new commit, then open the master
-notebook from the pushed branch in a fresh Colab L4 + High-RAM runtime and use Run all. If
-the session ends, repeat Run all in a new compliant runtime. Do not change the notebook or
-select stages manually.
+notebook from the pushed branch in a fresh Colab L4 + High-RAM runtime and use Run all
+(Colab Pro/Pro+ background execution is recommended so the session survives closing the
+browser tab). If the session ends, repeat Run all in a new compliant runtime — this is a
+Colab platform limit, not something the notebook can automate away. Do not change the
+notebook or select stages manually.
 
 Do not create `colab-v0.1.0-rc1` until two independent clean L4 sessions pass the exact
 lock/five-model FP32/AMP canary and the real 50-step interruption/resume proof. After the
