@@ -5,7 +5,7 @@ Updated 2026-08-08 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`b22fd123e46478c1d7d368b8fbf50a28dbe28fdd`. The only generated notebook is
+`ff2642265a3cf377988de30a844a13a33ec34238`. The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -149,11 +149,26 @@ multi-scale modules like PIDNet's SPP even when bf16 would not. Application comm
 `b22fd12…` extracts that decision into
 `edgeguard.rescue.mmseg_runtime.resolve_auto_precision()` and makes the probe call it, so
 the probe validates the precision that will actually run instead of a stricter one that
-never will. This fix is reasoned from the real failure log and the codebase's own stated
-precision policy; no CUDA device was available to verify it empirically in this
-environment, so it remains unconfirmed until the next real L4 run. The notebook is
-repinned to commit `b22fd12…`; the hostile-context remote Linux workflow and a real L4
-canary have not yet been re-run against it.
+never will.
+
+The next real L4 run at application commit `b22fd12…` confirmed that fix empirically: all
+five models passed the AMP stack-probe outright (`fp16_finite_model_count: 5`, GPU
+`NVIDIA L4`), and full Cityscapes+IDD20K data staging also completed. The run then entered
+`production-pipeline` and failed building `val_dataloader` for the first stage
+(`smoke`/`segformer_b0`) with `TypeError: Pad.__init__() got an unexpected keyword argument
+'seg_pad_val'`. `_evaluation_pipeline()` in `mmseg_runtime.py` passed `pad_val` and
+`seg_pad_val` as two separate keyword arguments to the `Pad` transform; the pinned
+mmcv-lite `Pad` (`mmcv/transforms/processing.py`) has no `seg_pad_val` parameter at all —
+it accepts only `pad_val`, either a plain number or a `dict(img=..., seg=...)`. Application
+commit `ff26422…` fixes this by passing `pad_val={"img": 0, "seg": config.ignore_index}` as
+a single argument; `_inference_pipeline()`'s bare `pad_val=0` was made the equivalent
+explicit `{"img": 0}` for consistency (mmcv's `Pad` already treated a bare int as
+image-only padding, so behavior is unchanged there). This fix was reproduced and confirmed
+against the real pinned MMSeg checkout by building both the evaluation and inference
+pipelines through `Compose()` with the mmseg registry scope active — the same mechanism
+real training uses — but has not yet been confirmed on real L4 hardware. The notebook is
+repinned to commit `ff26422…`; the hostile-context remote Linux workflow and a real L4 run
+past this specific failure point have not yet been re-run against it.
 
 ## Deliveries
 
@@ -167,21 +182,20 @@ checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson tele
 
 Local Ruff, mypy, pytest, deterministic notebook generation and claim-safe local cell
 execution validate engineering contracts only. No local test creates a scientific metric.
-The current delivery passes 495 tests with seventeen environment-gated skips without the
+The current delivery passes 485 tests with fifteen environment-gated skips without the
 pinned MMSeg stack present; with the pinned stack available (`EDGEGUARD_MMSEG_CHECKOUT`
 pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) it passes
-510 tests with two skips, including the new real per-architecture `model.loss()`
-regression tests, the `resize_train_ids` train-ID-space regression test, the
-`run_video_demo.py` ONNX/CPU fixture end-to-end test, and the `resolve_auto_precision`
-policy tests. The master notebook was generated twice byte-identically at SHA-256
-`1b7349e03a65dab05ee1a9a3ace840e65ac540be0c50457f01f2691ba4975559`.
+500 tests with zero skips, including the real per-architecture `model.loss()` regression
+tests. The master notebook was generated twice byte-identically at SHA-256
+`d6a640ce064fc5e8fa252069d597f86a68a2059f9a2668bf6ada7a2bc3b2bd16`.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
 (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
-has not yet been re-run at the current commit `b22fd12…`, and claim-safe local cell
+has not yet been re-run at the current commit `ff26422…`, and claim-safe local cell
 execution has not been re-verified at this commit either — both remain pending before the
-next real Colab attempt. The AMP-probe precision fix in this commit has also not yet been
-confirmed by an actual L4 run.
+next real Colab attempt. The AMP-probe precision fix from application commit `b22fd12…` has
+since been confirmed by a real L4 run (all five models passed the stack-probe); this
+commit's `Pad`/`seg_pad_val` fix has not yet been confirmed by an actual L4 run.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4
 five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
 result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is

@@ -2,14 +2,17 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `b22fd123e46478c1d7d368b8fbf50a28dbe28fdd`
+  `ff2642265a3cf377988de30a844a13a33ec34238`
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
   Jetson evidence remain external. Remote CI and claim-safe notebook execution have not yet
   been re-run at this commit (see Local gates). A real L4 run at the prior commit
-  (`42be8d6…`) failed `five-model-runtime-canary` on PIDNet-S; this commit's fix for that
-  failure is reasoned, not yet GPU-verified (see Local gates).
+  (`b22fd12…`) passed the five-model AMP stack-probe (all five architectures, including
+  PIDNet-S) and full data staging, then failed building `val_dataloader` for every
+  model/stage with `TypeError: Pad.__init__() got an unexpected keyword argument
+  'seg_pad_val'`; this commit's fix for that failure is reproduced against the real pinned
+  MMSeg checkout, not yet re-confirmed on real L4 hardware (see Local gates).
 
 ## What changed
 
@@ -77,39 +80,53 @@
   `precision="auto"` → bf16-on-capable-hardware policy `train_model` already uses, so it
   tested a precision (fp16) the real training run would never actually select on an L4.
   Extracted `edgeguard.rescue.mmseg_runtime.resolve_auto_precision()` and made the probe
-  call it. **Not yet GPU-verified** — no CUDA device was available in this environment.
+  call it. This fix was later **confirmed on real L4 hardware**: the next run passed the
+  five-model AMP stack-probe outright (`fp16_finite_model_count: 5`, all five architectures
+  including PIDNet-S, GPU `NVIDIA L4`).
+- (Commit `ff26422…`) That same real L4 run then failed building `val_dataloader` for
+  every model/stage (first hit: `smoke`/`segformer_b0`) with
+  `TypeError: Pad.__init__() got an unexpected keyword argument 'seg_pad_val'`.
+  `_evaluation_pipeline()` in `mmseg_runtime.py` passed `pad_val` and `seg_pad_val` as two
+  separate constructor kwargs to the `Pad` transform; the pinned mmcv-lite `Pad`
+  (`mmcv/transforms/processing.py`) only accepts a single `pad_val`, either a number or a
+  `dict(img=..., seg=...)` — there is no `seg_pad_val` argument at all. Fixed by combining
+  both into `pad_val={"img": 0, "seg": config.ignore_index}`; `_inference_pipeline()`'s
+  plain `pad_val=0` was likewise made explicit as `{"img": 0}` for consistency (behavior
+  unchanged — mmcv's `Pad` already treated a bare int as image-only padding). Reproduced
+  and fixed against the real pinned MMSeg checkout by building both pipelines through
+  `Compose()` with the mmseg registry scope active, the same way real training builds them
+  — not yet re-confirmed on real L4 hardware.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 495 passed, 17 environment-gated skipped without the pinned MMSeg
-  stack; 510 passed, 2 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
-  `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout (includes the new real
-  per-architecture `model.loss()` tests, the `resize_train_ids` regression test, the
-  `run_video_demo.py` ONNX/CPU fixture end-to-end test, and the `resolve_auto_precision`
-  policy tests). None of this exercises real CUDA/AMP behavior — that only happens on a
-  real L4.
+- Full pytest passes: 485 passed, 15 environment-gated skipped without the pinned MMSeg
+  stack; 500 passed, 0 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
+  `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout (includes the real per-architecture
+  `model.loss()` tests). None of this exercises real CUDA/AMP behavior — that only happens
+  on a real L4.
 - Master notebook generation is byte-identical across two runs.
 - The notebook SHA-256 after pinning is
-  `1b7349e03a65dab05ee1a9a3ace840e65ac540be0c50457f01f2691ba4975559`.
+  `d6a640ce064fc5e8fa252069d597f86a68a2059f9a2668bf6ada7a2bc3b2bd16`.
 - **Pending at this commit:** claim-safe local cell execution has not been re-verified,
   remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run, and the
-  AMP-probe fix itself has not been confirmed on real CUDA hardware. The prior application
-  commit (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact hostile inline
-  backend and host uv/virtualenv state injected; that evidence does not carry over to this
-  commit and should be re-established before a real Colab attempt.
+  `Pad`/`seg_pad_val` fix itself has not been confirmed on real CUDA hardware — only the
+  earlier AMP-probe fix has real-hardware confirmation so far. The prior application commit
+  (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact hostile inline backend
+  and host uv/virtualenv state injected; that evidence does not carry over to this commit
+  and should be re-established before a real Colab attempt.
 
 ## Next external action
 
-Push this commit, trigger `semantic-framework-cpu-probe.yml` (`workflow_dispatch`) to
-re-establish the hostile-context remote closure at the new commit, then open the master
-notebook from the pushed branch in a fresh Colab L4 + High-RAM runtime and use Run all
-(Colab Pro/Pro+ background execution is recommended so the session survives closing the
-browser tab). Watch specifically whether `five-model-runtime-canary` now passes PIDNet-S's
-AMP probe. If the session ends, repeat Run all in a new compliant runtime — this is a
-Colab platform limit, not something the notebook can automate away. Do not change the
-notebook or select stages manually.
+Push this commit, then open the master notebook from the pushed branch in a fresh Colab L4
++ High-RAM runtime and use Run all (Colab Pro/Pro+ background execution is recommended so
+the session survives closing the browser tab). The five-model AMP canary is already
+confirmed passing; watch specifically whether `production-pipeline` now gets past building
+`val_dataloader` (previously failed at `smoke`/`segformer_b0`) and proceeds through
+training. If the session ends, repeat Run all in a new compliant runtime — this is a Colab
+platform limit, not something the notebook can automate away. Do not change the notebook or
+select stages manually.
 
 Do not create `colab-v0.1.0-rc1` until two independent clean L4 sessions pass the exact
 lock/five-model FP32/AMP canary and the real 50-step interruption/resume proof. After the
