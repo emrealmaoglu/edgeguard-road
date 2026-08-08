@@ -119,6 +119,16 @@ def test_cityscapes_mask_resize_uses_nearest_neighbor() -> None:
     np.testing.assert_array_equal(resized[:2, :2], np.zeros((2, 2), dtype=np.uint8))
 
 
+def test_cityscapes_mask_resize_rejects_a_value_outside_the_train_id_space() -> None:
+    # 30 ("trailer") is a valid *source* label ID but not a valid train ID
+    # (0..18 or 255). resize_train_ids previously validated against the source
+    # label-ID space instead of the train-ID space and would have accepted this.
+    mask = np.array([[0, 30]], dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="unknown Cityscapes train IDs"):
+        resize_train_ids(mask, height=2, width=2)
+
+
 def test_city_round_robin_selection_is_deterministic_across_cities(tmp_path: Path) -> None:
     for sample_id in (
         "munster_000000_000002",

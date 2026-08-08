@@ -16,13 +16,13 @@ are `done`, `ready`, `external`, `blocked-by-gate`, and `future`.
 
 | ID | Deliverable | Status | Exit evidence |
 | --- | --- | --- | --- |
-| SEG-01 | Five-model one-batch and 50-step smoke | external | Five real CUDA logs and reloadable checkpoints |
-| SEG-02 | Five 2,000-step pilots and valid 6,000-step screenings | external | Domain-macro/select tables plus failure records |
+| SEG-01 | Three-model hermetic canary, 50-step smoke and forced resume | external | Two clean Colab lock hashes; finite FP32/FP16 probes; reloadable checkpoints |
+| SEG-02 | Three 2,000-step pilots, extension smoke, five 6,000-step screenings | external | Core receipts, domain-macro/select tables and failure records |
 | SEG-03 | Early ONNX compatibility and top-two selection | external | Numerical export reports and frozen selection record |
 | SEG-04 | Top-two bounded HPO | external | 12 unique/resumable trials per model; no final/external access |
 | SEG-05 | Scientific source-composition ablation | external | Cityscapes versus Cityscapes+IDD under equal budget; BDD mirror reported only as provisional audit evidence |
 | SEG-06 | CE versus weighted CE | external | Overall and rare-class comparison |
-| SEG-07 | Scientific and edge final training | external | Hash-bound final checkpoints; optional extra seeds |
+| SEG-07 | Three-finalist scientific and edge final training | external | Hash-bound final checkpoints; isolated weighted-CE ablation |
 
 ## Reliability and perception
 
@@ -43,11 +43,31 @@ are `done`, `ready`, `external`, `blocked-by-gate`, and `future`.
 | DEP-01 | Static ONNX FP32 validation | ready | Shape/class/finiteness/allclose and ORT latency report |
 | DEP-02 | Jetson TensorRT FP16 build | external | Engine/build manifest on target; no overwrite |
 | DEP-03 | 25W and MAXN SUPER sustained benchmark | external | 200 warm-up; 5,000 frames or 10 min; telemetry and acceptance result |
-| DEMO-01 | Streamlit perception/reliability demo | done | CPU fallback, maps, regions, attention and latency |
-| DOC-01 | Fresh-runtime Colab and thesis evidence | ready | Output-free notebooks and measured tables after external runs |
+| DEMO-01 | Accepted-artifact Streamlit perception/reliability demo | ready | Offline accepted bundle, cache, CPU/missing-artifact and Jetson pages |
+| DEMO-02 | Recorded-video perception overlay demo (`scripts/jetson/run_video_demo.py`) | ready | ONNX Runtime CPU dry-run tested (`tests/unit/test_run_video_demo.py`); TensorRT path requires a real Jetson run per `scripts/jetson/AGENTS.md` |
+| DOC-01 | Fresh-runtime Colab and accepted thesis evidence | external | Application commit and immutable notebook repin complete; remote CI plus real Colab G1/G3 and an accepted run remain required |
 
 ## Conditional detection
 
 `DET-01` is `blocked-by-gate`. Only RTMDet-Tiny may be opened after every charter gate
 passes. Until then all detector, temporal, anomaly-head, tracking, and INT8 material is
 experimental/legacy and cannot appear as active thesis progress.
+
+## Known limitations
+
+- **IDD20K shard packaging drops native labels.** `_publish_idd_shards`
+  (`src/edgeguard/data/preparation.py`) renders both the native 40-class
+  `_gtFine_labelids.png` mask and the canonical Cityscapes19
+  `_gtFine_labelTrainIds.png` mask during staging, but only tars the
+  canonical mask into each of the 33 already-staged shards
+  (`"prepared_payload": "images_and_cityscapes19_canonical_masks_only"`).
+  This means the native IDD label can no longer be audited or re-mapped from
+  a staged shard after the fact — a partial exception to
+  `src/edgeguard/data/AGENTS.md`'s "preserve every dataset's native labels"
+  rule. The Cityscapes19 mapping itself is verified correct
+  (`configs/dataset/semantic_ontology_v2.yaml`), so this does not affect
+  training correctness; it only limits future native-label auditability.
+  Re-processing already-staged shards to include native labels is a real
+  IDD-source re-processing job, not a code change, and needs an explicit
+  decision before being scheduled (found 2026-08-08, Claude Code review;
+  deliberately left unresolved).

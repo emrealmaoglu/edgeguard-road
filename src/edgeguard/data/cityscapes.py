@@ -196,13 +196,23 @@ def load_cityscapes_val_sample(
     return image, train_ids
 
 
+_VALID_TRAIN_IDS = frozenset(range(19)) | {255}
+
+
 def resize_train_ids(
     train_ids: npt.NDArray[np.uint8], *, height: int, width: int
 ) -> npt.NDArray[np.uint8]:
     """Resize a categorical train-ID mask with nearest-neighbor only."""
     if height <= 0 or width <= 0:
         raise ValueError("mask resize dimensions must be positive")
-    label_ids_to_train_ids(train_ids)
+    if not isinstance(train_ids, np.ndarray) or train_ids.dtype != np.uint8:
+        raise ValueError("Cityscapes train IDs must be a uint8 numpy array")
+    if train_ids.ndim != 2 or any(dimension <= 0 for dimension in train_ids.shape):
+        raise ValueError("Cityscapes train IDs must have positive HW dimensions")
+    observed = {int(value) for value in np.unique(train_ids)}
+    unknown = sorted(observed - _VALID_TRAIN_IDS)
+    if unknown:
+        raise ValueError(f"unknown Cityscapes train IDs: {unknown}")
     resized = Image.fromarray(train_ids, mode="L").resize(
         (width, height), resample=Image.Resampling.NEAREST
     )

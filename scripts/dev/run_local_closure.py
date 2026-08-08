@@ -274,10 +274,11 @@ def _ood_calibration(root: Path) -> dict[str, Any]:
 def _streamlit(root: Path, video_root: Path) -> dict[str, Any]:
     streamlit = __import__("streamlit.testing.v1", fromlist=["AppTest"])
     report_path = video_root / "report.json"
+    dashboard_path = Path(__file__).resolve().parents[2] / "scripts/run_video_dashboard.py"
     previous = os.environ.get("EDGEGUARD_VIDEO_REPORT")
     os.environ["EDGEGUARD_VIDEO_REPORT"] = str(report_path)
     try:
-        app = streamlit.AppTest.from_file("scripts/run_video_dashboard.py")
+        app = streamlit.AppTest.from_file(dashboard_path)
         app.run(timeout=20)
         if app.exception:
             raise RuntimeError(str(app.exception))

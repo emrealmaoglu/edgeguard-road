@@ -32,6 +32,12 @@ rescue = [
   "optuna>=4,<5",
   "streamlit>=1.40,<2",
 ]
+# Platform-neutral packages only; PyTorch/MMEngine/mmcv-lite/MMSegmentation are
+# intentionally excluded and are runtime-resolved by
+# scripts/train/install_semantic_stack.py against requirements/colab-*.lock,
+# since their CUDA wheels are platform-specific and cannot be pinned here.
+# See requirements/README.md. Installing this extra alone is not a working
+# training environment.
 colab = [
   "matplotlib>=3.8,<4",
   "onnx>=1.16,<2",

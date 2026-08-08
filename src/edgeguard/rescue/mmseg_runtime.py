@@ -110,6 +110,27 @@ def _config_import() -> Any:
         raise RuntimeError("install MMEngine before resolving an MMSeg config") from error
 
 
+def resolve_auto_precision(precision: str, *, torch: Any) -> str:
+    """Resolve "auto" to the project's real training precision policy.
+
+    bf16 (same exponent range as fp32, so no overflow risk) is preferred over
+    fp16 whenever the device supports it; fp16 is only ever selected as a
+    fallback on hardware without bf16 support. Any code that probes/validates
+    "does this model survive mixed precision on this GPU" must resolve
+    "auto" through this same function instead of hardcoding a dtype, or the
+    probe can reject a model (e.g. on fp16 overflow in a wide multi-scale
+    module) that the real training run would never actually expose to that
+    dtype in the first place.
+    """
+    if precision != "auto":
+        return precision
+    if not torch.cuda.is_available():
+        return "fp32"
+    if bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)()):
+        return "bf16"
+    return "fp16"
+
+
 def _strip_pretrained(value: Any) -> None:
     if isinstance(value, dict):
         if "pretrained" in value:
@@ -162,11 +183,17 @@ def _verified_pretrained_checkpoint(manifest_path: Path, model_name: str) -> Pat
     return checkpoint
 
 
+# Loss types whose upstream MMSeg implementation accepts a `class_weight` argument.
+# BoundaryLoss is deliberately excluded: it has no class_weight parameter, so
+# leaving it untouched is correct rather than an omission.
+_WEIGHTABLE_LOSS_TYPES = {"CrossEntropyLoss", "OhemCrossEntropy"}
+
+
 def _set_num_classes_and_loss(value: Any, *, class_weights: list[float] | None) -> None:
     if isinstance(value, dict):
         if "num_classes" in value:
             value["num_classes"] = 19
-        if value.get("type") == "CrossEntropyLoss":
+        if value.get("type") in _WEIGHTABLE_LOSS_TYPES:
             value["class_weight"] = class_weights
         for child in value.values():
             _set_num_classes_and_loss(child, class_weights=class_weights)
@@ -213,7 +240,16 @@ def validate_scientific_split(dataset_root: Path, manifest_path: Path) -> dict[s
     return payload
 
 
-def _train_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
+# Model families whose upstream MMSeg decode head reads an extra pipeline output
+# unconditionally in its loss computation. PIDHead._stack_batch_gt() requires
+# gt_edge_map, which only GenerateEdge produces; without it every PIDNet-S
+# optimizer step raises AttributeError on the first training iteration.
+_MODEL_PIPELINE_EXTRA_STEPS: dict[str, list[dict[str, Any]]] = {
+    "pidnet_s": [{"type": "GenerateEdge", "edge_width": 4}],
+}
+
+
+def _train_pipeline(config: RescueConfig, *, model_name: str) -> list[dict[str, Any]]:
     return [
         {"type": "LoadImageFromFile"},
         {"type": "LoadAnnotations", "reduce_zero_label": False},
@@ -226,6 +262,7 @@ def _train_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
         {"type": "RandomCrop", "crop_size": config.crop_size, "cat_max_ratio": 0.75},
         {"type": "RandomFlip", "prob": 0.5},
         {"type": "PhotoMetricDistortion"},
+        *_MODEL_PIPELINE_EXTRA_STEPS.get(model_name, []),
         {"type": "PackSegInputs"},
     ]
 
@@ -242,8 +279,7 @@ def _evaluation_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
         {
             "type": "Pad",
             "size": config.crop_size,
-            "pad_val": 0,
-            "seg_pad_val": config.ignore_index,
+            "pad_val": {"img": 0, "seg": config.ignore_index},
         },
         {"type": "PackSegInputs"},
     ]
@@ -258,7 +294,7 @@ def _inference_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
             "scale": (config.crop_size[1], config.crop_size[0]),
             "keep_ratio": True,
         },
-        {"type": "Pad", "size": config.crop_size, "pad_val": 0},
+        {"type": "Pad", "size": config.crop_size, "pad_val": {"img": 0}},
         {"type": "PackSegInputs"},
     ]
 
@@ -267,10 +303,17 @@ def _cityscapes_dataset(
     dataset_root: Path,
     config: RescueConfig,
     *,
+    model_name: str | None = None,
     ann_file: Path | None,
     split: str,
     training: bool,
 ) -> dict[str, Any]:
+    if training:
+        if model_name is None:
+            raise ValueError("a training pipeline requires model_name")
+        pipeline = _train_pipeline(config, model_name=model_name)
+    else:
+        pipeline = _evaluation_pipeline(config)
     return {
         "type": "CityscapesDataset",
         "data_root": str(dataset_root),
@@ -279,7 +322,7 @@ def _cityscapes_dataset(
             "seg_map_path": f"gtFine/{split}",
         },
         "ann_file": str(ann_file) if ann_file is not None else "",
-        "pipeline": _train_pipeline(config) if training else _evaluation_pipeline(config),
+        "pipeline": pipeline,
     }
 
 
@@ -332,16 +375,23 @@ def _manifest_dataset(
     manifest_path: Path,
     config: RescueConfig,
     *,
+    model_name: str | None = None,
     role: str,
     training: bool,
 ) -> dict[str, Any]:
     """Build an explicit-pair dataset without relying on vendor filename inference."""
     validate_dataset_manifest(manifest_path)
+    if training:
+        if model_name is None:
+            raise ValueError("a training pipeline requires model_name")
+        pipeline = _train_pipeline(config, model_name=model_name)
+    else:
+        pipeline = _evaluation_pipeline(config)
     return {
         "type": "EdgeGuardManifestDataset",
         "manifest_path": str(manifest_path),
         "role": role,
-        "pipeline": _train_pipeline(config) if training else _evaluation_pipeline(config),
+        "pipeline": pipeline,
     }
 
 
@@ -349,11 +399,15 @@ def _manifest_dataloader(
     manifests: Sequence[Path],
     config: RescueConfig,
     *,
+    model_name: str | None = None,
     role: str,
     training: bool,
 ) -> dict[str, Any]:
     """Build a single- or multi-domain loader with uniform domain probability."""
-    datasets = [_manifest_dataset(path, config, role=role, training=training) for path in manifests]
+    datasets = [
+        _manifest_dataset(path, config, model_name=model_name, role=role, training=training)
+        for path in manifests
+    ]
     sampler: dict[str, Any]
     if len(datasets) == 1:
         dataset: dict[str, Any] = datasets[0]
@@ -436,6 +490,7 @@ def build_training_config(
     campaign_id: str | None = None,
     project_commit: str | None = None,
     identity_sha256: str | None = None,
+    intentional_interrupt_optimizer_step: int | None = None,
 ) -> Any:
     """Resolve one standard MMSeg Runner config with no custom loop or hook."""
     mmengine = _config_import()
@@ -491,10 +546,10 @@ def build_training_config(
     cfg.load_from = None
     if manifests:
         cfg.train_dataloader = _manifest_dataloader(
-            manifests, protocol, role="train_fit", training=True
+            manifests, protocol, model_name=model_name, role="train_fit", training=True
         )
         cfg.val_dataloader = _manifest_dataloader(
-            manifests, protocol, role="train_select", training=False
+            manifests, protocol, model_name=model_name, role="train_select", training=False
         )
     else:
         if dataset_root is None or split_manifest is None:
@@ -505,7 +560,12 @@ def build_training_config(
         materialize_role_file(split_manifest, "train_select", select_file)
         cfg.train_dataloader = _dataloader(
             _cityscapes_dataset(
-                dataset_root, protocol, ann_file=train_file, split="train", training=True
+                dataset_root,
+                protocol,
+                model_name=model_name,
+                ann_file=train_file,
+                split="train",
+                training=True,
             ),
             protocol,
             training=True,
@@ -513,7 +573,12 @@ def build_training_config(
         )
         cfg.val_dataloader = _dataloader(
             _cityscapes_dataset(
-                dataset_root, protocol, ann_file=select_file, split="train", training=False
+                dataset_root,
+                protocol,
+                model_name=model_name,
+                ann_file=select_file,
+                split="train",
+                training=False,
             ),
             protocol,
             training=False,
@@ -611,8 +676,17 @@ def build_training_config(
             "status_path": str(recovery_root.parents[1] / "state/status.json"),
             "optimizer_interval": 500,
             "maximum_seconds": 600,
+            "intentional_interrupt_optimizer_step": intentional_interrupt_optimizer_step,
         }
         cfg.custom_hooks = [*list(cfg.get("custom_hooks", [])), recovery_hook]
+    cfg.custom_hooks = [
+        *list(cfg.get("custom_hooks", [])),
+        {
+            "type": "EdgeGuardMetricsHistoryHook",
+            "accumulation": protocol.gradient_accumulation,
+            "optimizer_interval": 50,
+        },
+    ]
     cfg.default_hooks.pop("visualization", None)
     cfg.visualizer = {
         "_scope_": "mmengine",
@@ -679,9 +753,18 @@ def train_model(
     recovery_root: Path | None = None,
     campaign_id: str | None = None,
     project_commit: str | None = None,
+    crop_size_override: tuple[int, int] | None = None,
+    intentional_interrupt_optimizer_step: int | None = None,
 ) -> dict[str, Any]:
     """Train through the stock MMEngine Runner and record only measured evidence."""
     torch, mmengine, mmseg = _imports()
+    if crop_size_override is not None:
+        if len(crop_size_override) != 2 or min(crop_size_override) <= 0:
+            raise ValueError("crop override must contain two positive integers")
+        protocol = replace(protocol, crop_size=crop_size_override)
+    scientific_protocol = asdict(protocol)
+    scientific_protocol["device_batch"] = None
+    scientific_protocol["gradient_accumulation"] = None
     resolved_device_batch = protocol.device_batch if device_batch is None else device_batch
     if resolved_device_batch <= 0 or protocol.effective_batch % resolved_device_batch:
         raise ValueError("device batch must be a positive divisor of frozen effective batch")
@@ -694,13 +777,19 @@ def train_model(
         gradient_accumulation=protocol.effective_batch // resolved_device_batch,
         workers=resolved_workers,
     )
-    if precision == "auto":
-        if not torch.cuda.is_available():
-            precision = "fp32"
-        elif bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)()):
-            precision = "bf16"
-        else:
-            precision = "fp16"
+    stage = protocol.stages[stage_name]
+    assert stage.max_steps is not None
+    resolved_max_steps = stage.max_steps if max_steps_override is None else max_steps_override
+    resolved_scheduler_steps = (
+        resolved_max_steps if scheduler_steps_override is None else scheduler_steps_override
+    )
+    if resolved_max_steps <= 0 or resolved_scheduler_steps < resolved_max_steps:
+        raise ValueError("step overrides must be positive and scheduler horizon cannot be shorter")
+    if intentional_interrupt_optimizer_step is not None and not (
+        0 < intentional_interrupt_optimizer_step < resolved_max_steps
+    ):
+        raise ValueError("intentional interruption must be inside the optimizer-step budget")
+    precision = resolve_auto_precision(precision, torch=torch)
     if precision not in {"fp32", "fp16", "bf16"}:
         raise ValueError("precision must be auto, fp32, fp16, or bf16")
     if precision == "bf16" and not bool(
@@ -750,7 +839,7 @@ def train_model(
         "model": model_name,
         "stage": stage_name,
         "loss": loss,
-        "protocol_sha256": sha256_payload(asdict(protocol)),
+        "protocol_sha256": sha256_payload(scientific_protocol),
         "split_manifest_sha256": sha256_file(split_manifest) if split_manifest else None,
         "dataset_manifest_sha256s": [sha256_file(path) for path in manifests],
         "datasets": datasets,
@@ -763,11 +852,12 @@ def train_model(
             sha256_file(pretrained_manifest) if pretrained_manifest else None
         ),
         "upstream_config_sha256": sha256_file(upstream),
-        "device_batch": protocol.device_batch,
-        "gradient_accumulation": protocol.gradient_accumulation,
         "effective_batch": protocol.effective_batch,
         "workers": protocol.workers,
         "precision": precision,
+        "max_steps": resolved_max_steps,
+        "scheduler_steps": resolved_scheduler_steps,
+        "intentional_interrupt_optimizer_step": intentional_interrupt_optimizer_step,
         "project_commit": project_commit,
         "class_weights_sha256": (
             sha256_file(audit_report) if loss == "median_frequency" and audit_report else None
@@ -830,6 +920,7 @@ def train_model(
         campaign_id=campaign_id,
         project_commit=project_commit,
         identity_sha256=identity_sha256,
+        intentional_interrupt_optimizer_step=intentional_interrupt_optimizer_step,
     )
     resolved_path = work_dir / "resolved.py"
     cfg.dump(str(resolved_path))

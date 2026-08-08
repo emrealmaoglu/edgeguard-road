@@ -30,7 +30,8 @@ def test_streamlit_prerecorded_dashboard_headless(
     report_path = tmp_path / "report.json"
     report_path.write_text(json.dumps(report), encoding="utf-8")
     monkeypatch.setenv("EDGEGUARD_VIDEO_REPORT", str(report_path))
-    app = streamlit.AppTest.from_file("scripts/run_video_dashboard.py")
+    dashboard_path = Path(__file__).resolve().parents[2] / "scripts/run_video_dashboard.py"
+    app = streamlit.AppTest.from_file(dashboard_path)
     app.run(timeout=10)
     assert not app.exception
     assert "EdgeGuard-Road" in app.title[0].value

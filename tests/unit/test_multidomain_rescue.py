@@ -20,9 +20,11 @@ from edgeguard.rescue.multidomain import (
     domain_mixture_probabilities,
     freeze_candidate_manifest,
     load_semantic_ontology,
+    manifest_image_and_mask_paths,
     map_source_mask,
     power_domain_indices,
     uniform_domain_indices,
+    verify_manifest_data_is_staged,
     verify_sealed_release,
     write_multidomain_statistics,
 )
@@ -30,9 +32,40 @@ from edgeguard.rescue.reliability import (
     fit_global_temperature_from_evidence,
     save_calibration_evidence,
 )
-from edgeguard.serialization import canonical_json, sha256_file
+from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
 
 ONTOLOGY = Path("configs/dataset/semantic_ontology_v2.yaml")
+CAMPAIGN_ID = "semantic-cs-idd-v2"
+PROJECT_COMMIT = "a" * 40
+
+
+def _freeze(candidate: Path, output: Path) -> dict[str, object]:
+    dataset_id = json.loads(candidate.read_text(encoding="utf-8"))["dataset_id"]
+    receipt = output.with_suffix(".review.json")
+    receipt.write_text(
+        canonical_json(
+            {
+                "schema_version": "2.0",
+                "record_type": "edgeguard_manifest_review_receipt",
+                "decision": "freeze_approved",
+                "human_approved": True,
+                "reviewer": "fixture-human-reviewer",
+                "dataset_id": dataset_id,
+                "campaign_id": CAMPAIGN_ID,
+                "project_commit": PROJECT_COMMIT,
+                "candidate_manifest_sha256": sha256_file(candidate),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return freeze_candidate_manifest(
+        candidate,
+        output,
+        review_receipt_path=receipt,
+        campaign_id=CAMPAIGN_ID,
+        project_commit=PROJECT_COMMIT,
+    )
 
 
 def test_semantic_ontology_maps_only_exact_idd_classes() -> None:
@@ -177,15 +210,9 @@ def test_idd_audit_can_freeze_small_explainable_source_defect_quarantine(
         )
     ):
         identifier = f"city_{index:06d}_000019"
-        pixels = np.random.default_rng(index + 50).integers(
-            0, 256, size=(4, 19, 3), dtype=np.uint8
-        )
-        Image.fromarray(pixels, mode="RGB").save(
-            image_root / f"{identifier}_leftImg8bit.png"
-        )
-        Image.fromarray(mask, mode="L").save(
-            mask_root / f"{identifier}_gtFine_labelTrainIds.png"
-        )
+        pixels = np.random.default_rng(index + 50).integers(0, 256, size=(4, 19, 3), dtype=np.uint8)
+        Image.fromarray(pixels, mode="RGB").save(image_root / f"{identifier}_leftImg8bit.png")
+        Image.fromarray(mask, mode="L").save(mask_root / f"{identifier}_gtFine_labelTrainIds.png")
     result = audit_training_dataset(
         root,
         tmp_path / "audit",
@@ -213,9 +240,7 @@ def test_idd_quarantine_never_hides_ontology_contract_violation(tmp_path: Path) 
     image_root.mkdir(parents=True)
     mask_root.mkdir(parents=True)
     identifier = "city_000000_000019"
-    Image.new("RGB", (19, 4), color=(20, 30, 40)).save(
-        image_root / f"{identifier}_leftImg8bit.png"
-    )
+    Image.new("RGB", (19, 4), color=(20, 30, 40)).save(image_root / f"{identifier}_leftImg8bit.png")
     Image.fromarray(np.full((4, 19), 40, dtype=np.uint8), mode="L").save(
         mask_root / f"{identifier}_gtFine_labelids.png"
     )
@@ -253,15 +278,18 @@ def test_training_audits_freeze_and_pool_statistics(tmp_path: Path) -> None:
         ontology_path=ONTOLOGY,
         seed=3,
         strict_count=False,
+        source_manifests=(tmp_path / "audit-bdd/bdd100k_audit/dataset_manifest.candidate.json",),
     )
     bdd_frozen = tmp_path / "bdd.frozen.json"
     idd_frozen = tmp_path / "idd.frozen.json"
-    freeze_candidate_manifest(
-        tmp_path / "audit-bdd/bdd100k_audit/dataset_manifest.candidate.json", bdd_frozen
-    )
-    freeze_candidate_manifest(
-        tmp_path / "audit-idd/idd20k_audit/dataset_manifest.candidate.json", idd_frozen
-    )
+    bdd_candidate = tmp_path / "audit-bdd/bdd100k_audit/dataset_manifest.candidate.json"
+    idd_candidate = tmp_path / "audit-idd/idd20k_audit/dataset_manifest.candidate.json"
+    idd_candidate_payload = json.loads(idd_candidate.read_text())
+    assert idd_candidate_payload["source_manifest_sha256s"] == [sha256_file(bdd_candidate)]
+    with pytest.raises(PermissionError, match="review receipt"):
+        freeze_candidate_manifest(bdd_candidate, bdd_frozen)
+    _freeze(bdd_candidate, bdd_frozen)
+    _freeze(idd_candidate, idd_frozen)
     assert json.loads(bdd_frozen.read_text())["scientific_eligible"] is False
     result = write_multidomain_statistics((bdd_frozen, idd_frozen), tmp_path / "statistics")
     weights = json.loads((tmp_path / "statistics/class_weights.json").read_text())["weights"]
@@ -299,7 +327,7 @@ def test_official_source_validation_is_separate_and_overlap_checked(tmp_path: Pa
         strict_count=False,
     )
     frozen_train = tmp_path / "bdd-train.frozen.json"
-    freeze_candidate_manifest(
+    _freeze(
         tmp_path / "train-audit/bdd100k_audit/dataset_manifest.candidate.json",
         frozen_train,
     )
@@ -358,9 +386,7 @@ def test_sealed_external_manifest_requires_hash_bound_release(tmp_path: Path) ->
         access_date="2026-07-28",
     )
     frozen = tmp_path / "wilddash.frozen.json"
-    manifest = freeze_candidate_manifest(
-        tmp_path / "audit/wilddash2_audit/dataset_manifest.candidate.json", frozen
-    )
+    manifest = _freeze(tmp_path / "audit/wilddash2_audit/dataset_manifest.candidate.json", frozen)
     model = tmp_path / "model.onnx"
     model.write_bytes(b"fixture-model")
     with pytest.raises(PermissionError, match="sealed external"):
@@ -543,3 +569,54 @@ def test_global_calibration_uses_equal_hash_bound_source_evidence(tmp_path: Path
     result = fit_global_temperature_from_evidence(evidence, tmp_path / "temperature.json", seed=7)
     assert result["equal_pixels_per_domain"] == 30
     assert set(result["dataset_manifest_sha256s"]) == {"cityscapes", "idd20k"}
+
+
+def _write_manifest(tmp_path: Path, *, dataset_id: str = "cityscapes") -> Path:
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(tmp_path / "img.png")
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(tmp_path / "mask.png")
+    record = {
+        "sample_id": "s0",
+        "group_id": "g0",
+        "image": "img.png",
+        "mask": "mask.png",
+        "canonical_mask": "mask.png",
+    }
+    payload: dict[str, object] = {
+        "schema_version": "2.0",
+        "record_type": "edgeguard_dataset_manifest",
+        "dataset_id": dataset_id,
+        "split_state": "frozen",
+        "dataset_root": str(tmp_path),
+        "prepared_root": str(tmp_path),
+        "roles": {"train_fit": [record]},
+    }
+    payload["manifest_sha256"] = sha256_payload(payload)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    return manifest_path
+
+
+def test_manifest_image_and_mask_paths_matches_dataset_layout(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(tmp_path, dataset_id="idd20k")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    resolved = manifest_image_and_mask_paths(payload)
+    assert resolved == [("s0", tmp_path / "img.png", tmp_path / "mask.png")]
+
+
+def test_stage_data_verification_passes_when_files_are_present(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    result = verify_manifest_data_is_staged(manifest_path)
+    assert result == {
+        "manifest": str(manifest_path),
+        "dataset_id": "cityscapes",
+        "checked_samples": 1,
+    }
+
+
+def test_stage_data_verification_fails_closed_when_local_files_are_missing(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    (tmp_path / "img.png").unlink()
+    with pytest.raises(FileNotFoundError, match="missing on local disk"):
+        verify_manifest_data_is_staged(manifest_path)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -22,8 +23,10 @@ from edgeguard.rescue.mmseg_runtime import (
     _acdc_dataset,
     build_training_config,
     materialize_role_file,
+    resolve_auto_precision,
     validate_scientific_split,
 )
+from edgeguard.rescue.multidomain import build_cityscapes_official_validation_manifest
 from edgeguard.rescue.reporting import build_evidence_report
 from edgeguard.rescue.selection import select_top_two
 from edgeguard.rescue.stress import build_stress_dataset
@@ -128,6 +131,34 @@ def test_cityscapes_audit_blocks_black_and_all_ignore_samples(tmp_path: Path) ->
     assert summary["audit_passed"] is False
     assert summary["black_image_count"] == 1
     assert summary["all_ignore_mask_count"] == 1
+
+
+def test_cityscapes_official_val_manifest_is_separate_and_review_required(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cityscapes"
+    identifier = "valcity_000001_000019"
+    image_path = root / f"leftImg8bit/val/valcity/{identifier}_leftImg8bit.png"
+    mask_path = root / f"gtFine/val/valcity/{identifier}_gtFine_labelTrainIds.png"
+    image_path.parent.mkdir(parents=True)
+    mask_path.parent.mkdir(parents=True)
+    intensity = np.tile(np.arange(19, dtype=np.uint8) * 10, (3, 1))
+    Image.fromarray(np.stack((intensity, intensity, intensity), axis=-1), mode="RGB").save(
+        image_path
+    )
+    Image.fromarray(np.tile(np.arange(19, dtype=np.uint8), (3, 1)), mode="L").save(mask_path)
+    summary = audit_cityscapes(root, tmp_path / "val-audit", split="val")
+    candidate_path = tmp_path / "cityscapes-val.candidate.json"
+    candidate = build_cityscapes_official_validation_manifest(
+        root,
+        summary,
+        candidate_path,
+        source_manifests=(),
+        strict_count=False,
+    )
+    assert candidate["split_state"] == "candidate_requires_human_freeze"
+    assert set(candidate["roles"]) == {"official_source_val"}
+    assert candidate["scientific_eligible"] is True
 
 
 def test_split_statistics_are_derived_for_every_role(tmp_path: Path) -> None:
@@ -301,6 +332,54 @@ def test_acdc_uses_the_original_condition_split_sequence_layout(tmp_path: Path) 
         _acdc_dataset(tmp_path, protocol, condition="night")
 
 
+class _FakeCuda:
+    def __init__(self, *, available: bool, bf16_supported: bool) -> None:
+        self._available = available
+        self._bf16_supported = bf16_supported
+
+    def is_available(self) -> bool:
+        return self._available
+
+    def is_bf16_supported(self) -> bool:
+        return self._bf16_supported
+
+
+class _FakeTorch:
+    def __init__(self, *, available: bool, bf16_supported: bool) -> None:
+        self.cuda = _FakeCuda(available=available, bf16_supported=bf16_supported)
+
+
+def test_resolve_auto_precision_prefers_bf16_over_fp16_on_capable_hardware() -> None:
+    # A real L4 (or any Ampere/Ada-class GPU) supports bf16; a stack-probe or
+    # training call that hardcodes fp16 here would test a precision the real
+    # "auto" policy never actually selects on this hardware.
+    assert (
+        resolve_auto_precision("auto", torch=_FakeTorch(available=True, bf16_supported=True))
+        == "bf16"
+    )
+
+
+def test_resolve_auto_precision_falls_back_to_fp16_without_bf16_support() -> None:
+    assert (
+        resolve_auto_precision("auto", torch=_FakeTorch(available=True, bf16_supported=False))
+        == "fp16"
+    )
+
+
+def test_resolve_auto_precision_uses_fp32_without_cuda() -> None:
+    assert (
+        resolve_auto_precision("auto", torch=_FakeTorch(available=False, bf16_supported=False))
+        == "fp32"
+    )
+
+
+def test_resolve_auto_precision_passes_through_explicit_choices() -> None:
+    torch_module = _FakeTorch(available=True, bf16_supported=True)
+    assert resolve_auto_precision("fp32", torch=torch_module) == "fp32"
+    assert resolve_auto_precision("fp16", torch=torch_module) == "fp16"
+    assert resolve_auto_precision("bf16", torch=torch_module) == "bf16"
+
+
 def test_visualization_and_preprocessing_contracts() -> None:
     logits = np.zeros((19, 2, 3), dtype=np.float32)
     confidence, entropy = confidence_entropy(logits)
@@ -407,64 +486,24 @@ def test_reporting_uses_only_present_evidence(tmp_path: Path) -> None:
     assert json.loads((output / "top_two.json").read_text())["edge_candidate"] == "fast_scnn"
 
 
-def test_semantic_first_notebook_is_valid_and_output_free() -> None:
-    preflight = json.loads(Path("notebooks/EdgeGuard_Data_Preflight_Colab.ipynb").read_text())
-    payload = json.loads(Path("notebooks/EdgeGuard_Road_Colab.ipynb").read_text())
-    for notebook in (preflight, payload):
-        assert notebook["nbformat"] == 4
-        assert all(not cell.get("outputs") for cell in notebook["cells"])
-        for index, cell in enumerate(notebook["cells"]):
-            if cell["cell_type"] == "code":
-                compile("".join(cell["source"]), f"colab-cell-{index}", "exec")
-    preflight_source = "\n".join("".join(cell.get("source", [])) for cell in preflight["cells"])
-    assert "scripts/prepare_colab_data.py" in preflight_source
-    assert "scripts/prepare_dataset.py" in preflight_source
-    assert "DEEP_VERIFY_ARCHIVES = False" in preflight_source
-    assert "RUN_ARCHIVE_PREPARATION = not LOCAL_TEST_MODE" in preflight_source
-    assert "CREATE_BUNDLES = True" in preflight_source
-    assert 'BDD_SOURCE_PROFILE = "kaggle_mirror"' in preflight_source
-    assert 'SCIENTIFIC_SOURCE_DATASETS = ["cityscapes", "idd20k"]' in preflight_source
-    assert "ColabFailureReporter" in preflight_source
-    assert "run_logged_command" in preflight_source
-    assert "cwd=PROJECT_ROOT" in preflight_source
-    assert "persist_bootstrap_failure" in preflight_source
-    assert '"--idd-shard-size", "500"' in preflight_source
-    assert "idd20k.shards.json" in preflight_source
-    assert "reuse_or_copy_archive" in preflight_source
-    assert "Yerel cache SHA-256 doğrulanıyor" in preflight_source
-    assert 'copy_receipt.get("sha256") or copy_receipt.get("copied_sha256")' in preflight_source
-    assert 'loaded_module.startswith("edgeguard.")' in preflight_source
-    assert "shutil.rmtree(CACHE_ROOT)" not in preflight_source
-    assert (
-        'EXPECTED_PROJECT_COMMIT = "5cc578cb9f15aa7a560108840f3055ae2f4e4733"' in preflight_source
-    )
+def test_semantic_first_master_notebook_is_valid_and_output_free() -> None:
+    payload = json.loads(Path("notebooks/EdgeGuard_Master_Colab.ipynb").read_text())
+    assert payload["nbformat"] == 4
+    assert all(not cell.get("outputs") for cell in payload["cells"])
+    for index, cell in enumerate(payload["cells"]):
+        if cell["cell_type"] == "code":
+            compile("".join(cell["source"]), f"colab-cell-{index}", "exec")
     source = "\n".join("".join(cell.get("source", [])) for cell in payload["cells"])
-    assert "scripts/audit_dataset.py" in source
-    assert "scripts/train.py" in source
-    assert "scripts/evaluate.py" in source
-    assert "scripts/predict.py" in source
-    assert "scripts/export_onnx.py" in source
-    assert "calibrate-shift" in source
-    assert "evaluate-shift" in source
-    assert "--emit-regions" in source
-    assert "scripts/jetson/benchmark.py" in source
-    assert "--local-root" in source
-    assert "sync_work_snapshot" in source
-    assert 'CAMPAIGN_TARGET = "audit"' in source
-    assert 'CAMPAIGN_ID = "semantic-cs-idd-v1"' in source
-    assert "completion_is_valid" in source
-    assert "package-interruption" in source
-    assert "audit-catalog" in source
-    assert "--quarantine-invalid-source-samples" in source
-    assert '"status": "data_review_required"' in source
-    assert "audit_process.returncode not in {0, 2}" in source
-    assert "resumable-final-training-and-export" in source
-    assert "bdd100k.frozen.json" not in source
-    assert "runtime-compatibility-cascade" in source
-    assert "failure-report.zip" in source
-    assert "run_logged_command" in source
-    assert "cwd=PROJECT_ROOT" in source
-    assert 'EXPECTED_PROJECT_COMMIT = "5cc578cb9f15aa7a560108840f3055ae2f4e4733"' in source
+    pins = re.findall(r'EXPECTED_PROJECT_COMMIT = "([0-9a-f]{40})"', source)
+    assert len(pins) == 1
+    assert 'BRANCH = "stabilize/colab-v2"' in source
+    assert 'CAMPAIGN_ID = "semantic-cs-idd-v3"' in source
+    assert "scripts/run_colab_master.py" in source
+    assert '"--execution-mode", "production"' in source
+    assert "EdgeGuard_Jetson_Release.zip" in source
+    assert "LOCAL_TEST_MODE" in source
+    assert "scientific_status" in source and '"not_run"' in source
+    assert "pip install -e" not in source
 
 
 def test_synthetic_stress_fallback_preserves_labels_and_claim_boundary(tmp_path: Path) -> None:

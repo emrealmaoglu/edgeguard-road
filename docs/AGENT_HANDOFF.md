@@ -1,89 +1,135 @@
 # Agent Handoff
 
-- **Milestone:** updated phase-one road perception and pre-Colab implementation.
-- **Branch:** `rescue/semantic-first`; exact-commit Colab delivery publication.
-- **Pinned Colab implementation:** `5cc578cb9f15aa7a560108840f3055ae2f4e4733`.
-- **Classification:** locally tested engineering implementation; no new scientific or
-  Jetson measurement.
-- **Pin enforcement:** strict in Colab; the no-clone local harness only reports a later
-  checkout so branch-tip CI can validate the immutable notebook payload.
-- **Observed Colab incident:** the first real inventory child process resolved its relative
-  config default from `/content`, not the checkout. Active CLI defaults and every notebook
-  subprocess working directory are repository-root anchored. Subprocess-tail logging exposed
-  the exact cause; hash-read resilience and mandatory post-copy verification remain active.
-- **Observed IDD incident:** the official Part I/II preparation produced no output for over
-  12 hours. The old gzip seek pattern, duplicate hash reads, serial dual-mask rendering,
-  missing liveness, and orphanable child process are corrected. Do not rerun the old
-  `6745106` payload.
+- **Branch:** `stabilize/colab-v2`
+- **Application commit pinned by notebook:**
+  `ff2642265a3cf377988de30a844a13a33ec34238`
+- **Campaign:** `semantic-cs-idd-v3`
+- **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
+- **Classification:** locally verified engineering delivery; real Colab GPU/training and
+  Jetson evidence remain external. Remote CI and claim-safe notebook execution have not yet
+  been re-run at this commit (see Local gates). A real L4 run at the prior commit
+  (`b22fd12…`) passed the five-model AMP stack-probe (all five architectures, including
+  PIDNet-S) and full data staging, then failed building `val_dataloader` for every
+  model/stage with `TypeError: Pad.__init__() got an unexpected keyword argument
+  'seg_pad_val'`; this commit's fix for that failure is reproduced against the real pinned
+  MMSeg checkout, not yet re-confirmed on real L4 hardware (see Local gates).
 
-## Delivered
+## What changed
 
-- Safe archive preparation for Cityscapes, official/quarantined BDD100K, and official
-  IDD20K Part I/II, including published identities, safe extraction, collision checks,
-  pinned IDD polygon rendering, Part II JPG support, and immutable native labels.
-- Kaggle BDD is fail-closed as `scientific_eligible=false`; active scientific HPO and
-  final training use Cityscapes + IDD20K.
-- Drive/Colab notebooks enforce the 175 GiB + 25 GiB policy; Cityscapes uses its verified
-  bundle and IDD publishes resumable 500-sample canonical shards.
-- Immutable content-addressed recovery retains current and previous generations. Full
-  optimizer, scheduler, AMP, sampler and RNG state is published every 500 optimizer steps
-  or ten minutes; incomplete incoming artifacts are never accepted.
-- HPO persists each rung and an atomic SQLite backup. Input/output hash completion receipts
-  make a second Run all a no-op for verified stages.
-- IDD preparation now reads each gzip TAR forward once, hashes archives once, renders
-  canonical masks through a reviewed LUT with bounded workers, and reports extraction,
-  mask, bundle, staging and disk progress. Verified archive cache survives a failed retry.
-- Interrupting a notebook command now terminates its complete subprocess group with a
-  bounded TERM-to-KILL escalation, preventing hidden duplicate preparation processes.
-- Colab runtime selection is receipt-driven for both hosted-current and isolated-Python
-  paths; the previous hard-coded fallback interpreter/checkout mismatch is removed.
-- Notebook-wide failure reporting captures bootstrap, Python and failed subprocess
-  errors into redacted JSON plus a small downloadable ZIP in Drive. It records stage,
-  commit, platform, disk and hashed bounded logs; data/model payloads are excluded.
-- Selective campaign snapshots exclude staged data. Small review ZIPs expose reports,
-  manifests and thesis figures for browser download while excluding models/data.
-- Real frozen manifests generate class-distribution CSV and hashed 300-DPI PNG/PDF
-  figures; notebook local mode executed every delivery code cell without external work.
-- Connected Drive was inspected read-only. The implementation now supports the observed
-  legacy/current Cityscapes paths and exact 6.99 GB bundle without moving or recompressing
-  them; new BDD/IDD storage remains additive.
-- The repeated Drive inspection confirmed IDD Part I/II and `bdd100k.zip` are now in
-  `private_inputs/`; local archives were intentionally removed for space. Inventory and
-  notebook preparation use this placement directly without a Drive migration.
-- Semantic-derived road/corridor, regions, confidence, entropy, unreliable pixels, and
-  deterministic operational-attention outputs in prediction and Streamlit.
-- Road/component evaluation metrics and explicit non-instance/non-physical-risk bounds.
-- Per-frame MSP, normalized entropy, maximum logit, energy, source-only shift reference,
-  source/external AUROC/AP and alert-rate evidence.
-- Dry-run-first TensorRT FP16 build and target-only sustained Jetson benchmark contracts;
-  neither changes power mode or overwrites evidence.
-- Fail-closed RTMDet-Tiny activation gate for measured phase-one, 25W p95, memory,
-  remaining budget, and official BDD detection provenance.
-- Charter, state, tasks, runbook, experiment and claim matrices now describe one current
-  semantic thesis rather than the legacy detection/OOD/temporal campaign.
+- Replaced fourteen entry notebooks with one generated Run-all notebook.
+- Added the `all` production orchestrator from preflight through final delivery packages.
+- Reuses exact v2 Cityscapes/IDD audit candidates and verified Drive data without rescans.
+- Requires all five canary, screening, and final models; HPO remains top-two.
+- Added forced smoke interruption/resume evidence and general immutable checkpoint restore.
+- Added owner-preauthorized exact-source/release policy while keeping official validation
+  after model selection.
+- Added five-model ONNX/golden-vector Jetson packaging, accepted Streamlit packaging, and
+  measured thesis tables/figures/galleries.
+- Added L4/High-RAM/disk gates and atomic Drive publication of final ZIPs.
+- Replaced the hosted-Python project import with a standard-library-only runtime bootstrap.
+- Runs restore and data preparation only after the verified Python 3.11 environment exists.
+- Isolates v3 work state and preserves/skips incompatible commit-bound local/Drive state.
+- Streams the real child error and packages stage, bootstrap and log-tail diagnostics.
+- Resolves both `bin/uv` and Colab system-pip `local/bin/uv` private-prefix layouts and
+  carries the verified executable path into the runtime installer.
+- Prioritizes the pinned wheel's CUDA libraries over Colab's mutable toolkit paths while
+  preserving host driver discovery.
+- Reuses the hash-verified bootstrap receipt for canary execution instead of performing a
+  second destructive package sync.
+- Reports the exact failed module or CUDA initialization stderr and retains MMEngine's
+  required `pkg_resources` path through the Setuptools 80.9.0 lock.
+- Preserves failed canary evidence under a timestamped quarantine root before retry, so
+  repeated Run-all attempts start with clean runtime evidence without deleting history.
+- Firewalls Colab's hosted Matplotlib/Python/virtualenv/pip/uv state before bootstrap and
+  every locked-runtime child; forces `Agg` and isolated cache roots.
+- Runs a real headless PNG probe before the five-model canary and records the non-secret
+  environment-contract identity in runtime evidence.
+- Resumes correctly when the one permitted OOM batch reduction is followed by the forced
+  smoke interruption; the resumed command and checkpoint identity are both verified.
+- Marks every acceptance-mode phase `not_run`, preventing fixture execution from becoming
+  measured or accepted scientific evidence.
+- (This commit) Fixed two real training-blocking defects found by a Claude Code cross-file
+  review: PIDNet-S's shared pipeline was missing `GenerateEdge`, crashing `PIDHead`'s
+  boundary loss on the first optimizer step of any stage; the CE-vs-weighted-CE override
+  only matched `CrossEntropyLoss`, silently no-oping for DDRNet-23-Slim and PIDNet-S, whose
+  dominant losses are `OhemCrossEntropy`. Both were reproduced and fixed against the real
+  pinned MMSeg checkout, not just inspected.
+- (This commit) Added `tests/unit/test_mmseg_real_training_step.py`, the first test in the
+  repository to run a real `model.loss()` forward/backward step per architecture against
+  the real resolved MMSeg config; wired into `semantic-framework-cpu-probe.yml`.
+- (This commit) The `stage-data` phase now verifies every manifest-referenced image/mask
+  file exists on local disk instead of only checking the manifest JSON exists
+  (`verify_manifest_data_is_staged`); Drive archive/shard copies now fail closed on a
+  stalled read via a bounded stall-timeout guard instead of risking an indefinite hang.
+- (Follow-up commit `1387322…`) Fixed `resize_train_ids()` validating against the wrong
+  ID space (source label IDs instead of train IDs); reconciled `SYSTEM_ARCHITECTURE.md`,
+  `DATA_CATALOG.md`, and the eval-config resolution-mismatch docs found stale by the same
+  review; recorded the IDD20K native-label-loss-on-shard-packaging limitation in
+  `docs/TASKS.md` rather than acting on it (owner decision: needs a separate, costly
+  Drive shard re-processing approval).
+- (Commit `42be8d6…`) Raised `configs/rescue/semantic_first.yaml`'s `workers` from 2 to 6
+  to use a Colab High-RAM instance's vCPUs more fully during data loading;
+  `effective_batch` and every frozen HPO/step budget are unchanged. Confirmed training
+  precision already defaults to bf16/AMP on CUDA (`train_model`'s `precision="auto"`), so
+  no code change was needed there. Added `scripts/jetson/run_video_demo.py` (DEMO-02): a
+  video-frame perception-overlay demo for ONNX Runtime (local/CPU, tested) and target-
+  device TensorRT (human-gated per `scripts/jetson/AGENTS.md`, untested here).
+- (Commit `b22fd12…`) A real L4 run at `42be8d6…` failed on PIDNet-S with "AMP/FP16
+  stack-probe gradient is missing or non-finite" — `train_semantic.py::_probe_model`
+  hardcoded `torch.float16` for its mixed-precision canary instead of following the same
+  `precision="auto"` → bf16-on-capable-hardware policy `train_model` already uses, so it
+  tested a precision (fp16) the real training run would never actually select on an L4.
+  Extracted `edgeguard.rescue.mmseg_runtime.resolve_auto_precision()` and made the probe
+  call it. This fix was later **confirmed on real L4 hardware**: the next run passed the
+  five-model AMP stack-probe outright (`fp16_finite_model_count: 5`, all five architectures
+  including PIDNet-S, GPU `NVIDIA L4`).
+- (Commit `ff26422…`) That same real L4 run then failed building `val_dataloader` for
+  every model/stage (first hit: `smoke`/`segformer_b0`) with
+  `TypeError: Pad.__init__() got an unexpected keyword argument 'seg_pad_val'`.
+  `_evaluation_pipeline()` in `mmseg_runtime.py` passed `pad_val` and `seg_pad_val` as two
+  separate constructor kwargs to the `Pad` transform; the pinned mmcv-lite `Pad`
+  (`mmcv/transforms/processing.py`) only accepts a single `pad_val`, either a number or a
+  `dict(img=..., seg=...)` — there is no `seg_pad_val` argument at all. Fixed by combining
+  both into `pad_val={"img": 0, "seg": config.ignore_index}`; `_inference_pipeline()`'s
+  plain `pad_val=0` was likewise made explicit as `{"img": 0}` for consistency (behavior
+  unchanged — mmcv's `Pad` already treated a bare int as image-only padding). Reproduced
+  and fixed against the real pinned MMSeg checkout by building both pipelines through
+  `Compose()` with the mmseg registry scope active, the same way real training builds them
+  — not yet re-confirmed on real L4 hardware.
 
-## Verification
+## Local gates
 
-- `ruff format --check .`: 293 files formatted.
-- `ruff check .`: passed.
-- `mypy src/edgeguard`: 110 source files passed.
-- `pytest -q`: 430 passed, 10 skipped.
-- Both delivery notebooks regenerate, contain no outputs, and all 17 code cells execute
-  in the external-action-free local contract runner.
-- All active command help surfaces and Python compile-all passed.
-- `git diff --check` passed; no machine-local path or credential marker was found in
-  active code, configuration, documentation, or notebooks.
+- Ruff and format checks pass for the full repository.
+- Mypy passes for all 116 configured source modules.
+- Full pytest passes: 485 passed, 15 environment-gated skipped without the pinned MMSeg
+  stack; 500 passed, 0 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
+  `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout (includes the real per-architecture
+  `model.loss()` tests). None of this exercises real CUDA/AMP behavior — that only happens
+  on a real L4.
+- Master notebook generation is byte-identical across two runs.
+- The notebook SHA-256 after pinning is
+  `d6a640ce064fc5e8fa252069d597f86a68a2059f9a2668bf6ada7a2bc3b2bd16`.
+- **Pending at this commit:** claim-safe local cell execution has not been re-verified,
+  remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run, and the
+  `Pad`/`seg_pad_val` fix itself has not been confirmed on real CUDA hardware — only the
+  earlier AMP-probe fix has real-hardware confirmation so far. The prior application commit
+  (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact hostile inline backend
+  and host uv/virtualenv state injected; that evidence does not carry over to this commit
+  and should be re-established before a real Colab attempt.
 
-## Evidence boundary and next action
+## Next external action
 
-No archive was extracted locally, no Drive write/Colab/GPU/official-validation/ACDC/sealed
-run occurred, and no ONNX/TensorRT/Jetson artifact was created. The user-managed archive
-store contains official Cityscapes, official IDD20K I/II, and a provisional Kaggle BDD
-mirror. Run `notebooks/EdgeGuard_Data_Preflight_Colab.ipynb` against the existing
-`private_inputs/` uploads. Then audit/freeze Cityscapes + IDD scientific manifests;
-audit BDD separately without promoting it into HPO or the main thesis table.
+Push this commit, then open the master notebook from the pushed branch in a fresh Colab L4
++ High-RAM runtime and use Run all (Colab Pro/Pro+ background execution is recommended so
+the session survives closing the browser tab). The five-model AMP canary is already
+confirmed passing; watch specifically whether `production-pipeline` now gets past building
+`val_dataloader` (previously failed at `smoke`/`segformer_b0`) and proceeds through
+training. If the session ends, repeat Run all in a new compliant runtime — this is a Colab
+platform limit, not something the notebook can automate away. Do not change the notebook or
+select stages manually.
 
-Do not open ACDC or sealed external data before the final model/preprocessing/reliability
-freeze. Do not start RTMDet-Tiny unless `scripts/check_detection_gate.py` returns a
-fully evidenced pass. No dataset license acceptance, sealed submission, scientific-result
-approval or privileged Jetson operation is implied by this handoff.
+Do not create `colab-v0.1.0-rc1` until two independent clean L4 sessions pass the exact
+lock/five-model FP32/AMP canary and the real 50-step interruption/resume proof. After the
+campaign completes, build TensorRT only on the target Jetson and attach actual 25W
+telemetry. Do not merge, tag, open sealed datasets, upgrade JetPack, or change Jetson power
+mode without a separate explicit decision.

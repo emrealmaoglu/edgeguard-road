@@ -1,0 +1,7 @@
+# MMEngine and mmcv-lite declare opencv-python even though EdgeGuard supplies the
+# mutually exclusive headless cv2 distribution. Install both audited universal
+# wheels with --no-deps after the complete main lock has been synchronized.
+mmengine==0.10.7 \
+    --hash=sha256:262ac976a925562f78cd5fd14dd1bc9b680ed0aa81f0d85b723ef782f99c54ee
+mmcv-lite==2.1.0 \
+    --hash=sha256:1d9913c35f793de4a3a022b93cecb712e1e7262eb4704eb8cd15e623dd375000

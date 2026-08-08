@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -37,11 +36,12 @@ from edgeguard.training.logits import validate_native_logits_tensor
 from edgeguard.training.registry import append_registry, load_registry
 from scripts.train.install_semantic_stack import (
     BootstrapError,
-    _preflight_path_a,
-    _record_bootstrap_failure,
+    _environment_probe,
+    _record_failure,
     _resolve_uv_executable,
-    build_path_a_commands,
-    build_path_b_commands,
+    _validate_lock_contract,
+    build_hermetic_commands,
+    install_hermetic_runtime,
     repair_owned_path,
 )
 from scripts.train.train_semantic import (
@@ -55,6 +55,109 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = REPO_ROOT / "configs/training/segmentation"
 COMMIT = "1" * 40
 SHA = "2" * 64
+
+
+def test_environment_probe_names_the_first_failed_import_and_preserves_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "scripts.train.install_semantic_stack.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=1,
+            stdout="probe stdout",
+            stderr="exact loader failure",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="exact loader failure") as captured:
+        _environment_probe(tmp_path / "python", tmp_path / "mmseg")
+    assert "failed for cv2" in str(captured.value)
+
+
+def test_environment_probe_preserves_cuda_initialization_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        if calls <= 13:
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="ok", stderr="")
+        return subprocess.CompletedProcess(
+            args=args[0], returncode=1, stdout="", stderr="undefined symbol: ncclCommRegister"
+        )
+
+    monkeypatch.setattr("scripts.train.install_semantic_stack.subprocess.run", fake_run)
+    with pytest.raises(RuntimeError, match="ncclCommRegister") as captured:
+        _environment_probe(tmp_path / "python", tmp_path / "mmseg")
+    assert "CUDA initialization failed" in str(captured.value)
+
+
+def test_verified_bootstrap_receipt_skips_second_dependency_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    paths = RuntimePathContract.from_workspace(workspace)
+    interpreter = paths.runtime_root / "bin/python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.touch()
+    uv = workspace / "bootstrap/local/bin/uv"
+    uv.parent.mkdir(parents=True)
+    uv.touch()
+    config = load_semantic_framework_config(CONFIG_ROOT / "framework_mmseg.yaml")
+    lock_paths = (
+        REPO_ROOT / config.lockfile,
+        REPO_ROOT / "requirements/colab-openmmlab.lock",
+    )
+    from edgeguard.serialization import sha256_file
+
+    bootstrap_receipt = workspace / "bootstrap-receipt.json"
+    bootstrap_receipt.write_text(
+        json.dumps(
+            {
+                "record_type": "edgeguard_stdlib_colab_bootstrap",
+                "status": "completed",
+                "project_commit": COMMIT,
+                "interpreter": str(interpreter),
+                "mmseg_commit": config.commit,
+                "lock_sha256": {path.name: sha256_file(path) for path in lock_paths},
+                "uv": {"version": "0.8.8", "path": str(uv)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scripts.train.install_semantic_stack.repair_owned_path", lambda **kwargs: []
+    )
+
+    def fake_execute(commands: tuple[tuple[str, ...], ...], **kwargs: object) -> dict[str, object]:
+        assert commands == ()
+        return {
+            "runtime_profile": "py311-cu121",
+            "commands": [],
+            "core_model_probe": {"evidence_package": "probe.zip"},
+        }
+
+    monkeypatch.setattr("scripts.train.install_semantic_stack._execute_runtime", fake_execute)
+
+    def fake_package(evidence_root: Path, receipt: dict[str, object]) -> Path:
+        package = evidence_root / "runtime.zip"
+        package.parent.mkdir(parents=True, exist_ok=True)
+        package.write_bytes(b"runtime")
+        return package
+
+    monkeypatch.setattr("scripts.train.install_semantic_stack._evidence_zip", fake_package)
+    result = install_hermetic_runtime(
+        CONFIG_ROOT / "framework_mmseg.yaml",
+        paths=paths,
+        project_root=REPO_ROOT,
+        project_commit=COMMIT,
+        config_root=CONFIG_ROOT,
+        bootstrap_receipt=bootstrap_receipt,
+    )
+    assert result["commands"] == []
+    assert result["preinstalled_bootstrap_verified"] is True
 
 
 def _suite() -> tuple[object, object, tuple[object, ...]]:
@@ -244,43 +347,68 @@ def test_native_logits_requires_predicate_approved_19_class_tensor() -> None:
         validate_native_logits_tensor(TensorLike(), is_tensor=lambda _value: False)
 
 
-def test_install_cascade_is_openmim_free_and_has_auditable_cuda_fallback(
-    tmp_path: Path,
-) -> None:
+def test_hermetic_install_is_hash_locked_and_has_no_fallback(tmp_path: Path) -> None:
     framework = load_semantic_framework_config(CONFIG_ROOT / "framework_mmseg.yaml")
-    path_a = build_path_a_commands(
+    commands = build_hermetic_commands(
         framework,
-        tmp_path / "mmseg-a",
-        uv_executable=tmp_path / "resolved-tools/uv",
-        hosted_python=Path(sys.executable),
-        project_root=REPO_ROOT,
-        runtime_root=tmp_path / "runtime-a",
-    )
-    path_b = build_path_b_commands(
-        framework,
-        tmp_path / "mmseg-b",
+        tmp_path / "mmsegmentation",
         uv_executable=tmp_path / "resolved-tools/uv",
         project_root=REPO_ROOT,
-        runtime_root=tmp_path / "runtime-b",
+        runtime_root=tmp_path / "runtime",
     )
-    hosted = "\n".join(" ".join(command) for command in path_a)
-    fallback = "\n".join(" ".join(command) for command in path_b)
+    serialized = "\n".join(" ".join(command) for command in commands)
 
-    assert "openmim" not in (hosted + fallback).lower()
-    assert f"{tmp_path}/resolved-tools/uv venv --system-site-packages" in hosted
-    assert f"{tmp_path}/resolved-tools/uv python install 3.11" in fallback
-    assert "python -m venv" not in hosted
-    assert "/content/edgeguard-uv/bin/uv" not in hosted + fallback
-    assert "mmengine==0.10.7" in hosted
-    assert "mmcv-lite==2.1.0" in hosted
-    assert "torch==2.1.1" not in hosted
-    assert "numpy==1.26.4" in fallback
-    assert "torch==2.1.1" in fallback
-    assert "download.openmmlab.com/mmcv/dist/cu121/torch2.1" in fallback
-    assert "--only-binary=:all:" in fallback
-    assert framework.commit in hosted and framework.commit in fallback
-    assert "pip check --python" in hosted
-    assert "pip check --python" in fallback
+    assert "openmim" not in serialized.lower()
+    assert f"{tmp_path}/resolved-tools/uv python install 3.11.13" in serialized
+    assert "--system-site-packages" not in serialized
+    assert "--upgrade-strategy" not in serialized
+    assert "pip sync" in serialized
+    assert "--strict --require-hashes" in serialized
+    assert "colab-py311-cu121.lock" in serialized
+    assert "colab-openmmlab.lock" in serialized
+    assert framework.commit in serialized
+    assert "download.openmmlab.com" not in serialized
+
+
+def _write_valid_openmmlab_lock(path: Path) -> None:
+    path.write_text(
+        "mmengine==0.10.7 \\\n"
+        "    --hash=sha256:262ac976a925562f78cd5fd14dd1bc9b680ed0aa81f0d85b723ef782f99c54ee\n"
+        "mmcv-lite==2.1.0 \\\n"
+        "    --hash=sha256:1d9913c35f793de4a3a022b93cecb712e1e7262eb4704eb8cd15e623dd375000\n",
+        encoding="utf-8",
+    )
+
+
+def test_colab_locks_reject_gui_opencv(tmp_path: Path) -> None:
+    main = tmp_path / "main.lock"
+    openmmlab = tmp_path / "openmmlab.lock"
+    _write_valid_openmmlab_lock(openmmlab)
+    main.write_text(
+        "opencv-python-headless==4.10.0.84\nrich==15.0.0\nsetuptools==80.9.0\n",
+        encoding="utf-8",
+    )
+    _validate_lock_contract(main, openmmlab)
+
+    main.write_text(
+        "opencv-python==4.11.0.86\nopencv-python-headless==4.10.0.84\n"
+        "rich==15.0.0\nsetuptools==80.9.0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="GUI opencv-python"):
+        _validate_lock_contract(main, openmmlab)
+
+
+def test_colab_locks_require_openmmlab_no_deps_partition(tmp_path: Path) -> None:
+    main = tmp_path / "main.lock"
+    openmmlab = tmp_path / "openmmlab.lock"
+    _write_valid_openmmlab_lock(openmmlab)
+    main.write_text(
+        "opencv-python-headless==4.10.0.84\nrich==15.0.0\nsetuptools==80.9.0\nmmengine==0.10.7\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="only in the OpenMMLab lock"):
+        _validate_lock_contract(main, openmmlab)
 
 
 def test_uv_resolution_uses_the_hosted_path_executable(
@@ -354,48 +482,93 @@ def test_uv_install_without_resolvable_executable_is_rejected(tmp_path: Path) ->
     assert captured.value.classification == "uv_executable_not_found"
 
 
-def test_uv_unexpected_version_and_non_executable_are_rejected(tmp_path: Path) -> None:
-    executable = tmp_path / "uv"
+def test_uv_unexpected_host_version_bootstraps_private_exact_version(tmp_path: Path) -> None:
+    executable = tmp_path / "host" / "uv"
+    executable.parent.mkdir()
     executable.write_text("placeholder", encoding="utf-8")
     executable.chmod(0o755)
+    bootstrap_root = tmp_path / "private"
+    private_uv = bootstrap_root / "bin/uv"
 
-    class NoBootstrapRunner:
-        pass
-
-    with pytest.raises(BootstrapError, match="unexpected uv version") as version_error:
-        _resolve_uv_executable(  # type: ignore[arg-type]
-            NoBootstrapRunner(),
-            which=lambda _name: str(executable),
-            version_probe=lambda _path: "uv 9.9.9",
-        )
-    assert version_error.value.classification == "uv_version_mismatch"
-
-    executable.chmod(0o644)
-    with pytest.raises(BootstrapError, match="not an executable") as executable_error:
-        _resolve_uv_executable(  # type: ignore[arg-type]
-            NoBootstrapRunner(), which=lambda _name: str(executable)
-        )
-    assert executable_error.value.classification == "uv_executable_invalid"
-
-
-def test_uv_colab_newer_compatible_version_with_platform_suffix_is_accepted(
-    tmp_path: Path,
-) -> None:
-    executable = tmp_path / "uv"
-    executable.write_text("placeholder", encoding="utf-8")
-    executable.chmod(0o755)
-
-    class NoBootstrapRunner:
-        pass
+    class BootstrapRunner:
+        def run(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            private_uv.parent.mkdir(parents=True, exist_ok=True)
+            private_uv.write_text("placeholder", encoding="utf-8")
+            private_uv.chmod(0o755)
+            return {"stage": "bootstrap-uv", "return_code": 0}
 
     resolved, version, receipts = _resolve_uv_executable(  # type: ignore[arg-type]
-        NoBootstrapRunner(),
+        BootstrapRunner(),
         which=lambda _name: str(executable),
-        version_probe=lambda _path: "uv 0.11.19 (x86_64-unknown-linux-gnu)",
+        bootstrap_root=bootstrap_root,
+        version_probe=lambda path: "uv 0.11.19" if path == executable else "uv 0.8.8",
     )
-    assert resolved == executable.resolve()
-    assert version == "0.11.19"
-    assert receipts == []
+    assert resolved == private_uv.resolve()
+    assert version == "0.8.8"
+    assert receipts == [{"stage": "bootstrap-uv", "return_code": 0}]
+
+    executable.chmod(0o644)
+    private_uv.unlink()
+    resolved, version, _ = _resolve_uv_executable(  # type: ignore[arg-type]
+        BootstrapRunner(),
+        which=lambda _name: str(executable),
+        bootstrap_root=bootstrap_root,
+        version_probe=lambda _path: "uv 0.8.8",
+    )
+    assert resolved == private_uv.resolve()
+    assert version == "0.8.8"
+
+
+def test_uv_private_bootstrap_accepts_colab_local_bin_prefix(tmp_path: Path) -> None:
+    bootstrap_root = tmp_path / "private"
+    private_uv = bootstrap_root / "local/bin/uv"
+
+    class BootstrapRunner:
+        def run(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            private_uv.parent.mkdir(parents=True)
+            private_uv.write_text("placeholder", encoding="utf-8")
+            private_uv.chmod(0o755)
+            return {"stage": "bootstrap-uv", "return_code": 0}
+
+    resolved, version, receipts = _resolve_uv_executable(  # type: ignore[arg-type]
+        BootstrapRunner(),
+        which=lambda _name: None,
+        bootstrap_root=bootstrap_root,
+        version_probe=lambda _path: "uv 0.8.8",
+    )
+    assert resolved == private_uv.resolve()
+    assert version == "0.8.8"
+    assert receipts == [{"stage": "bootstrap-uv", "return_code": 0}]
+
+
+def test_uv_newer_version_with_platform_suffix_is_privately_replaced(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "host-uv"
+    executable.write_text("placeholder", encoding="utf-8")
+    executable.chmod(0o755)
+    scripts = tmp_path / "private-bin"
+    scripts.mkdir()
+
+    class BootstrapRunner:
+        def run(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            private = scripts / "uv"
+            private.write_text("placeholder", encoding="utf-8")
+            private.chmod(0o755)
+            return {"return_code": 0}
+
+    resolved, version, _ = _resolve_uv_executable(  # type: ignore[arg-type]
+        BootstrapRunner(),
+        which=lambda _name: str(executable),
+        scripts_directory=scripts,
+        version_probe=lambda path: (
+            "uv 0.11.19 (x86_64-unknown-linux-gnu)"
+            if path == executable
+            else "uv 0.8.8 (x86_64-unknown-linux-gnu)"
+        ),
+    )
+    assert resolved == (scripts / "uv").resolve()
+    assert version == "0.8.8"
 
 
 def test_bootstrap_failure_writes_terminal_receipt_and_logs(tmp_path: Path) -> None:
@@ -403,45 +576,30 @@ def test_bootstrap_failure_writes_terminal_receipt_and_logs(tmp_path: Path) -> N
     status = LongRunStatus(paths.evidence_root / "run_status.json")
     error = BootstrapError("uv_resolution", "uv_executable_not_found", "missing uv")
 
-    _record_bootstrap_failure(error, paths=paths, status=status)
+    _record_failure(
+        error,
+        paths=paths,
+        status=status,
+        failed_stage="uv_bootstrap",
+    )
 
     persisted = json.loads((paths.evidence_root / "run_status.json").read_text())
-    failure = json.loads((paths.evidence_root / "bootstrap_failure.json").read_text())
+    failure = json.loads((paths.evidence_root / "failure.json").read_text())
     assert persisted["status"] == "failed"
     assert persisted["phase"] == "uv_resolution"
     assert failure["failure_classification"] == "uv_executable_not_found"
     assert failure["failed_stage"] == "uv_resolution"
-    assert (paths.log_root / "00-uv-bootstrap.stdout.log").is_file()
-    assert (paths.log_root / "00-uv-bootstrap.stderr.log").is_file()
-
-
-def test_path_a_wheel_preflight_retains_binary_only_mmcv_lite(tmp_path: Path) -> None:
-    framework = load_semantic_framework_config(CONFIG_ROOT / "framework_mmseg.yaml")
-
-    class RecordingRunner:
-        command: tuple[str, ...] | None = None
-
-        def run(self, _stage: str, command: tuple[str, ...], **_kwargs: object) -> None:
-            self.command = command
-
-    runner = RecordingRunner()
-    _preflight_path_a(framework, runner, tmp_path / "wheels")  # type: ignore[arg-type]
-    assert runner.command is not None
-    serialized = " ".join(runner.command)
-    assert "download --only-binary=:all: --no-deps" in serialized
-    assert "mmengine==0.10.7" in serialized
-    assert "mmcv-lite==2.1.0" in serialized
 
 
 def test_bounded_runtime_repair_removes_only_recognizable_owned_targets(
     tmp_path: Path,
 ) -> None:
-    runtime = tmp_path / "edgeguard-runtime-current"
+    runtime = tmp_path / "edgeguard-runtime"
     runtime.mkdir()
     (runtime / "pyvenv.cfg").write_text("incomplete", encoding="utf-8")
-    checkout = tmp_path / "mmseg-path-a"
+    checkout = tmp_path / "mmsegmentation"
     checkout.mkdir()
-    probe = tmp_path / "hosted_current-five-model-probe"
+    probe = tmp_path / "hermetic-core-model-probe"
     probe.mkdir()
 
     actions = repair_owned_path(
@@ -458,14 +616,14 @@ def test_bounded_runtime_repair_removes_only_recognizable_owned_targets(
     }
     assert not runtime.exists() and not checkout.exists() and not probe.exists()
 
-    unrelated = tmp_path / "edgeguard-runtime-current"
+    unrelated = tmp_path / "edgeguard-runtime"
     unrelated.mkdir()
     (unrelated / "user-data.txt").write_text("keep", encoding="utf-8")
     with pytest.raises(ValueError, match="unrecognized"):
         repair_owned_path(
             runtime_root=unrelated,
-            checkout=tmp_path / "mmseg-path-a",
-            probe=tmp_path / "hosted_current-five-model-probe",
+            checkout=tmp_path / "mmsegmentation",
+            probe=tmp_path / "hermetic-core-model-probe",
             expected_commit="a" * 40,
         )
     assert (unrelated / "user-data.txt").is_file()

@@ -14,10 +14,7 @@ from typing import Any
 from edgeguard.serialization import canonical_json
 
 ROOT = Path(__file__).parents[2]
-DEFAULT_NOTEBOOKS = (
-    ROOT / "notebooks/EdgeGuard_Data_Preflight_Colab.ipynb",
-    ROOT / "notebooks/EdgeGuard_Road_Colab.ipynb",
-)
+DEFAULT_NOTEBOOKS = (ROOT / "notebooks/EdgeGuard_Master_Colab.ipynb",)
 
 
 def execute_notebook_contract(path: Path, drive_root: Path, content_root: Path) -> dict[str, Any]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -78,29 +79,24 @@ def _letterbox_image(
     return tensor, (left, top, left + resized.width, top + resized.height)
 
 
-def predict_onnx(
+def _predict_with_runner(
     image: Image.Image,
-    model_path: Path,
     *,
-    input_size: tuple[int, int] = (512, 1024),
-    session: Any | None = None,
+    input_size: tuple[int, int],
+    backend: str,
+    metadata: dict[str, Any],
+    run: Callable[[np.ndarray], tuple[np.ndarray, float]],
 ) -> InferenceResult:
-    """Run a validated static-shape semantic ONNX graph on CPU."""
-    try:
-        ort = __import__("onnxruntime")
-    except ModuleNotFoundError as error:
-        raise RuntimeError("install the rescue/Colab dependencies for ONNX inference") from error
-    active_session = session or ort.InferenceSession(
-        str(model_path), providers=["CPUExecutionProvider"]
-    )
+    """Letterbox, run one engine call, and un-letterbox logits into one result.
+
+    Shared by every backend (ONNX Runtime, TensorRT, ...) so the preprocessing/
+    postprocessing geometry stays identical regardless of which engine produced
+    the raw NCHW logits.
+    """
     tensor, bounds = _letterbox_image(image, input_size)
-    input_name = active_session.get_inputs()[0].name
-    output_name = active_session.get_outputs()[0].name
-    started = time.perf_counter()
-    logits = active_session.run([output_name], {input_name: tensor})[0]
-    latency_ms = (time.perf_counter() - started) * 1000.0
+    logits, latency_ms = run(tensor)
     if logits.ndim != 4 or logits.shape[0] != 1:
-        raise RuntimeError(f"unexpected ONNX logits shape: {logits.shape}")
+        raise RuntimeError(f"unexpected {backend} logits shape: {logits.shape}")
     raw = np.asarray(logits[0], dtype=np.float32)
     left, top, right, bottom = bounds
     scale_y = raw.shape[1] / input_size[0]
@@ -117,9 +113,63 @@ def predict_onnx(
         confidence=resize_scalar(confidence, original_size),
         entropy=resize_scalar(entropy, original_size),
         latency_ms=latency_ms,
-        backend="onnxruntime_cpu",
-        metadata={"model": model_path.name, "raw_logits_shape": list(raw.shape)},
+        backend=backend,
+        metadata={**metadata, "raw_logits_shape": list(raw.shape)},
         logits=raw,
+    )
+
+
+def predict_onnx(
+    image: Image.Image,
+    model_path: Path,
+    *,
+    input_size: tuple[int, int] = (512, 1024),
+    session: Any | None = None,
+) -> InferenceResult:
+    """Run a validated static-shape semantic ONNX graph on CPU."""
+    try:
+        ort = __import__("onnxruntime")
+    except ModuleNotFoundError as error:
+        raise RuntimeError("install the rescue/Colab dependencies for ONNX inference") from error
+    active_session = session or ort.InferenceSession(
+        str(model_path), providers=["CPUExecutionProvider"]
+    )
+    input_name = active_session.get_inputs()[0].name
+    output_name = active_session.get_outputs()[0].name
+
+    def run(tensor: np.ndarray) -> tuple[np.ndarray, float]:
+        started = time.perf_counter()
+        logits = active_session.run([output_name], {input_name: tensor})[0]
+        return logits, (time.perf_counter() - started) * 1000.0
+
+    return _predict_with_runner(
+        image,
+        input_size=input_size,
+        backend="onnxruntime_cpu",
+        metadata={"model": model_path.name},
+        run=run,
+    )
+
+
+def predict_tensorrt(
+    image: Image.Image,
+    runner: Any,
+    *,
+    input_size: tuple[int, int] = (512, 1024),
+) -> InferenceResult:
+    """Run one frame through a target-device TensorRT engine runner.
+
+    ``runner`` is any object exposing ``infer(tensor) -> (logits, latency_ms)``,
+    matching ``scripts.jetson.benchmark.TensorRTTorchRunner``. Only meaningful on
+    the real Jetson device (requires CUDA PyTorch and TensorRT); reuses the same
+    letterbox/un-letterbox geometry as ``predict_onnx``.
+    """
+    return _predict_with_runner(
+        image,
+        input_size=input_size,
+        backend="tensorrt",
+        metadata={},
+        run=runner.infer,
     )
 
 

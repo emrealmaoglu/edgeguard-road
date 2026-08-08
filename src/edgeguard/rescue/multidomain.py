@@ -23,7 +23,7 @@ SUPPORTED_DATASETS = TRAINING_DATASETS + EVALUATION_DATASETS
 SEALED_DATASETS = ("wilddash2", "muses", "kitti")
 ROLE_RATIOS = {"train_fit": 0.80, "train_select": 0.15, "train_calibration": 0.05}
 EXPECTED_TRAIN_COUNTS = {"cityscapes": 2_975, "bdd100k": 7_000, "idd20k": 14_027}
-EXPECTED_VAL_COUNTS = {"bdd100k": 1_000, "idd20k": 2_036}
+EXPECTED_VAL_COUNTS = {"cityscapes": 500, "bdd100k": 1_000, "idd20k": 2_036}
 
 
 @dataclass(frozen=True)
@@ -307,13 +307,193 @@ def validate_dataset_manifest(
     return payload
 
 
-def freeze_candidate_manifest(candidate_path: Path, output_path: Path) -> dict[str, Any]:
-    """Create an immutable frozen copy after an explicit human review action."""
+def manifest_image_and_mask_paths(
+    payload: dict[str, Any], *, roles: Iterable[str] | None = None
+) -> list[tuple[str, Path, Path]]:
+    """Resolve every record's on-disk image/canonical-mask path from a validated manifest.
+
+    Mirrors ``EdgeGuardManifestDataset.load_data_list``'s path resolution so both the
+    real MMSeg dataset and any pre-flight staging check agree on where each sample lives.
+    """
+    dataset_root = Path(str(payload["dataset_root"]))
+    prepared_root = Path(str(payload["prepared_root"]))
+    dataset_id = payload["dataset_id"]
+    selected_roles = payload["roles"] if roles is None else {r: payload["roles"][r] for r in roles}
+    resolved: list[tuple[str, Path, Path]] = []
+    for records in selected_roles.values():
+        for record in records:
+            canonical = record.get("canonical_mask")
+            if canonical is None:
+                raise ValueError("scientific segmentation record has no canonical mask")
+            mask_root = prepared_root if dataset_id == "idd20k" else dataset_root
+            resolved.append(
+                (
+                    str(record["sample_id"]),
+                    dataset_root / str(record["image"]),
+                    mask_root / str(canonical),
+                )
+            )
+    return resolved
+
+
+def verify_manifest_data_is_staged(
+    manifest_path: Path, *, max_reported_missing: int = 20
+) -> dict[str, Any]:
+    """Fail closed if a frozen manifest's image/mask files are not on local disk.
+
+    ``validate_dataset_manifest`` only checks the manifest JSON itself; it does not
+    confirm that the dataset/prepared roots it names still contain real files. Without
+    this check, a wiped or partially restored local data directory is only discovered
+    hours later when a training subprocess's ``LoadImageFromFile`` step fails, deep into
+    a Colab GPU session.
+    """
+    payload = validate_dataset_manifest(manifest_path)
+    resolved = manifest_image_and_mask_paths(payload)
+    missing: list[str] = []
+    for sample_id, image_path, mask_path in resolved:
+        if not image_path.is_file():
+            missing.append(f"{sample_id}: missing image {image_path}")
+        elif not mask_path.is_file():
+            missing.append(f"{sample_id}: missing mask {mask_path}")
+    if missing:
+        shown = ", ".join(missing[:max_reported_missing])
+        remaining = len(missing) - min(len(missing), max_reported_missing)
+        suffix = f" (+{remaining} more)" if remaining > 0 else ""
+        raise FileNotFoundError(
+            f"{manifest_path.name}: {len(missing)} of {len(resolved)} staged samples are "
+            f"missing on local disk: {shown}{suffix}"
+        )
+    return {
+        "manifest": str(manifest_path),
+        "dataset_id": payload["dataset_id"],
+        "checked_samples": len(resolved),
+    }
+
+
+def validate_manifest_review_receipt(
+    receipt_path: Path,
+    *,
+    candidate_path: Path,
+    dataset_id: str,
+    campaign_id: str,
+    project_commit: str,
+) -> dict[str, Any]:
+    """Verify the explicit human decision that authorizes one candidate freeze."""
+    if not receipt_path.is_file():
+        raise PermissionError("manifest freeze requires a human review receipt")
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if (
+        payload.get("schema_version") != "2.0"
+        or payload.get("record_type") != "edgeguard_manifest_review_receipt"
+    ):
+        raise ValueError("invalid manifest review receipt")
+    if payload.get("decision") != "freeze_approved" or payload.get("human_approved") is not True:
+        raise PermissionError("manifest review receipt does not approve freezing")
+    if payload.get("dataset_id") != dataset_id:
+        raise ValueError("manifest review receipt names another dataset")
+    if payload.get("campaign_id") != campaign_id:
+        raise ValueError("manifest review receipt belongs to another campaign")
+    if payload.get("project_commit") != project_commit:
+        raise ValueError("manifest review receipt belongs to another project commit")
+    if payload.get("candidate_manifest_sha256") != sha256_file(candidate_path):
+        raise ValueError("manifest review receipt candidate hash mismatch")
+    reviewer = payload.get("reviewer")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        raise ValueError("manifest review receipt must identify the human reviewer")
+    return payload
+
+
+def freeze_candidate_manifest(
+    candidate_path: Path,
+    output_path: Path,
+    *,
+    review_receipt_path: Path | None = None,
+    campaign_id: str | None = None,
+    project_commit: str | None = None,
+) -> dict[str, Any]:
+    """Create an immutable frozen copy only after a hash-bound human review receipt."""
     payload = validate_dataset_manifest(candidate_path, require_frozen=False)
     if payload.get("split_state") != "candidate_requires_human_freeze":
         raise ValueError("only a candidate manifest can be frozen")
+    if review_receipt_path is None or campaign_id is None or project_commit is None:
+        raise PermissionError(
+            "manifest freeze requires a review receipt, campaign, and project commit"
+        )
+    review = validate_manifest_review_receipt(
+        review_receipt_path,
+        candidate_path=candidate_path,
+        dataset_id=str(payload["dataset_id"]),
+        campaign_id=campaign_id,
+        project_commit=project_commit,
+    )
     payload["split_state"] = "frozen"
     payload["human_freeze_approved"] = True
+    payload["campaign_id"] = campaign_id
+    payload["project_commit"] = project_commit
+    payload["approved_candidate_sha256"] = sha256_file(candidate_path)
+    payload["human_review_receipt_sha256"] = sha256_file(review_receipt_path)
+    payload["human_reviewer"] = review["reviewer"]
+    payload["manifest_sha256"] = _manifest_hash(payload)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(canonical_json(payload) + "\n", encoding="utf-8")
+    return payload
+
+
+def freeze_candidate_manifest_by_policy(
+    candidate_path: Path,
+    output_path: Path,
+    *,
+    policy_path: Path,
+    campaign_id: str,
+    project_commit: str,
+) -> dict[str, Any]:
+    """Freeze an exact source candidate or post-release validation under owner policy."""
+    payload = validate_dataset_manifest(candidate_path, require_frozen=False)
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    if (
+        policy.get("schema_version") != "1.0"
+        or policy.get("record_type") != "edgeguard_owner_authorization_policy"
+        or policy.get("decision") != "preauthorize_exact_pipeline"
+        or policy.get("owner_approved") is not True
+        or policy.get("campaign_id") != campaign_id
+    ):
+        raise PermissionError("dataset policy is not valid for this campaign")
+    if payload.get("split_state") != "candidate_requires_human_freeze":
+        raise ValueError("only a candidate manifest can be policy-frozen")
+    dataset_id = str(payload["dataset_id"])
+    if dataset_id not in set(policy.get("scientific_sources", [])):
+        raise PermissionError("dataset is outside the owner-authorized source set")
+    roles = set(payload.get("roles", {}))
+    if roles == {"official_source_val"}:
+        if policy.get("official_source_validation_allowed_after_acceptance") is not True:
+            raise PermissionError("official source validation is not authorized")
+        if payload.get("source_split") != "val" or payload.get("scientific_eligible") is not True:
+            raise ValueError("official validation candidate is incomplete or ineligible")
+        approval_scope = "post_acceptance_official_source_validation"
+    else:
+        expected = policy.get("training_manifest_candidates", {}).get(dataset_id)
+        if not isinstance(expected, dict):
+            raise PermissionError("training candidate has no exact policy identity")
+        if sha256_file(candidate_path) != expected.get("file_sha256"):
+            raise ValueError("training candidate hash differs from owner authorization")
+        valid_count = sum(int(value) for value in payload.get("counts", {}).values())
+        if valid_count != int(expected.get("expected_valid_samples", -1)):
+            raise ValueError("training candidate count differs from owner authorization")
+        excluded = payload.get("excluded_samples", [])
+        if not isinstance(excluded, list) or len(excluded) != int(
+            expected.get("expected_quarantined_samples", -1)
+        ):
+            raise ValueError("training candidate quarantine differs from owner authorization")
+        approval_scope = "exact_training_manifest_candidate"
+    payload["split_state"] = "frozen"
+    payload["human_freeze_approved"] = True
+    payload["approval_method"] = "owner_preauthorized_policy"
+    payload["approval_scope"] = approval_scope
+    payload["campaign_id"] = campaign_id
+    payload["project_commit"] = project_commit
+    payload["approved_candidate_sha256"] = sha256_file(candidate_path)
+    payload["authorization_policy_sha256"] = sha256_file(policy_path)
+    payload["human_reviewer"] = policy.get("authorized_by")
     payload["manifest_sha256"] = _manifest_hash(payload)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(canonical_json(payload) + "\n", encoding="utf-8")
@@ -373,6 +553,94 @@ def build_cityscapes_dataset_manifest(
         "official_validation_role": "frozen_source_domain_final_only",
     }
     payload["manifest_sha256"] = _manifest_hash(payload)
+    output_path.write_text(canonical_json(payload) + "\n", encoding="utf-8")
+    return payload
+
+
+def build_cityscapes_official_validation_manifest(
+    dataset_root: Path,
+    audit_summary: dict[str, Any],
+    output_path: Path,
+    *,
+    source_manifests: Sequence[Path],
+    strict_count: bool = True,
+) -> dict[str, Any]:
+    """Build a review-required Cityscapes val manifest isolated from training roles."""
+    if (
+        audit_summary.get("record_type") != "cityscapes_dataset_audit"
+        or audit_summary.get("source_split") != "val"
+        or audit_summary.get("audit_passed") is not True
+    ):
+        raise ValueError("Cityscapes official validation requires a passing val audit")
+    samples = audit_summary.get("samples")
+    if not isinstance(samples, list) or not samples:
+        raise ValueError("Cityscapes val audit has no valid samples")
+    training_ids: set[str] = set()
+    training_groups: set[str] = set()
+    training_image_hashes: set[str] = set()
+    source_hashes: list[str] = []
+    for manifest_path in source_manifests:
+        manifest = validate_dataset_manifest(manifest_path)
+        source_hashes.append(sha256_file(manifest_path))
+        for source_records in manifest["roles"].values():
+            for record in source_records:
+                training_ids.add(str(record["sample_id"]))
+                training_groups.add(str(record["group_id"]))
+                if record.get("image_sha256"):
+                    training_image_hashes.add(str(record["image_sha256"]))
+    records: list[dict[str, Any]] = []
+    for sample in samples:
+        image = str(sample["image"])
+        image_path = dataset_root / image
+        image_sha = sha256_file(image_path)
+        sample_id = str(sample["sample_id"])
+        group_id = str(sample["group_id"])
+        if (
+            sample_id in training_ids
+            or group_id in training_groups
+            or image_sha in training_image_hashes
+        ):
+            raise ValueError("Cityscapes official validation overlaps a training source")
+        records.append(
+            {
+                "sample_id": sample_id,
+                "dataset_id": "cityscapes",
+                "group_id": group_id,
+                "image": image,
+                "mask": str(sample["mask"]),
+                "canonical_mask": str(sample["mask"]),
+                "condition": None,
+                "city": sample.get("city"),
+                "image_sha256": image_sha,
+                "perceptual_hash": f"{_image_perceptual_hash(image_path):016x}",
+            }
+        )
+    expected = EXPECTED_VAL_COUNTS["cityscapes"]
+    eligible = len(records) == expected if strict_count else bool(records)
+    payload: dict[str, Any] = {
+        "schema_version": "2.0",
+        "record_type": "edgeguard_dataset_manifest",
+        "dataset_id": "cityscapes",
+        "dataset_root": str(dataset_root.resolve()),
+        "prepared_root": str(output_path.parent.resolve()),
+        "ontology_sha256": sha256_file(
+            Path(__file__).parents[3] / "configs/dataset/semantic_ontology_v2.yaml"
+        ),
+        "mapping_version": "cityscapes-trainids-v1",
+        "source_split": "val",
+        "source_manifest_sha256s": sorted(source_hashes),
+        "audit_summary_sha256": sha256_payload(audit_summary),
+        "split_state": "candidate_requires_human_freeze",
+        "human_freeze_approved": False,
+        "sealed": True,
+        "audit_passed": True,
+        "scientific_eligible": eligible,
+        "roles": {"official_source_val": records},
+        "counts": {"official_source_val": len(records)},
+        "official_validation_role": "frozen_source_domain_final_only",
+    }
+    payload["manifest_sha256"] = _manifest_hash(payload)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(canonical_json(payload) + "\n", encoding="utf-8")
     return payload
 
@@ -627,9 +895,15 @@ def audit_training_dataset(
     source_hashes: set[str] = set()
     source_perceptual: list[tuple[str, int]] = []
     for manifest_path in source_manifests:
-        source = validate_dataset_manifest(manifest_path)
+        source = validate_dataset_manifest(manifest_path, require_frozen=False)
         if source["dataset_id"] not in TRAINING_DATASETS:
             raise ValueError("source overlap audit accepts only training-domain manifests")
+        if source.get("split_state") not in {"candidate_requires_human_freeze", "frozen"}:
+            raise ValueError(
+                "source overlap audit requires a reviewed candidate or frozen manifest"
+            )
+        if source.get("audit_passed") is not True:
+            raise ValueError("source overlap audit requires an audit-passed source manifest")
         source_root = Path(source["dataset_root"])
         for source_records in source["roles"].values():
             for record in source_records:
@@ -703,8 +977,7 @@ def audit_training_dataset(
             "maximum_count": quarantine_limit,
             "allowed_error_codes": sorted(allowed_quarantine_codes),
             "fail_closed_error_codes": sorted(
-                {str(row["error_code"]) for row in invalid}
-                - allowed_quarantine_codes
+                {str(row["error_code"]) for row in invalid} - allowed_quarantine_codes
             ),
         },
         "roles": {

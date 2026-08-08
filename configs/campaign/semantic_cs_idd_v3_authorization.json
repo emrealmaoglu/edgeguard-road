@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "record_type": "edgeguard_owner_authorization_policy",
+  "decision": "preauthorize_exact_pipeline",
+  "owner_approved": true,
+  "authorized_by": "project-owner:emrealmaoglu",
+  "campaign_id": "semantic-cs-idd-v3",
+  "scientific_sources": [
+    "cityscapes",
+    "idd20k"
+  ],
+  "training_manifest_candidates": {
+    "cityscapes": {
+      "file_sha256": "74801b9c174778c7c13f5edbed6fdbe9d548139780d6906c6e940fee5281d8db",
+      "expected_valid_samples": 2975,
+      "expected_quarantined_samples": 0
+    },
+    "idd20k": {
+      "file_sha256": "ba76d17b94dfaed93036ba2b3c46675c0b34fde1766f6879576ec862e0ac1762",
+      "expected_valid_samples": 14018,
+      "expected_quarantined_samples": 9
+    }
+  },
+  "final_models": [
+    "segformer_b0",
+    "fast_scnn",
+    "pidnet_s",
+    "ddrnet_23_slim",
+    "bisenetv2"
+  ],
+  "selection_role": "train_select",
+  "selection_domains": [
+    "cityscapes",
+    "idd20k"
+  ],
+  "official_source_validation_allowed_after_acceptance": true,
+  "automatic_external_or_sealed_data_access": false,
+  "tensorrt_engine_build_location": "target_jetson_only"
+}

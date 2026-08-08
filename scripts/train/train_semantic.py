@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+from edgeguard.rescue.mmseg_runtime import resolve_auto_precision
 from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
 from edgeguard.telemetry.longrun import (
     LongRunStatus,
@@ -233,6 +234,43 @@ def _probe_model(
         align_corners=model_spec.logits.align_corners,
     )
     aligned_shape = validate_native_logits_tensor(aligned, is_tensor=torch.is_tensor)
+    fp16_finite_verified = False
+    amp_dtype_name: str | None = None
+    if device_name == "cuda":
+        model.zero_grad(set_to_none=True)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+        # Probe the same AMP dtype real training actually selects (resolve_auto_precision
+        # prefers bf16 whenever the device supports it) instead of hardcoding float16.
+        # float16's narrow exponent range can overflow to Inf in wide multi-scale modules
+        # (e.g. PIDNet's SPP) even when the real bf16-selected training run never would;
+        # a hardcoded fp16 probe here would then fail models the actual run cannot fail on.
+        amp_dtype_name = resolve_auto_precision("auto", torch=torch)
+        amp_dtype = {
+            "fp16": torch.float16,
+            "bf16": torch.bfloat16,
+            "fp32": torch.float32,
+        }[amp_dtype_name]
+        scaler = torch.cuda.amp.GradScaler(enabled=amp_dtype_name == "fp16")
+        with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_dtype_name != "fp32"):
+            fp16_output = model(inputs, mode="tensor")
+            if isinstance(fp16_output, (list, tuple)):
+                if not fp16_output:
+                    raise ValueError("framework returned an empty AMP native-logit sequence")
+                fp16_output = fp16_output[0]
+            validate_native_logits_tensor(fp16_output, is_tensor=torch.is_tensor)
+            fp16_loss = fp16_output.float().square().mean()
+        if not bool(torch.isfinite(fp16_output).all()) or not bool(torch.isfinite(fp16_loss)):
+            raise ValueError(f"AMP/{amp_dtype_name} stack-probe output or loss is non-finite")
+        scaler.scale(fp16_loss).backward()
+        scaler.unscale_(optimizer)
+        gradients = [
+            parameter.grad for parameter in model.parameters() if parameter.grad is not None
+        ]
+        if not gradients or not all(bool(torch.isfinite(gradient).all()) for gradient in gradients):
+            raise ValueError(f"AMP/{amp_dtype_name} stack-probe gradient is missing or non-finite")
+        scaler.step(optimizer)
+        scaler.update()
+        fp16_finite_verified = True
     return {
         "experiment_id": model_spec.experiment_id,
         "model_family": model_spec.model_family.value,
@@ -251,6 +289,8 @@ def _probe_model(
             int(torch.cuda.max_memory_reserved()) if device_name == "cuda" else None
         ),
         "synthetic_scalar_probe_loss": float(synthetic_loss.detach().cpu()),
+        "fp16_finite_verified": fp16_finite_verified,
+        "amp_probe_dtype": amp_dtype_name,
         "batch_norm_mode": "frozen_eval_for_batch_size_one_probe",
         "scientific_accuracy_evidence": False,
     }
@@ -1151,8 +1191,9 @@ def run_stack_probe(
     *,
     device_name: str = "cuda",
     allow_dirty_project: bool = False,
+    model_families: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Run five synthetic CPU/CUDA probes and one exact checkpoint resume."""
+    """Run selected synthetic CPU/CUDA probes and exact checkpoint resumes."""
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError("stack-probe output directory must be absent or empty")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1165,6 +1206,15 @@ def run_stack_probe(
     framework = load_semantic_framework_config(config_root / "framework_mmseg.yaml")
     common = load_semantic_common_config(config_root / "common_cityscapes.yaml")
     models = load_semantic_model_suite(config_root)
+    if model_families is not None:
+        requested = tuple(dict.fromkeys(model_families))
+        available = {model.model_family.value: model for model in models}
+        unknown = sorted(set(requested) - set(available))
+        if unknown:
+            raise ValueError(f"unknown stack-probe model families: {unknown}")
+        models = tuple(available[name] for name in requested)
+        if not models:
+            raise ValueError("stack-probe model selection cannot be empty")
     if _git(mmseg_checkout, "rev-parse", "HEAD") != framework.commit:
         raise ValueError("MMSegmentation checkout commit mismatch")
 
@@ -1309,6 +1359,12 @@ def _parser() -> argparse.ArgumentParser:
     probe.add_argument("--project-root", type=Path, required=True)
     probe.add_argument("--project-commit", required=True)
     probe.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
+    probe.add_argument(
+        "--model",
+        action="append",
+        dest="models",
+        help="Model family to probe; repeat to select a staged subset.",
+    )
     train = subparsers.add_parser("train")
     train.add_argument("--config-root", type=Path, required=True)
     train.add_argument("--model-config", type=Path, required=True)
@@ -1344,6 +1400,7 @@ def main() -> int:
             args.project_root,
             args.project_commit,
             device_name=args.device,
+            model_families=tuple(args.models) if args.models else None,
         )
     else:
         result = run_real_training(

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +16,9 @@ import pytest
 import yaml
 
 from edgeguard.rescue.colab_data import (
+    _HashingProgressReader,
     _load_idd_shard_index,
+    _StallTimeout,
     copy_archive_to_local,
     create_dataset_bundle,
     initialize_drive_layout,
@@ -406,3 +411,59 @@ def test_kaggle_bdd_bundle_is_physically_separate_and_science_blocked(tmp_path: 
         allow_ineligible=True,
     )
     assert staged["datasets"][0]["bundle_profile"] == "canonical_v1:kaggle_mirror"
+
+
+class _StalledStream:
+    """A stream whose read() never returns in time, like a hung Drive FUSE mount."""
+
+    def read(self, size: int = -1) -> bytes:
+        time.sleep(2)
+        return b"unreachable"
+
+    def __enter__(self) -> _StalledStream:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+def test_hashing_reader_raises_on_a_stalled_read_instead_of_hanging() -> None:
+    reader = _HashingProgressReader(
+        _StalledStream(), label="fixture", phase="test", stall_timeout_seconds=1
+    )
+    started = time.monotonic()
+    with pytest.raises(_StallTimeout, match="Drive/FUSE hang"):
+        reader.read(1024)
+    assert time.monotonic() - started < 2
+
+
+def test_hashing_reader_stall_guard_does_not_disturb_normal_reads() -> None:
+    reader = _HashingProgressReader(
+        io.BytesIO(b"payload-bytes"), label="fixture", phase="test", stall_timeout_seconds=1
+    )
+    assert reader.read(1024) == b"payload-bytes"
+    assert reader.hexdigest() == hashlib.sha256(b"payload-bytes").hexdigest()
+
+
+def test_archive_copy_retries_past_a_stalled_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "drive/archive.zip"
+    source.parent.mkdir()
+    source.write_bytes(b"archive-payload")
+    destination = tmp_path / "content/archive.zip"
+    calls = 0
+    real_open = Path.open
+
+    def stalling_open(self: Path, *args: object, **kwargs: object) -> object:
+        nonlocal calls
+        if self == source:
+            calls += 1
+            if calls == 1:
+                return _StalledStream()
+        return real_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "open", stalling_open)
+    receipt = copy_archive_to_local(source, destination, attempts=3, stall_timeout_seconds=1)
+    assert receipt["attempts"] == 2
+    assert destination.read_bytes() == source.read_bytes()

@@ -26,12 +26,12 @@ TARGETS = (
     "screening",
     "hpo",
     "final",
-    "source_eval",
+    "evaluate",
     "export",
-    "review",
+    "report",
 )
 TRAINING_STAGES = ("smoke", "pilot", "screening", "final")
-RUNTIME_TARGETS = frozenset(TARGETS[1:8])
+RUNTIME_TARGETS = frozenset(TARGETS[1:])
 
 
 def utc_now() -> str:
@@ -359,9 +359,13 @@ def completion_is_valid(
     return True
 
 
-def quarantine_incomplete(output_root: Path) -> Path | None:
-    """Move a partial stage aside so a clean idempotent retry cannot mistake it for success."""
-    if not output_root.exists() or completion_is_valid(output_root):
+def quarantine_incomplete(
+    output_root: Path, *, expected_inputs: dict[str, str] | None = None
+) -> Path | None:
+    """Move stale or partial output aside before a clean idempotent retry."""
+    if not output_root.exists() or completion_is_valid(
+        output_root, expected_inputs=expected_inputs
+    ):
         return None
     suffix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     quarantine = output_root.with_name(f"{output_root.name}.incomplete-{suffix}")
@@ -451,9 +455,7 @@ def planned_stages(target: str) -> tuple[str, ...]:
     """Return ordered campaign prerequisites for one notebook target."""
     if target not in TARGETS:
         raise ValueError(f"target must be one of: {', '.join(TARGETS)}")
-    if target == "review":
-        return ("review",)
-    order = ("audit", "smoke", "pilot", "screening", "hpo", "final", "source_eval", "export")
+    order = ("audit", "smoke", "pilot", "screening", "hpo", "final", "evaluate", "export", "report")
     return order[: order.index(target) + 1]
 
 
@@ -463,11 +465,10 @@ def action_requirements(
     """Resolve staging/runtime needs without touching Drive or the local runtime."""
     stages = planned_stages(target)
     datasets: list[str] = []
-    if target != "review":
-        datasets.extend(("cityscapes", "idd20k"))
+    datasets.extend(("cityscapes", "idd20k"))
     if provisional_bdd:
         datasets.append("bdd100k")
-    if allow_final_data and target in {"source_eval", "export"}:
+    if allow_final_data and target in {"evaluate", "export", "report"}:
         datasets.append("cityscapes_official_val")
     return {
         "target": target,
