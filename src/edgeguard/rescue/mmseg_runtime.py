@@ -279,8 +279,7 @@ def _evaluation_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
         {
             "type": "Pad",
             "size": config.crop_size,
-            "pad_val": 0,
-            "seg_pad_val": config.ignore_index,
+            "pad_val": {"img": 0, "seg": config.ignore_index},
         },
         {"type": "PackSegInputs"},
     ]
@@ -295,7 +294,7 @@ def _inference_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
             "scale": (config.crop_size[1], config.crop_size[0]),
             "keep_ratio": True,
         },
-        {"type": "Pad", "size": config.crop_size, "pad_val": 0},
+        {"type": "Pad", "size": config.crop_size, "pad_val": {"img": 0}},
         {"type": "PackSegInputs"},
     ]
 
