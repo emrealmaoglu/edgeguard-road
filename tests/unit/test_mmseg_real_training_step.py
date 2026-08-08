@@ -31,7 +31,12 @@ from edgeguard.models.semantic_local import (
     semantic_environment_ready,
 )
 from edgeguard.rescue.config import load_rescue_config
-from edgeguard.rescue.mmseg_runtime import build_training_config, install_mmcv_lite_guard
+from edgeguard.rescue.mmseg_runtime import (
+    _evaluation_pipeline,
+    _inference_pipeline,
+    build_training_config,
+    install_mmcv_lite_guard,
+)
 from edgeguard.serialization import sha256_file, sha256_payload
 
 _MMSEG_CHECKOUT = local_mmseg_checkout_from_environment()
@@ -225,3 +230,65 @@ def test_weighted_ce_ablation_changes_every_models_resolved_config(
     )
 
     assert dict(ce_config.model) != dict(weighted_config.model)
+
+
+def test_evaluation_and_inference_pad_produce_crop_size_shaped_output(tmp_path: Path) -> None:
+    """The evaluation/inference `Pad` step must output real `crop_size`, not a
+    height/width swap.
+
+    A real L4 run's `smoke`/`segformer_b0` interrupt+resume cycle completed
+    training and reached its single end-of-stage validation pass for the
+    first time (after the `seg_pad_val`/`last_checkpoint` fixes), which is
+    exactly where this next bug would have surfaced: `mmcv.transforms.Pad`
+    documents its `size` constructor argument as `(w, h)` and internally
+    does `self.size[::-1]` before calling `mmcv.impad(shape=...)`, which
+    itself expects `(h, w)`. `_evaluation_pipeline`/`_inference_pipeline`
+    passed `config.crop_size` (this codebase's own `(h, w)` convention,
+    used unchanged everywhere else, e.g. `RandomCrop`) directly as `Pad`'s
+    `size`, silently padding to the transposed shape. Invisible for a
+    square crop_size or when frame content coincidentally survives the
+    swap; real Cityscapes uses a non-square 512x1024 crop and would not.
+    """
+    install_mmcv_lite_guard()
+    import numpy as np
+    from mmengine.dataset import Compose
+    from mmseg.utils import register_all_modules
+
+    register_all_modules(init_default_scope=True)
+    protocol = load_rescue_config(Path("configs/rescue/semantic_first.yaml"))
+    # A non-square crop_size distinct from the frozen 512x1024 protocol
+    # value: a height/width swap must fail this shape assertion regardless
+    # of which of the two dimensions happens to be larger. The source
+    # image/mask stay larger than crop_size in both dimensions, matching
+    # real Cityscapes/IDD20K (natively far larger than any training crop):
+    # `Pad` never crops, only adds padding, so a source smaller than
+    # crop_size cannot exercise this in a representative way.
+    from dataclasses import replace
+
+    protocol = replace(protocol, crop_size=(200, 400))
+    image_path = tmp_path / "img.png"
+    mask_path = tmp_path / "mask.png"
+    Image.fromarray((np.random.rand(300, 500, 3) * 255).astype(np.uint8)).save(image_path)
+    Image.fromarray(np.random.randint(0, 19, size=(300, 500)).astype(np.uint8)).save(mask_path)
+
+    eval_pipeline = Compose(_evaluation_pipeline(protocol))
+    result = eval_pipeline(
+        {
+            "img_path": str(image_path),
+            "seg_map_path": str(mask_path),
+            "seg_fields": [],
+            "reduce_zero_label": False,
+        }
+    )
+    # The packed input tensor (what the model actually forwards) must match
+    # crop_size exactly; the ground-truth mask is deliberately left at its
+    # native resolution (predictions are resized back to `ori_shape` by
+    # `EncoderDecoder.postprocess_result`, not the mask forward to
+    # crop_size), so only `inputs`/`img_shape` assert the fixed dimension.
+    assert tuple(result["inputs"].shape[-2:]) == protocol.crop_size
+    assert result["data_samples"].img_shape == protocol.crop_size
+
+    inference_pipeline = Compose(_inference_pipeline(protocol))
+    inference_result = inference_pipeline({"img_path": str(image_path), "seg_fields": []})
+    assert tuple(inference_result["inputs"].shape[-2:]) == protocol.crop_size
+    assert inference_result["data_samples"].img_shape == protocol.crop_size
