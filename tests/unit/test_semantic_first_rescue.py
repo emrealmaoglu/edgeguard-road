@@ -23,6 +23,7 @@ from edgeguard.rescue.mmseg_runtime import (
     _acdc_dataset,
     build_training_config,
     materialize_role_file,
+    resolve_auto_precision,
     validate_scientific_split,
 )
 from edgeguard.rescue.multidomain import build_cityscapes_official_validation_manifest
@@ -329,6 +330,54 @@ def test_acdc_uses_the_original_condition_split_sequence_layout(tmp_path: Path) 
     }
     with pytest.raises(FileNotFoundError, match="rgb_anon/night/val"):
         _acdc_dataset(tmp_path, protocol, condition="night")
+
+
+class _FakeCuda:
+    def __init__(self, *, available: bool, bf16_supported: bool) -> None:
+        self._available = available
+        self._bf16_supported = bf16_supported
+
+    def is_available(self) -> bool:
+        return self._available
+
+    def is_bf16_supported(self) -> bool:
+        return self._bf16_supported
+
+
+class _FakeTorch:
+    def __init__(self, *, available: bool, bf16_supported: bool) -> None:
+        self.cuda = _FakeCuda(available=available, bf16_supported=bf16_supported)
+
+
+def test_resolve_auto_precision_prefers_bf16_over_fp16_on_capable_hardware() -> None:
+    # A real L4 (or any Ampere/Ada-class GPU) supports bf16; a stack-probe or
+    # training call that hardcodes fp16 here would test a precision the real
+    # "auto" policy never actually selects on this hardware.
+    assert (
+        resolve_auto_precision("auto", torch=_FakeTorch(available=True, bf16_supported=True))
+        == "bf16"
+    )
+
+
+def test_resolve_auto_precision_falls_back_to_fp16_without_bf16_support() -> None:
+    assert (
+        resolve_auto_precision("auto", torch=_FakeTorch(available=True, bf16_supported=False))
+        == "fp16"
+    )
+
+
+def test_resolve_auto_precision_uses_fp32_without_cuda() -> None:
+    assert (
+        resolve_auto_precision("auto", torch=_FakeTorch(available=False, bf16_supported=False))
+        == "fp32"
+    )
+
+
+def test_resolve_auto_precision_passes_through_explicit_choices() -> None:
+    torch_module = _FakeTorch(available=True, bf16_supported=True)
+    assert resolve_auto_precision("fp32", torch=torch_module) == "fp32"
+    assert resolve_auto_precision("fp16", torch=torch_module) == "fp16"
+    assert resolve_auto_precision("bf16", torch=torch_module) == "bf16"
 
 
 def test_visualization_and_preprocessing_contracts() -> None:

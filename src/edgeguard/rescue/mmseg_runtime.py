@@ -110,6 +110,27 @@ def _config_import() -> Any:
         raise RuntimeError("install MMEngine before resolving an MMSeg config") from error
 
 
+def resolve_auto_precision(precision: str, *, torch: Any) -> str:
+    """Resolve "auto" to the project's real training precision policy.
+
+    bf16 (same exponent range as fp32, so no overflow risk) is preferred over
+    fp16 whenever the device supports it; fp16 is only ever selected as a
+    fallback on hardware without bf16 support. Any code that probes/validates
+    "does this model survive mixed precision on this GPU" must resolve
+    "auto" through this same function instead of hardcoding a dtype, or the
+    probe can reject a model (e.g. on fp16 overflow in a wide multi-scale
+    module) that the real training run would never actually expose to that
+    dtype in the first place.
+    """
+    if precision != "auto":
+        return precision
+    if not torch.cuda.is_available():
+        return "fp32"
+    if bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)()):
+        return "bf16"
+    return "fp16"
+
+
 def _strip_pretrained(value: Any) -> None:
     if isinstance(value, dict):
         if "pretrained" in value:
@@ -769,13 +790,7 @@ def train_model(
         0 < intentional_interrupt_optimizer_step < resolved_max_steps
     ):
         raise ValueError("intentional interruption must be inside the optimizer-step budget")
-    if precision == "auto":
-        if not torch.cuda.is_available():
-            precision = "fp32"
-        elif bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)()):
-            precision = "bf16"
-        else:
-            precision = "fp16"
+    precision = resolve_auto_precision(precision, torch=torch)
     if precision not in {"fp32", "fp16", "bf16"}:
         raise ValueError("precision must be auto, fp32, fp16, or bf16")
     if precision == "bf16" and not bool(
