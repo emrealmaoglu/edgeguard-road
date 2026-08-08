@@ -2,17 +2,18 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `ff2642265a3cf377988de30a844a13a33ec34238`
+  `e3f3159a30372997aba00ad5543cdb0cd27a45ab`
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
   Jetson evidence remain external. Remote CI and claim-safe notebook execution have not yet
   been re-run at this commit (see Local gates). A real L4 run at the prior commit
-  (`b22fd12…`) passed the five-model AMP stack-probe (all five architectures, including
-  PIDNet-S) and full data staging, then failed building `val_dataloader` for every
-  model/stage with `TypeError: Pad.__init__() got an unexpected keyword argument
-  'seg_pad_val'`; this commit's fix for that failure is reproduced against the real pinned
-  MMSeg checkout, not yet re-confirmed on real L4 hardware (see Local gates).
+  (`ff26422…`) confirmed the AMP stack-probe and the `Pad`/`seg_pad_val` fix both work: all
+  five models passed the canary, and `smoke`/`segformer_b0` training actually started and
+  ran to the intentional interruption at step 25. The resume subprocess then failed with
+  `FileNotFoundError: recovery_25.pth can not be found.`; this commit's fix for that failure
+  is reproduced against the real pinned MMSeg/MMEngine stack, not yet re-confirmed on real
+  L4 hardware (see Local gates).
 
 ## What changed
 
@@ -92,41 +93,61 @@
   `dict(img=..., seg=...)` — there is no `seg_pad_val` argument at all. Fixed by combining
   both into `pad_val={"img": 0, "seg": config.ignore_index}`; `_inference_pipeline()`'s
   plain `pad_val=0` was likewise made explicit as `{"img": 0}` for consistency (behavior
-  unchanged — mmcv's `Pad` already treated a bare int as image-only padding). Reproduced
-  and fixed against the real pinned MMSeg checkout by building both pipelines through
-  `Compose()` with the mmseg registry scope active, the same way real training builds them
-  — not yet re-confirmed on real L4 hardware.
+  unchanged — mmcv's `Pad` already treated a bare int as image-only padding). This fix was
+  later **confirmed on real L4 hardware**: the next run's `smoke`/`segformer_b0` training
+  actually started and ran to the intentional interruption at optimizer step 25.
+- (Commit `e3f3159…`) That same real L4 run's resume subprocess then failed with
+  `FileNotFoundError: recovery_25.pth can not be found.`. `EdgeGuardRecoveryHook`
+  (`mmseg_components.py`) wrote only the bare checkpoint filename into
+  `<work_dir>/last_checkpoint`; this codebase's own reader (`latest_checkpoint()` in
+  `colab_recovery.py`) resolves a relative marker against `work_dir`, but MMEngine's own
+  built-in auto-resume (`Runner.load_or_resume()` → `find_latest_checkpoint()`) returns the
+  raw marker content verbatim and resolves it relative to the process's cwd — the project
+  root for every child process `colab_pipeline.py` spawns, not the run's `work_dir`. The
+  identical bug existed in `train_model`'s Drive cross-session recovery path
+  (`mmseg_runtime.py`), reachable whenever a new session restores a checkpoint published by
+  a dead prior session — the exact scenario this recovery system exists to survive. Fixed
+  both write sites to write the absolute path, matching MMEngine's own `CheckpointHook`
+  convention; confirmed pathlib join with an absolute right-hand side leaves every existing
+  bare-filename reader in this codebase unaffected. Added
+  `tests/unit/test_mmseg_recovery_checkpoint_marker.py`, which reproduces the exact failure
+  via MMEngine's real `find_latest_checkpoint()` against the marker the hook writes, and
+  confirmed it fails on the pre-fix code and passes on the fix — not yet re-confirmed on
+  real L4 hardware.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 485 passed, 15 environment-gated skipped without the pinned MMSeg
-  stack; 500 passed, 0 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
+- Full pytest passes: 485 passed, 16 environment-gated skipped without the pinned MMSeg
+  stack; 501 passed, 0 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
   `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout (includes the real per-architecture
-  `model.loss()` tests). None of this exercises real CUDA/AMP behavior — that only happens
-  on a real L4.
+  `model.loss()` tests and the new `last_checkpoint` marker regression test). None of this
+  exercises real CUDA/AMP behavior — that only happens on a real L4.
 - Master notebook generation is byte-identical across two runs.
 - The notebook SHA-256 after pinning is
-  `d6a640ce064fc5e8fa252069d597f86a68a2059f9a2668bf6ada7a2bc3b2bd16`.
+  `2632be291b08cda6a67a1497e4d2b2c3bbac57c08047088b6c6867754ae1acbc`.
 - **Pending at this commit:** claim-safe local cell execution has not been re-verified,
   remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run, and the
-  `Pad`/`seg_pad_val` fix itself has not been confirmed on real CUDA hardware — only the
-  earlier AMP-probe fix has real-hardware confirmation so far. The prior application commit
-  (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact hostile inline backend
-  and host uv/virtualenv state injected; that evidence does not carry over to this commit
-  and should be re-established before a real Colab attempt.
+  `last_checkpoint` absolute-path fix itself has not been confirmed on real CUDA
+  hardware — the AMP-probe fix and the `Pad`/`seg_pad_val` fix both have real-hardware
+  confirmation so far. The prior application commit (`3f3ef8f…`) passed remote run
+  `31129018003` with Colab's exact hostile inline backend and host uv/virtualenv state
+  injected; that evidence does not carry over to this commit and should be re-established
+  before a real Colab attempt.
 
 ## Next external action
 
 Push this commit, then open the master notebook from the pushed branch in a fresh Colab L4
 + High-RAM runtime and use Run all (Colab Pro/Pro+ background execution is recommended so
-the session survives closing the browser tab). The five-model AMP canary is already
-confirmed passing; watch specifically whether `production-pipeline` now gets past building
-`val_dataloader` (previously failed at `smoke`/`segformer_b0`) and proceeds through
-training. If the session ends, repeat Run all in a new compliant runtime — this is a Colab
-platform limit, not something the notebook can automate away. Do not change the notebook or
-select stages manually.
+the session survives closing the browser tab). The five-model AMP canary and the
+`val_dataloader` build are both already confirmed passing, and `smoke`/`segformer_b0`
+training has already been observed running through the intentional interruption at step
+25; watch specifically whether the resume subprocess now finds and loads `recovery_25.pth`
+and continues training to completion, and whether the remaining four models' smoke stages
+also complete cleanly. If the session ends, repeat Run all in a new compliant runtime —
+this is a Colab platform limit, not something the notebook can automate away. Do not change
+the notebook or select stages manually.
 
 Do not create `colab-v0.1.0-rc1` until two independent clean L4 sessions pass the exact
 lock/five-model FP32/AMP canary and the real 50-step interruption/resume proof. After the

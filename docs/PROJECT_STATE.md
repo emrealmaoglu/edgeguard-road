@@ -5,7 +5,7 @@ Updated 2026-08-08 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`ff2642265a3cf377988de30a844a13a33ec34238`. The only generated notebook is
+`e3f3159a30372997aba00ad5543cdb0cd27a45ab`. The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -166,9 +166,31 @@ explicit `{"img": 0}` for consistency (mmcv's `Pad` already treated a bare int a
 image-only padding, so behavior is unchanged there). This fix was reproduced and confirmed
 against the real pinned MMSeg checkout by building both the evaluation and inference
 pipelines through `Compose()` with the mmseg registry scope active — the same mechanism
-real training uses — but has not yet been confirmed on real L4 hardware. The notebook is
-repinned to commit `ff26422…`; the hostile-context remote Linux workflow and a real L4 run
-past this specific failure point have not yet been re-run against it.
+real training uses.
+
+The next real L4 run at application commit `ff26422…` confirmed that fix too: all five
+models passed the canary again, data staging reused the frozen candidates, and
+`smoke`/`segformer_b0` training actually started, ran to the intentional interruption at
+optimizer step 25 (by design — the recovery hook saves a checkpoint and raises on purpose
+to prove interruption/resume), and the interrupted process exited cleanly. The resume
+subprocess then failed with `FileNotFoundError: recovery_25.pth can not be found.`.
+Root cause: `EdgeGuardRecoveryHook.after_train_iter` (`mmseg_components.py`) wrote only the
+bare checkpoint filename into `<work_dir>/last_checkpoint`. This codebase's own reader
+(`latest_checkpoint()` in `colab_recovery.py`) resolves a relative marker against
+`work_dir` defensively, but MMEngine's own built-in auto-resume
+(`Runner.load_or_resume()` → `find_latest_checkpoint()`) does not — it returns the raw
+marker content verbatim and resolves it relative to the process's current working
+directory, which is the project root for every child process `colab_pipeline.py` spawns,
+not the run's `work_dir`. The identical bare-filename bug also existed in `train_model`'s
+Drive cross-session recovery path (`mmseg_runtime.py`), reachable whenever a new Colab
+session restores a checkpoint published by a dead prior session and resumes training on
+it — the exact scenario this recovery system exists to survive. Application commit
+`e3f3159…` fixes both write sites to write the absolute path instead, matching MMEngine's
+own `CheckpointHook` convention; a new regression test reproduces the exact failure via
+MMEngine's real `find_latest_checkpoint()` against the marker the hook writes and confirms
+it fails on the old code and passes on the fix. The notebook is repinned to commit
+`e3f3159…`; the hostile-context remote Linux workflow and a real L4 run past this specific
+resume failure have not yet been re-run against it.
 
 ## Deliveries
 
@@ -182,20 +204,23 @@ checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson tele
 
 Local Ruff, mypy, pytest, deterministic notebook generation and claim-safe local cell
 execution validate engineering contracts only. No local test creates a scientific metric.
-The current delivery passes 485 tests with fifteen environment-gated skips without the
+The current delivery passes 485 tests with sixteen environment-gated skips without the
 pinned MMSeg stack present; with the pinned stack available (`EDGEGUARD_MMSEG_CHECKOUT`
 pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) it passes
-500 tests with zero skips, including the real per-architecture `model.loss()` regression
-tests. The master notebook was generated twice byte-identically at SHA-256
-`d6a640ce064fc5e8fa252069d597f86a68a2059f9a2668bf6ada7a2bc3b2bd16`.
+501 tests with zero skips, including the real per-architecture `model.loss()` regression
+tests and the new `last_checkpoint` marker regression test. The master notebook was
+generated twice byte-identically at SHA-256
+`2632be291b08cda6a67a1497e4d2b2c3bbac57c08047088b6c6867754ae1acbc`.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
 (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
-has not yet been re-run at the current commit `ff26422…`, and claim-safe local cell
+has not yet been re-run at the current commit `e3f3159…`, and claim-safe local cell
 execution has not been re-verified at this commit either — both remain pending before the
-next real Colab attempt. The AMP-probe precision fix from application commit `b22fd12…` has
-since been confirmed by a real L4 run (all five models passed the stack-probe); this
-commit's `Pad`/`seg_pad_val` fix has not yet been confirmed by an actual L4 run.
+next real Colab attempt. The AMP-probe precision fix and the `Pad`/`seg_pad_val` fix have
+both since been confirmed by real L4 runs (all five models passed the stack-probe; smoke
+training for segformer_b0 actually started and ran to the intentional interruption); this
+commit's `last_checkpoint` absolute-path fix has not yet been confirmed by an actual L4
+resume.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4
 five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
 result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is
