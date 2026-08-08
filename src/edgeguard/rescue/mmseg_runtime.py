@@ -884,7 +884,8 @@ def train_model(
         metadata = restored.get("metadata", {})
         if metadata.get("identity_sha256") != identity_sha256:
             raise ValueError("Drive recovery checkpoint belongs to a different immutable run")
-        (work_dir / "last_checkpoint").write_text("recovered.pth\n", encoding="utf-8")
+        recovered_checkpoint = work_dir / "recovered.pth"
+        (work_dir / "last_checkpoint").write_text(f"{recovered_checkpoint}\n", encoding="utf-8")
         restored_from_drive = True
     if resume:
         if not identity_path.is_file():

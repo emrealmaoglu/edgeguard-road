@@ -293,8 +293,8 @@ def register_mmseg_components() -> None:
                     save_param_scheduler=True,
                     meta={"iter": iteration, "epoch": int(runner.epoch)},
                 )
-                marker.write_text(filename + "\n", encoding="utf-8")
                 current = Path(runner.work_dir) / filename
+                marker.write_text(f"{current}\n", encoding="utf-8")
             receipt = publish_recovery_file(
                 current,
                 self.store_root,
