@@ -51,3 +51,22 @@ are `done`, `ready`, `external`, `blocked-by-gate`, and `future`.
 `DET-01` is `blocked-by-gate`. Only RTMDet-Tiny may be opened after every charter gate
 passes. Until then all detector, temporal, anomaly-head, tracking, and INT8 material is
 experimental/legacy and cannot appear as active thesis progress.
+
+## Known limitations
+
+- **IDD20K shard packaging drops native labels.** `_publish_idd_shards`
+  (`src/edgeguard/data/preparation.py`) renders both the native 40-class
+  `_gtFine_labelids.png` mask and the canonical Cityscapes19
+  `_gtFine_labelTrainIds.png` mask during staging, but only tars the
+  canonical mask into each of the 33 already-staged shards
+  (`"prepared_payload": "images_and_cityscapes19_canonical_masks_only"`).
+  This means the native IDD label can no longer be audited or re-mapped from
+  a staged shard after the fact — a partial exception to
+  `src/edgeguard/data/AGENTS.md`'s "preserve every dataset's native labels"
+  rule. The Cityscapes19 mapping itself is verified correct
+  (`configs/dataset/semantic_ontology_v2.yaml`), so this does not affect
+  training correctness; it only limits future native-label auditability.
+  Re-processing already-staged shards to include native labels is a real
+  IDD-source re-processing job, not a code change, and needs an explicit
+  decision before being scheduled (found 2026-08-08, Claude Code review;
+  deliberately left unresolved).

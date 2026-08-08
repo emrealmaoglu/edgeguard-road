@@ -1,3 +1,8 @@
+# Official-resolution evaluation config (metric_grid: source_label). mIoU/OOD
+# scores from this config are computed at full 1024x2048 on the original label
+# grid and are NOT numerically comparable to cityscapes_eval_local.yaml, which
+# evaluates at the reduced 512x1024 model-input grid for a fast CPU sanity
+# check. Use this config, not the local one, for any reported/thesis metric.
 schema_version: "1.0"
 project_name: edgeguard-road
 contract_version: "1.0"
