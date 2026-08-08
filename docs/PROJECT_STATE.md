@@ -5,7 +5,7 @@ Updated 2026-08-08 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`8ed151941bf36195fb77e354b174fbd253227c56`. The only generated notebook is
+`1387322646f1f837ab2ed95200a4176ef0e3c4b4`. The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -114,8 +114,17 @@ one real forward/backward step against the pinned MMSeg checkout
 manifest JSON files existed; it now verifies every referenced image/mask file is present on
 local disk (`verify_manifest_data_is_staged`), and Drive archive/shard copies now fail
 closed on a stalled read via a bounded stall-timeout guard instead of risking an indefinite
-hang. The notebook is repinned to this commit; the hostile-context remote Linux workflow
-and a real L4 canary have not yet been re-run against it.
+hang.
+
+The same review's follow-up commit `1387322…` fixed a lower-severity bug found in the same
+pass — `resize_train_ids()` validated a resized mask against the source label-ID space
+(0-33) instead of the train-ID space (0-18/255) — and reconciled several stale docs
+(`SYSTEM_ARCHITECTURE.md`'s status boundary, `DATA_CATALOG.md`'s pre-ADR-0008/0009
+acquisition status, the eval-config resolution mismatch). The IDD20K native-label-loss
+finding from the same review was deliberately left unresolved as a recorded limitation
+(`docs/TASKS.md`) rather than acted on, since fixing it means re-processing already-staged
+Drive shards. The notebook is repinned to commit `1387322…`; the hostile-context remote
+Linux workflow and a real L4 canary have not yet been re-run against it.
 
 ## Deliveries
 
@@ -129,16 +138,17 @@ checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson tele
 
 Local Ruff, mypy, pytest, deterministic notebook generation and claim-safe local cell
 execution validate engineering contracts only. No local test creates a scientific metric.
-The current delivery passes 483 tests with seventeen environment-gated skips without the
+The current delivery passes 484 tests with seventeen environment-gated skips without the
 pinned MMSeg stack present; with the pinned stack available (`EDGEGUARD_MMSEG_CHECKOUT`
 pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) it passes
-498 tests with two skips, including the new real per-architecture `model.loss()`
-regression tests. The master notebook was generated twice byte-identically at SHA-256
-`85ce3c9a6a2dd8ee66a8ed75e2d2ac981b6f17b0645bacdd2728cdf09963bac6`.
-Remote Linux workflow `31129018003` completed successfully at the prior application commit
+499 tests with two skips, including the new real per-architecture `model.loss()`
+regression tests and the `resize_train_ids` train-ID-space regression test. The master
+notebook was generated twice byte-identically at SHA-256
+`8e9943993a3c6df0292e77e82b32126990c4ddcad6a1a8ca7d1bd1e78c5abedc`.
+Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
 (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
-has not yet been re-run at the current commit `8ed15194…`, and claim-safe local cell
+has not yet been re-run at the current commit `1387322…`, and claim-safe local cell
 execution has not been re-verified at this commit either — both remain pending before the
 next real Colab attempt.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4

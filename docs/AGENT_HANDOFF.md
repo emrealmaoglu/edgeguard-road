@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `8ed151941bf36195fb77e354b174fbd253227c56`
+  `1387322646f1f837ab2ed95200a4176ef0e3c4b4`
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -56,18 +56,24 @@
   file exists on local disk instead of only checking the manifest JSON exists
   (`verify_manifest_data_is_staged`); Drive archive/shard copies now fail closed on a
   stalled read via a bounded stall-timeout guard instead of risking an indefinite hang.
+- (Follow-up commit `1387322…`) Fixed `resize_train_ids()` validating against the wrong
+  ID space (source label IDs instead of train IDs); reconciled `SYSTEM_ARCHITECTURE.md`,
+  `DATA_CATALOG.md`, and the eval-config resolution-mismatch docs found stale by the same
+  review; recorded the IDD20K native-label-loss-on-shard-packaging limitation in
+  `docs/TASKS.md` rather than acting on it (owner decision: needs a separate, costly
+  Drive shard re-processing approval).
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 483 passed, 17 environment-gated skipped without the pinned MMSeg
-  stack; 498 passed, 2 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
+- Full pytest passes: 484 passed, 17 environment-gated skipped without the pinned MMSeg
+  stack; 499 passed, 2 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
   `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout (includes the new real
-  per-architecture `model.loss()` tests).
+  per-architecture `model.loss()` tests and the `resize_train_ids` regression test).
 - Master notebook generation is byte-identical across two runs.
 - The notebook SHA-256 after pinning is
-  `85ce3c9a6a2dd8ee66a8ed75e2d2ac981b6f17b0645bacdd2728cdf09963bac6`.
+  `8e9943993a3c6df0292e77e82b32126990c4ddcad6a1a8ca7d1bd1e78c5abedc`.
 - **Pending at this commit:** claim-safe local cell execution has not been re-verified, and
   remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run. The prior
   application commit (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact
