@@ -400,13 +400,26 @@ def run_five_model_mini_training(
 
 def semantic_environment_ready(mmseg_checkout: Path) -> bool:
     """Return whether the optional local stack and pinned checkout are usable."""
-    required = ("torch", "mmengine", "mmcv", "mmsegmentation")
+    required = ("torch", "mmengine", "mmsegmentation")
     try:
         for distribution in required:
             importlib.metadata.version(distribution)
+        # The project pins the pure-Python mmcv-lite distribution instead of
+        # compiled mmcv (see scripts/train/install_semantic_stack.py); either
+        # satisfies the "an mmcv is installed" requirement.
+        if not any(_distribution_installed(name) for name in ("mmcv-lite", "mmcv")):
+            return False
     except importlib.metadata.PackageNotFoundError:
         return False
     return mmseg_checkout.is_dir() and (mmseg_checkout / ".git").exists()
+
+
+def _distribution_installed(name: str) -> bool:
+    try:
+        importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
 
 
 def local_mmseg_checkout_from_environment() -> Path | None:

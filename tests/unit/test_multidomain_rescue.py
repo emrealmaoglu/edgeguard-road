@@ -20,9 +20,11 @@ from edgeguard.rescue.multidomain import (
     domain_mixture_probabilities,
     freeze_candidate_manifest,
     load_semantic_ontology,
+    manifest_image_and_mask_paths,
     map_source_mask,
     power_domain_indices,
     uniform_domain_indices,
+    verify_manifest_data_is_staged,
     verify_sealed_release,
     write_multidomain_statistics,
 )
@@ -30,7 +32,7 @@ from edgeguard.rescue.reliability import (
     fit_global_temperature_from_evidence,
     save_calibration_evidence,
 )
-from edgeguard.serialization import canonical_json, sha256_file
+from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
 
 ONTOLOGY = Path("configs/dataset/semantic_ontology_v2.yaml")
 CAMPAIGN_ID = "semantic-cs-idd-v2"
@@ -567,3 +569,54 @@ def test_global_calibration_uses_equal_hash_bound_source_evidence(tmp_path: Path
     result = fit_global_temperature_from_evidence(evidence, tmp_path / "temperature.json", seed=7)
     assert result["equal_pixels_per_domain"] == 30
     assert set(result["dataset_manifest_sha256s"]) == {"cityscapes", "idd20k"}
+
+
+def _write_manifest(tmp_path: Path, *, dataset_id: str = "cityscapes") -> Path:
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(tmp_path / "img.png")
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(tmp_path / "mask.png")
+    record = {
+        "sample_id": "s0",
+        "group_id": "g0",
+        "image": "img.png",
+        "mask": "mask.png",
+        "canonical_mask": "mask.png",
+    }
+    payload: dict[str, object] = {
+        "schema_version": "2.0",
+        "record_type": "edgeguard_dataset_manifest",
+        "dataset_id": dataset_id,
+        "split_state": "frozen",
+        "dataset_root": str(tmp_path),
+        "prepared_root": str(tmp_path),
+        "roles": {"train_fit": [record]},
+    }
+    payload["manifest_sha256"] = sha256_payload(payload)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    return manifest_path
+
+
+def test_manifest_image_and_mask_paths_matches_dataset_layout(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(tmp_path, dataset_id="idd20k")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    resolved = manifest_image_and_mask_paths(payload)
+    assert resolved == [("s0", tmp_path / "img.png", tmp_path / "mask.png")]
+
+
+def test_stage_data_verification_passes_when_files_are_present(tmp_path: Path) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    result = verify_manifest_data_is_staged(manifest_path)
+    assert result == {
+        "manifest": str(manifest_path),
+        "dataset_id": "cityscapes",
+        "checked_samples": 1,
+    }
+
+
+def test_stage_data_verification_fails_closed_when_local_files_are_missing(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_manifest(tmp_path)
+    (tmp_path / "img.png").unlink()
+    with pytest.raises(FileNotFoundError, match="missing on local disk"):
+        verify_manifest_data_is_staged(manifest_path)

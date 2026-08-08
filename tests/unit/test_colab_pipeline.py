@@ -6,8 +6,11 @@ import json
 import subprocess
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pytest
+from PIL import Image
 
 import edgeguard.rescue.colab_pipeline as colab_pipeline_module
 from edgeguard.rescue.colab_pipeline import (
@@ -20,9 +23,36 @@ from edgeguard.rescue.colab_pipeline import (
     phases_for_target,
 )
 from edgeguard.rescue.colab_recovery import publish_recovery_file
-from edgeguard.serialization import sha256_file
+from edgeguard.serialization import sha256_file, sha256_payload
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _write_staged_dataset_manifest(root: Path, *, dataset_id: str) -> Path:
+    """Write a real, schema-valid manifest whose referenced files exist on disk."""
+    root.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(root / "img.png")
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(root / "mask.png")
+    record = {
+        "sample_id": f"{dataset_id}-s0",
+        "group_id": f"{dataset_id}-g0",
+        "image": "img.png",
+        "mask": "mask.png",
+        "canonical_mask": "mask.png",
+    }
+    payload: dict[str, Any] = {
+        "schema_version": "2.0",
+        "record_type": "edgeguard_dataset_manifest",
+        "dataset_id": dataset_id,
+        "split_state": "frozen",
+        "dataset_root": str(root),
+        "prepared_root": str(root),
+        "roles": {"train_fit": [record]},
+    }
+    payload["manifest_sha256"] = sha256_payload(payload)
+    manifest_path = root.parent / f"{dataset_id}.frozen.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    return manifest_path
 
 
 def _pipeline(tmp_path: Path, *, final_models: tuple[str, ...] = ALL_MODELS) -> ColabPipeline:
@@ -52,9 +82,10 @@ def _pipeline(tmp_path: Path, *, final_models: tuple[str, ...] = ALL_MODELS) -> 
         ),
         encoding="utf-8",
     )
-    manifests = (tmp_path / "cityscapes.frozen.json", tmp_path / "idd20k.frozen.json")
-    for manifest in manifests:
-        manifest.write_text('{"status":"accepted"}\n', encoding="utf-8")
+    manifests = (
+        _write_staged_dataset_manifest(tmp_path / "cityscapes-data", dataset_id="cityscapes"),
+        _write_staged_dataset_manifest(tmp_path / "idd20k-data", dataset_id="idd20k"),
+    )
     config = tmp_path / "semantic_first.yaml"
     config.write_text("seed: 20260728\n", encoding="utf-8")
     mmseg = tmp_path / "mmsegmentation"

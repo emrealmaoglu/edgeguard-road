@@ -20,7 +20,7 @@ from edgeguard.rescue.colab_recovery import (
     publish_recovery_file,
     restore_recovery_file,
 )
-from edgeguard.rescue.multidomain import validate_dataset_manifest
+from edgeguard.rescue.multidomain import validate_dataset_manifest, verify_manifest_data_is_staged
 from edgeguard.rescue.release_acceptance import accept_release_candidate_by_policy
 from edgeguard.rescue.selection import select_recommended_model
 from edgeguard.serialization import sha256_file, sha256_payload
@@ -721,6 +721,12 @@ class ColabPipeline:
             raise ValueError("runtime receipt is not the hermetic Colab v2 contract")
         if not self.inputs.mmseg_root.is_dir():
             raise FileNotFoundError("verified MMSegmentation checkout is missing")
+
+    def _verify_stage_data(self) -> None:
+        for manifest in self.inputs.data_manifests:
+            if not manifest.is_file():
+                raise FileNotFoundError(f"frozen local data manifest is missing: {manifest}")
+            verify_manifest_data_is_staged(manifest)
 
     def _verify_canary(self) -> None:
         runtime = json.loads(self.inputs.runtime_receipt.read_text(encoding="utf-8"))
@@ -1757,10 +1763,8 @@ class ColabPipeline:
         elif phase == "restore":
             commands = self._restore_accepted_release_checkpoints()
         elif phase == "stage-data":
+            self._verify_stage_data()
             commands = []
-            for manifest in self.inputs.data_manifests:
-                if not manifest.is_file():
-                    raise FileNotFoundError(f"frozen local data manifest is missing: {manifest}")
         elif phase == "canary":
             self._verify_canary()
             commands = []

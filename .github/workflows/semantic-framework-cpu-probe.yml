@@ -110,6 +110,11 @@ jobs:
           git -C /tmp/mmsegmentation checkout --detach \
             c685fe6767c4cadf6b051983ca6208f1b9d1ccb8
           python -m pip install --no-deps -e /tmp/mmsegmentation
+      - name: Run real MMSeg model.loss() regression tests
+        env:
+          EDGEGUARD_MMSEG_CHECKOUT: /tmp/mmsegmentation
+        run: |
+          pytest tests/unit/test_mmseg_real_training_step.py -v
       - name: Run local-first readiness and five-model CPU probe
         run: |
           python scripts/dev/validate_local_readiness.py \

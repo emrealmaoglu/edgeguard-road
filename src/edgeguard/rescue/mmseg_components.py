@@ -16,7 +16,11 @@ from edgeguard.rescue.colab_recovery import (
     publish_recovery_file,
     write_campaign_status,
 )
-from edgeguard.rescue.multidomain import uniform_domain_indices, validate_dataset_manifest
+from edgeguard.rescue.multidomain import (
+    manifest_image_and_mask_paths,
+    uniform_domain_indices,
+    validate_dataset_manifest,
+)
 
 _REGISTERED = False
 
@@ -75,32 +79,21 @@ def register_mmseg_components() -> None:
 
         def load_data_list(self) -> list[dict[str, Any]]:
             payload = validate_dataset_manifest(self.edgeguard_manifest_path)
-            records = payload["roles"].get(self.edgeguard_role)
-            if not isinstance(records, list):
+            if self.edgeguard_role not in payload["roles"]:
                 raise ValueError(f"manifest has no role {self.edgeguard_role!r}")
-            dataset_root = Path(payload["dataset_root"])
-            prepared_root = Path(payload["prepared_root"])
-            data_list: list[dict[str, Any]] = []
-            for record in records:
-                canonical = record.get("canonical_mask")
-                if canonical is None:
-                    raise ValueError("scientific segmentation record has no canonical mask")
-                if payload["dataset_id"] == "idd20k":
-                    mask_path = prepared_root / str(canonical)
-                else:
-                    mask_path = dataset_root / str(canonical)
-                data_list.append(
-                    {
-                        "img_path": str(dataset_root / str(record["image"])),
-                        "seg_map_path": str(mask_path),
-                        "label_map": None,
-                        "reduce_zero_label": False,
-                        "seg_fields": [],
-                        "dataset_id": payload["dataset_id"],
-                        "sample_id": record["sample_id"],
-                    }
-                )
-            return data_list
+            resolved = manifest_image_and_mask_paths(payload, roles=(self.edgeguard_role,))
+            return [
+                {
+                    "img_path": str(image_path),
+                    "seg_map_path": str(mask_path),
+                    "label_map": None,
+                    "reduce_zero_label": False,
+                    "seg_fields": [],
+                    "dataset_id": payload["dataset_id"],
+                    "sample_id": sample_id,
+                }
+                for sample_id, image_path, mask_path in resolved
+            ]
 
     @mmengine_registry.DATA_SAMPLERS.register_module(force=True)
     class EdgeGuardDomainBalancedSampler(sampler_base):

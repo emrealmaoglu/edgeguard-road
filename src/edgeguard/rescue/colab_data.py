@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import shutil
+import signal
 import tarfile
+import threading
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, cast
 
@@ -16,6 +19,44 @@ from edgeguard.config import UniqueKeySafeLoader
 from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
 
 GIB = 1024**3
+
+# A mounted Google Drive FUSE volume can stall indefinitely on a single read
+# instead of raising an OSError, which the retry loops below only catch on
+# genuine errors. This is the default ceiling on how long one read() call may
+# block before it is treated as a hang and retried.
+DEFAULT_STALL_TIMEOUT_SECONDS = 120
+
+
+class _StallTimeout(TimeoutError):
+    """Raised when a single read from a (likely Drive-mounted) source stalls."""
+
+
+def _stall_guard(seconds: int | None) -> contextlib.AbstractContextManager[None]:
+    """Best-effort read-stall guard; a no-op where SIGALRM is unavailable."""
+    if seconds is None or seconds <= 0:
+        return contextlib.nullcontext()
+    if not hasattr(signal, "alarm") or threading.current_thread() is not threading.main_thread():
+        return contextlib.nullcontext()
+    return _AlarmGuard(seconds)
+
+
+class _AlarmGuard(contextlib.AbstractContextManager["None"]):
+    def __init__(self, seconds: int) -> None:
+        self.seconds = seconds
+        self._previous: Any = None
+
+    def __enter__(self) -> None:
+        def _raise_stall(signum: int, frame: Any) -> None:
+            raise _StallTimeout(f"no data received for {self.seconds}s; likely a Drive/FUSE hang")
+
+        self._previous = signal.signal(signal.SIGALRM, _raise_stall)
+        signal.alarm(self.seconds)
+
+    def __exit__(self, *_exc: Any) -> None:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, self._previous)
+
+
 SOURCE_DATASETS = ("cityscapes", "bdd100k", "idd20k")
 STORAGE_DIRECTORIES = {
     "datasets": "dataset_directory",
@@ -313,17 +354,20 @@ class _HashingProgressReader:
         label: str,
         phase: str,
         interval_bytes: int = 256 * 1024**2,
+        stall_timeout_seconds: int | None = DEFAULT_STALL_TIMEOUT_SECONDS,
     ):
         self.stream = stream
         self.label = label
         self.phase = phase
         self.interval_bytes = interval_bytes
+        self.stall_timeout_seconds = stall_timeout_seconds
         self.bytes_read = 0
         self._next_report = interval_bytes
         self._sha256 = hashlib.sha256()
 
     def read(self, size: int = -1) -> bytes:
-        payload = self.stream.read(size)
+        with _stall_guard(self.stall_timeout_seconds):
+            payload = self.stream.read(size)
         if payload:
             self._sha256.update(payload)
             self.bytes_read += len(payload)
@@ -346,7 +390,13 @@ class _HashingProgressReader:
         return self._sha256.hexdigest()
 
 
-def copy_archive_to_local(source: Path, destination: Path, *, attempts: int = 3) -> dict[str, Any]:
+def copy_archive_to_local(
+    source: Path,
+    destination: Path,
+    *,
+    attempts: int = 3,
+    stall_timeout_seconds: int | None = DEFAULT_STALL_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     """Copy one mounted-Drive archive with bounded retries and an atomic destination."""
     if attempts <= 0:
         raise ValueError("archive copy attempts must be positive")
@@ -365,6 +415,7 @@ def copy_archive_to_local(source: Path, destination: Path, *, attempts: int = 3)
                     input_stream,
                     label=source.name,
                     phase="archive-copy",
+                    stall_timeout_seconds=stall_timeout_seconds,
                 )
                 shutil.copyfileobj(progress, output_stream, length=8 * 1024**2)
             if partial.stat().st_size != source.stat().st_size:

@@ -307,6 +307,69 @@ def validate_dataset_manifest(
     return payload
 
 
+def manifest_image_and_mask_paths(
+    payload: dict[str, Any], *, roles: Iterable[str] | None = None
+) -> list[tuple[str, Path, Path]]:
+    """Resolve every record's on-disk image/canonical-mask path from a validated manifest.
+
+    Mirrors ``EdgeGuardManifestDataset.load_data_list``'s path resolution so both the
+    real MMSeg dataset and any pre-flight staging check agree on where each sample lives.
+    """
+    dataset_root = Path(str(payload["dataset_root"]))
+    prepared_root = Path(str(payload["prepared_root"]))
+    dataset_id = payload["dataset_id"]
+    selected_roles = payload["roles"] if roles is None else {r: payload["roles"][r] for r in roles}
+    resolved: list[tuple[str, Path, Path]] = []
+    for records in selected_roles.values():
+        for record in records:
+            canonical = record.get("canonical_mask")
+            if canonical is None:
+                raise ValueError("scientific segmentation record has no canonical mask")
+            mask_root = prepared_root if dataset_id == "idd20k" else dataset_root
+            resolved.append(
+                (
+                    str(record["sample_id"]),
+                    dataset_root / str(record["image"]),
+                    mask_root / str(canonical),
+                )
+            )
+    return resolved
+
+
+def verify_manifest_data_is_staged(
+    manifest_path: Path, *, max_reported_missing: int = 20
+) -> dict[str, Any]:
+    """Fail closed if a frozen manifest's image/mask files are not on local disk.
+
+    ``validate_dataset_manifest`` only checks the manifest JSON itself; it does not
+    confirm that the dataset/prepared roots it names still contain real files. Without
+    this check, a wiped or partially restored local data directory is only discovered
+    hours later when a training subprocess's ``LoadImageFromFile`` step fails, deep into
+    a Colab GPU session.
+    """
+    payload = validate_dataset_manifest(manifest_path)
+    resolved = manifest_image_and_mask_paths(payload)
+    missing: list[str] = []
+    for sample_id, image_path, mask_path in resolved:
+        if not image_path.is_file():
+            missing.append(f"{sample_id}: missing image {image_path}")
+        elif not mask_path.is_file():
+            missing.append(f"{sample_id}: missing mask {mask_path}")
+    if missing:
+        shown = ", ".join(missing[:max_reported_missing])
+        remaining = len(missing) - min(len(missing), max_reported_missing)
+        suffix = f" (+{remaining} more)" if remaining > 0 else ""
+        raise FileNotFoundError(
+            f"{manifest_path.name}: {len(missing)} of {len(resolved)} staged samples are "
+            f"missing on local disk: {shown}{suffix}"
+        )
+    return {
+        "manifest": str(manifest_path),
+        "dataset_id": payload["dataset_id"],
+        "checked_samples": len(resolved),
+    }
+
+
 def validate_manifest_review_receipt(
     receipt_path: Path,
     *,

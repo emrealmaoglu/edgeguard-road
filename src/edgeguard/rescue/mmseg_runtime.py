@@ -162,11 +162,17 @@ def _verified_pretrained_checkpoint(manifest_path: Path, model_name: str) -> Pat
     return checkpoint
 
 
+# Loss types whose upstream MMSeg implementation accepts a `class_weight` argument.
+# BoundaryLoss is deliberately excluded: it has no class_weight parameter, so
+# leaving it untouched is correct rather than an omission.
+_WEIGHTABLE_LOSS_TYPES = {"CrossEntropyLoss", "OhemCrossEntropy"}
+
+
 def _set_num_classes_and_loss(value: Any, *, class_weights: list[float] | None) -> None:
     if isinstance(value, dict):
         if "num_classes" in value:
             value["num_classes"] = 19
-        if value.get("type") == "CrossEntropyLoss":
+        if value.get("type") in _WEIGHTABLE_LOSS_TYPES:
             value["class_weight"] = class_weights
         for child in value.values():
             _set_num_classes_and_loss(child, class_weights=class_weights)
@@ -213,7 +219,16 @@ def validate_scientific_split(dataset_root: Path, manifest_path: Path) -> dict[s
     return payload
 
 
-def _train_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
+# Model families whose upstream MMSeg decode head reads an extra pipeline output
+# unconditionally in its loss computation. PIDHead._stack_batch_gt() requires
+# gt_edge_map, which only GenerateEdge produces; without it every PIDNet-S
+# optimizer step raises AttributeError on the first training iteration.
+_MODEL_PIPELINE_EXTRA_STEPS: dict[str, list[dict[str, Any]]] = {
+    "pidnet_s": [{"type": "GenerateEdge", "edge_width": 4}],
+}
+
+
+def _train_pipeline(config: RescueConfig, *, model_name: str) -> list[dict[str, Any]]:
     return [
         {"type": "LoadImageFromFile"},
         {"type": "LoadAnnotations", "reduce_zero_label": False},
@@ -226,6 +241,7 @@ def _train_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
         {"type": "RandomCrop", "crop_size": config.crop_size, "cat_max_ratio": 0.75},
         {"type": "RandomFlip", "prob": 0.5},
         {"type": "PhotoMetricDistortion"},
+        *_MODEL_PIPELINE_EXTRA_STEPS.get(model_name, []),
         {"type": "PackSegInputs"},
     ]
 
@@ -267,10 +283,17 @@ def _cityscapes_dataset(
     dataset_root: Path,
     config: RescueConfig,
     *,
+    model_name: str | None = None,
     ann_file: Path | None,
     split: str,
     training: bool,
 ) -> dict[str, Any]:
+    if training:
+        if model_name is None:
+            raise ValueError("a training pipeline requires model_name")
+        pipeline = _train_pipeline(config, model_name=model_name)
+    else:
+        pipeline = _evaluation_pipeline(config)
     return {
         "type": "CityscapesDataset",
         "data_root": str(dataset_root),
@@ -279,7 +302,7 @@ def _cityscapes_dataset(
             "seg_map_path": f"gtFine/{split}",
         },
         "ann_file": str(ann_file) if ann_file is not None else "",
-        "pipeline": _train_pipeline(config) if training else _evaluation_pipeline(config),
+        "pipeline": pipeline,
     }
 
 
@@ -332,16 +355,23 @@ def _manifest_dataset(
     manifest_path: Path,
     config: RescueConfig,
     *,
+    model_name: str | None = None,
     role: str,
     training: bool,
 ) -> dict[str, Any]:
     """Build an explicit-pair dataset without relying on vendor filename inference."""
     validate_dataset_manifest(manifest_path)
+    if training:
+        if model_name is None:
+            raise ValueError("a training pipeline requires model_name")
+        pipeline = _train_pipeline(config, model_name=model_name)
+    else:
+        pipeline = _evaluation_pipeline(config)
     return {
         "type": "EdgeGuardManifestDataset",
         "manifest_path": str(manifest_path),
         "role": role,
-        "pipeline": _train_pipeline(config) if training else _evaluation_pipeline(config),
+        "pipeline": pipeline,
     }
 
 
@@ -349,11 +379,15 @@ def _manifest_dataloader(
     manifests: Sequence[Path],
     config: RescueConfig,
     *,
+    model_name: str | None = None,
     role: str,
     training: bool,
 ) -> dict[str, Any]:
     """Build a single- or multi-domain loader with uniform domain probability."""
-    datasets = [_manifest_dataset(path, config, role=role, training=training) for path in manifests]
+    datasets = [
+        _manifest_dataset(path, config, model_name=model_name, role=role, training=training)
+        for path in manifests
+    ]
     sampler: dict[str, Any]
     if len(datasets) == 1:
         dataset: dict[str, Any] = datasets[0]
@@ -492,10 +526,10 @@ def build_training_config(
     cfg.load_from = None
     if manifests:
         cfg.train_dataloader = _manifest_dataloader(
-            manifests, protocol, role="train_fit", training=True
+            manifests, protocol, model_name=model_name, role="train_fit", training=True
         )
         cfg.val_dataloader = _manifest_dataloader(
-            manifests, protocol, role="train_select", training=False
+            manifests, protocol, model_name=model_name, role="train_select", training=False
         )
     else:
         if dataset_root is None or split_manifest is None:
@@ -506,7 +540,12 @@ def build_training_config(
         materialize_role_file(split_manifest, "train_select", select_file)
         cfg.train_dataloader = _dataloader(
             _cityscapes_dataset(
-                dataset_root, protocol, ann_file=train_file, split="train", training=True
+                dataset_root,
+                protocol,
+                model_name=model_name,
+                ann_file=train_file,
+                split="train",
+                training=True,
             ),
             protocol,
             training=True,
@@ -514,7 +553,12 @@ def build_training_config(
         )
         cfg.val_dataloader = _dataloader(
             _cityscapes_dataset(
-                dataset_root, protocol, ann_file=select_file, split="train", training=False
+                dataset_root,
+                protocol,
+                model_name=model_name,
+                ann_file=select_file,
+                split="train",
+                training=False,
             ),
             protocol,
             training=False,
