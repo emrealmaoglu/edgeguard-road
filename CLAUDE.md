@@ -27,6 +27,15 @@ standing authority is meant to serve — removing them would work against that g
 for it. If the human owner wants one of them lifted too, say so explicitly and this file
 gets updated to match.
 
+**2026-08-09 narrow delegation.** The owner explicitly asked Claude Code to decide the
+role of four newly-acquired auxiliary sources (WildDash 2's `wd_both_02.zip` and
+`wd_public_v2p0.zip`, WildDash's pickup/van ontology-extension script, RailSem19) —
+see `docs/adr/ADR-0009-multidomain-generalization.md`'s 2026-08-09 role amendment for the
+decisions. This lifts the "dataset roles" boundary above **only** for these four specific
+sources. It does not extend to the core `train_fit`/`train_select`/official-validation
+roles for Cityscapes/IDD20K, or to any other boundary listed above, all of which remain
+reserved and unchanged.
+
 Claude Code must not work concurrently with Codex on the same branch or file group.
 
 Every Claude task ends with a risk list, tests performed or required, and a rollback
