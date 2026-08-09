@@ -2,17 +2,29 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `3262af8` (see `git log` for the full SHA)
+  `c88ac8f` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
   Jetson evidence remain external. Remote CI and claim-safe notebook execution have not yet
-  been re-run at this commit (see Local gates). A real L4 run at commit `c4008d9…`
-  confirmed the five-model canary and data-staging phases both pass cleanly, but crashed on
-  the very first `smoke`/`segformer_b0` attempt with `ValueError("Drive recovery checkpoint
-  belongs to a different immutable run")` before any training step ran — a fifth real bug,
-  fixed by this commit (see below). Not yet re-confirmed on real L4 hardware (see Local
+  been re-run at this commit (see Local gates). A real L4 run at commit `3262af8…` confirmed
+  three fixes on real hardware in sequence — fresh smoke start, interruption at step 25, and
+  local resume from `recovery_25.pth` — then crashed inside the resume subprocess with
+  `TypeError: RNG state must be a torch.ByteTensor in EdgeGuardRecoveryHook`, a sixth real
+  bug, fixed by this commit (see below). Not yet re-confirmed on real L4 hardware (see Local
   gates).
+- **Note on this session's root-cause pattern:** all six real bugs found across this
+  session (AMP dtype, `Pad`/`seg_pad_val`, `last_checkpoint` bare filename, `Pad`
+  size-argument order, stale cross-commit Drive recovery, RNG checkpoint device) are in this
+  project's own bespoke Colab-orchestration/recovery layer — none are in
+  MMSeg/PyTorch/Cityscapes itself. This commit also found and fixed the reason the CPU
+  rehearsal harness missed bug 6: a local, never-committed `sitecustomize.py` had been
+  forcing `mmengine.device.utils.DEVICE = "cpu"` to work around unrelated MPS operator
+  gaps, which incidentally also hid every device-class bug (like this one) from ever
+  reproducing locally. `mmengine.device.get_device()` actually returns `"mps"` on this dev
+  machine — a real foreign device relative to a CPU RNG tensor — so the bug reproduces
+  without any GPU once that forcing is removed for tests that specifically target
+  device-transition logic.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -177,37 +189,81 @@
   scientifically-relevant fields — protocol/dataset/hyperparameter hashes — invalidate a
   Drive checkpoint, not any unrelated commit). This is a reproducibility/scientific-
   integrity policy call reserved for the human project owner, not an engineering decision.
+- (Commit `c88ac8f…`) A real L4 run at `3262af8…` got further than any prior run — canary,
+  data staging, and a fresh `smoke`/`segformer_b0` start and interruption at optimizer step
+  25 all confirmed working — then the local resume subprocess crashed with `TypeError: RNG
+  state must be a torch.ByteTensor in EdgeGuardRecoveryHook` inside
+  `Runner.resume() -> call_hook('after_load_checkpoint')`. Root cause:
+  `Runner.resume()` loads the checkpoint with `map_location=get_device()`; on Colab that is
+  CUDA, so every tensor in the pickle — including the RNG state
+  `EdgeGuardRecoveryHook.before_save_checkpoint` stores under
+  `checkpoint["edgeguard_recovery_state"]` — comes back on CUDA, and
+  `torch.set_rng_state`/`torch.cuda.set_rng_state` both reject anything but a CPU uint8
+  tensor. mmengine 0.10.7 has no RNG save/restore of its own (confirmed: zero `rng` matches
+  in the installed package), so this hook provides genuine capability and was not deleted —
+  both `before_save_checkpoint` and `after_load_checkpoint` now coerce every RNG tensor to
+  CPU/uint8 via a small helper, so already-published Drive checkpoints written by the
+  pre-fix code keep resuming without republishing. A companion, previously-latent bug in
+  `torch.cuda.set_rng_state_all` (same missing coercion, plus an unguarded device-count
+  mismatch) was fixed alongside it. Reproduced and regression-tested entirely on this local
+  Mac with no GPU: `mmengine.device.get_device()` returns `"mps"` here, itself a real
+  foreign device relative to the CPU RNG tensor, so simulating the move with `.to("mps")`
+  reproduces the identical `TypeError`; confirmed failing pre-fix and passing post-fix.
+  Separately, the intentional-interrupt self-test (proves interrupt+resume works on real
+  hardware) used to run once per model — 5 deliberate crash+resume cycles per campaign, no
+  way to disable it — and any failure of its own resume leg (like this one) killed the
+  entire 5-model campaign. It now runs once per campaign
+  (`PipelineInputs.recovery_self_test_model`, default the first core model); a failed resume
+  leg is recorded as durable evidence (`recovery_self_test_failure.json`, hash-sealed into
+  the phase's artifact index) and the model restarts from scratch instead of aborting the
+  campaign; `pilot`/`screening`/`hpo`/`final` refuse to start while any unresolved failure
+  record exists, so a genuinely broken recovery path can't silently cost hours of real
+  training before the next preemption. Also added a CPU-visible config-shape test for the
+  `AmpOptimWrapper` branch (`build_training_config`, `precision` in `{"fp16","bf16"}`) —
+  this branch is unreachable in every CPU rehearsal run because `resolve_auto_precision`
+  always returns `fp32` without CUDA, which is exactly how the session's very first bug (a
+  hardcoded AMP dtype) escaped local testing; the new test cannot observe real bf16/fp16
+  numerics (only real CUDA can), but locks the wrapper/dtype/loss_scale shape so it can
+  never regress silently again. Not yet re-confirmed on real L4 hardware.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 485 passed, 17 environment-gated skipped without the pinned MMSeg
-  stack; 19 of 19 in the mmseg-gated suite (`tests/unit/test_mmseg_real_training_step.py` +
+- Full pytest passes: 489 passed, 19 environment-gated skipped without the pinned MMSeg
+  stack; 22 of 22 in the mmseg-gated suite (`tests/unit/test_mmseg_real_training_step.py`,
+  `tests/unit/test_mmseg_recovery_checkpoint_marker.py`,
+  `tests/unit/test_mmseg_recovery_rng_state.py` (new), and
   `tests/integration/test_colab_pipeline_cpu_rehearsal.py`) pass with
   `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`
-  checkout, including the real per-architecture `model.loss()` tests, the `last_checkpoint`
-  marker regression test, the `Pad` orientation regression test, and the new stale-Drive-
-  recovery regression test. None of this exercises real CUDA/AMP behavior — that only
-  happens on a real L4.
-- All three `tests/integration/test_colab_pipeline_cpu_rehearsal.py` tests (fast-tier 3
-  core models, full-tier 5 models via extension-smoke, and the new stale-recovery test)
-  pass locally end to end against the real pinned stack (confirmed manually, ~24 minutes
-  combined; not yet run in CI at this commit). The new stale-recovery test was confirmed to
-  fail on the pre-fix code with the exact real-Colab error
-  (`ValueError("Drive recovery checkpoint belongs to a different immutable run")`) via a
-  temporary `git stash` of only the two fix files, and to pass with the fix restored.
+  checkout. None of this exercises real CUDA/AMP behavior — that only happens on a real L4.
+- All three `tests/integration/test_colab_pipeline_cpu_rehearsal.py` tests pass locally end
+  to end against the real pinned stack (confirmed manually, ~35 minutes combined; not yet
+  run in CI at this commit) — now on the real MPS device (`mmengine.device.get_device()`
+  returns `"mps"` here), not the CPU-forced device used for prior sessions' runs; a
+  temporary, never-committed `sitecustomize.py` was still needed to work around unrelated
+  MPS backward-pass operator gaps (`view size is not compatible with input tensor's size and
+  stride`, confirmed unrelated to any bug fixed this session), but it no longer forces
+  `mmengine.device.utils.DEVICE`, only the `torch.load(weights_only=...)` default. The new
+  RNG regression test needs no such forcing at all — it checks
+  `torch.backends.mps.is_available()` directly. Both `test_smoke_target_...` tests were
+  updated for the self-test now running once per campaign (previously once per model): only
+  `CORE_MODELS[0]` gets an `-ce-resume` record; every other model's plain `-ce` label is
+  still asserted present, so a regression that silently dropped a model from training
+  couldn't hide behind the reduced self-test count.
 - Master notebook generation is byte-identical across two runs.
 - The notebook SHA-256 after pinning is
-  `ad026d4ec1209b40c2b8a8a5499cb19111403f26adc272792cce17dd1ffa4944`.
+  `4b853a8d6acf70e4b94d828cbb77672b92b1d017317425f755bb80b6caeb9d17`.
 - **Pending at this commit:** claim-safe local cell execution has not been re-verified,
   remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run (including
-  the rehearsal step), and this stale-Drive-recovery fix has not been confirmed on real CUDA
-  hardware — the AMP-probe, `Pad`/`seg_pad_val`, `last_checkpoint`, and `Pad`-orientation
-  fixes all have real-hardware confirmation so far. The prior application commit
-  (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact hostile inline backend and
-  host uv/virtualenv state injected; that evidence does not carry over to this commit and
-  should be re-established before a real Colab attempt.
+  the rehearsal step), and this RNG-device fix plus the self-test containment change have
+  not been confirmed on real CUDA hardware — the AMP-probe, `Pad`/`seg_pad_val`,
+  `last_checkpoint`, `Pad`-orientation, and stale-Drive-recovery fixes all have
+  real-hardware confirmation so far (the stale-Drive-recovery fix specifically got a fresh
+  smoke start and a step-25 interruption to succeed on real L4 before this newest crash).
+  The prior application commit (`3f3ef8f…`) passed remote run `31129018003` with Colab's
+  exact hostile inline backend and host uv/virtualenv state injected; that evidence does not
+  carry over to this commit and should be re-established before a real Colab attempt.
 
 ## Next external action
 

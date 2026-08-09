@@ -20,14 +20,29 @@ synthetic fixture data on CPU. It is not the same thing as "claim-safe local cel
 execution" (`scripts/dev/run_campaign_notebook_harness.py`), which only proves the
 generated notebook's cells import and execute correctly — the real training call there is
 stubbed behind a hardcoded `{"scientific_status": "not_run"}` dict and never touches
-`Runner.train()`. Five real bugs (a hardcoded AMP dtype, a wrong `Pad` transform keyword, a
-bare-filename `last_checkpoint` marker, a `Pad` size-argument dimension-order bug, and a
-stale cross-commit Drive recovery pointer crashing the whole campaign before any training
-step ran) were each discovered one at a time on a real Colab L4 run before this rehearsal
-existed; the last four would all have been caught by it — the stale-recovery scenario needed
-a dedicated new test that seeds the recovery store with a mismatched identity before running
-the pipeline, since every other rehearsal test starts from a clean, empty recovery store and
-never exercised "Drive already has leftover state from an earlier, incompatible commit."
+`Runner.train()`. Six real bugs (a hardcoded AMP dtype, a wrong `Pad` transform keyword, a
+bare-filename `last_checkpoint` marker, a `Pad` size-argument dimension-order bug, a stale
+cross-commit Drive recovery pointer crashing the whole campaign before any training step
+ran, and a checkpoint RNG-state device mismatch) were each discovered one at a time on a
+real Colab L4 run before this rehearsal existed; the last five would all have been caught by
+it once run against a real foreign device — the stale-recovery scenario needed a dedicated
+new test that seeds the recovery store with a mismatched identity, since every other
+rehearsal test starts from a clean, empty recovery store; the RNG-state bug needed the
+harness to actually see a non-CPU device during `Runner.resume()`.
+
+**Do not force `mmengine.device.utils.DEVICE = "cpu"`** (e.g. via a local
+`sitecustomize.py`) as a blanket workaround for MPS/CPU quirks on Apple Silicon dev
+machines. This was done in an earlier session to route around unrelated MPS operator gaps
+(`Adaptive pool MPS: ... non-divisible input sizes`, `view size is not compatible with
+input tensor's size and stride`) and it worked — but it also silently hid the RNG-state
+device-mismatch bug, since `mmengine.device.get_device()` genuinely returns `"mps"` on
+these machines, which is itself a real foreign device relative to a CPU-saved tensor. If a
+CUDA-only or CPU/GPU-transition class of bug is suspected, run the rehearsal (or a
+narrower reproduction) against the real device this machine reports — only fall back to
+forcing `DEVICE=cpu` for unrelated operator-support gaps, and say explicitly in the test or
+commit message that the run cannot see device-class bugs when you do. A `torch.load`
+`weights_only` default patch (needed separately, for this machine's newer local torch
+versus the pinned Colab/CI torch) does not have this problem and can stay.
 
 ## Run
 
@@ -57,7 +72,7 @@ screening → hpo → final → selection → ablation → accept → validation
 evaluate → export → report → package
 ```
 
-The notebook checks out application commit `3262af8` (see `git log` for the full SHA).
+The notebook checks out application commit `c88ac8f` (see `git log` for the full SHA).
 It does not use the hosted Python,
 NumPy, Torch, or uv for training. The managed environment is Python 3.11.13, uv 0.8.8,
 NumPy 1.26.4, PyTorch 2.1.1/cu121, MMEngine 0.10.7, mmcv-lite 2.1.0,

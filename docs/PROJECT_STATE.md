@@ -5,7 +5,7 @@ Updated 2026-08-09 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`3262af8` (see `git log` for the full SHA). The only generated notebook is
+`c88ac8f` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -251,6 +251,43 @@ scientifically-relevant fields (protocol/dataset/hyperparameter hashes) invalida
 checkpoint — a reproducibility-policy call reserved for the human project owner. Not yet
 confirmed on real L4 hardware.
 
+A real L4 run at `3262af8…` got further than any prior run: canary, data staging, and a
+fresh `smoke`/`segformer_b0` start plus the intentional interruption at optimizer step 25
+all confirmed working, then the local resume subprocess crashed with `TypeError: RNG state
+must be a torch.ByteTensor in EdgeGuardRecoveryHook`. This is a **sixth** real bug:
+`Runner.resume()` loads checkpoints with `map_location=get_device()`, which on Colab is
+CUDA, so every tensor in the pickle — including the RNG state
+`EdgeGuardRecoveryHook.before_save_checkpoint` stores — comes back on CUDA, and
+`torch.set_rng_state`/`torch.cuda.set_rng_state` both reject anything but a CPU uint8
+tensor. mmengine 0.10.7 has no RNG save/restore of its own, so this hook is genuine
+capability, not deletable duplication; both the save and load paths now coerce every RNG
+tensor to CPU/uint8, so checkpoints already published to Drive under the buggy format keep
+resuming. Reproduced and regression-tested with no GPU at all:
+`mmengine.device.get_device()` returns `"mps"` on this dev machine, itself a real foreign
+device relative to a CPU RNG tensor, so `.to("mps")` reproduces the identical `TypeError`
+without CUDA — confirmed failing pre-fix, passing post-fix. This also surfaced why the CPU
+rehearsal harness missed it: a local, never-committed `sitecustomize.py` had been forcing
+`mmengine.device.utils.DEVICE = "cpu"` to route around unrelated MPS operator gaps, which
+incidentally hid every device-class bug too; the new RNG test avoids this entirely by
+checking `torch.backends.mps.is_available()` directly rather than depending on mmengine's
+device detection.
+
+Separately, application commit `c88ac8f…` contains a deliberate architecture change: the
+intentional-interrupt self-test (proves interrupt+resume on real hardware) used to run once
+per model — 5 deliberate crash+resume cycles per campaign, no way to disable it — and three
+of this session's six bugs (bare-filename marker, stale Drive recovery, this RNG bug) all
+surfaced through it, each one killing the whole 5-model campaign when it hit. It now runs
+once per campaign (`PipelineInputs.recovery_self_test_model`, default the first core
+model); a failed resume leg is recorded as durable, hash-sealed evidence
+(`recovery_self_test_failure.json`) and the model restarts from scratch instead of aborting
+the campaign, while `pilot`/`screening`/`hpo`/`final` refuse to start with any unresolved
+failure record present — cheap phases can absorb a self-test failure, but the phases that
+cost real hours cannot proceed on an unproven recovery path. Also added a CPU-visible
+config-shape test for the `AmpOptimWrapper` branch that is unreachable in every CPU
+rehearsal run (`resolve_auto_precision` always returns `fp32` without CUDA) — exactly how
+the session's very first bug (a hardcoded AMP dtype) escaped local testing. Not yet
+confirmed on real L4 hardware.
+
 ## Deliveries
 
 The package stage produces `EdgeGuard_Jetson_Release.zip`,
@@ -271,28 +308,33 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-The current delivery passes 485 tests with seventeen environment-gated skips without the
+The current delivery passes 489 tests with nineteen environment-gated skips without the
 pinned MMSeg stack present; with the pinned stack available (`EDGEGUARD_MMSEG_CHECKOUT`
 pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) the mmseg-
-gated suite passes 19 of 19, including the real per-architecture `model.loss()` regression
+gated suite passes 22 of 22, including the real per-architecture `model.loss()` regression
 tests, the `last_checkpoint` marker regression test, the `Pad` orientation regression test,
-and the new stale-Drive-recovery regression test. All three
-`tests/integration/test_colab_pipeline_cpu_rehearsal.py` tests (fast-tier 3 core models,
-full-tier 5 models, and the new stale-recovery test) pass locally end to end against the
-real pinned stack (confirmed manually, ~24 minutes combined; not yet run in CI at this
-commit). The new stale-recovery test was confirmed, via a temporary `git stash` of only the
-two fix files, to fail pre-fix with the identical real-Colab error message and pass with the
-fix restored. The master notebook was generated twice byte-identically at SHA-256
-`ad026d4ec1209b40c2b8a8a5499cb19111403f26adc272792cce17dd1ffa4944`.
+the stale-Drive-recovery regression test, and the new RNG checkpoint-device regression test.
+All three `tests/integration/test_colab_pipeline_cpu_rehearsal.py` tests pass locally end to
+end against the real pinned stack (confirmed manually, ~35 minutes combined; not yet run in
+CI at this commit) — on the real MPS device this time (`mmengine.device.get_device()`
+returns `"mps"` here), not artificially forced to CPU; a temporary, never-committed
+`sitecustomize.py` was still needed for an unrelated MPS backward-pass operator gap, but no
+longer forces `mmengine.device.utils.DEVICE`. The new RNG test was confirmed, via a
+temporary `git stash` of the fix file, to fail pre-fix with the identical real-Colab error
+message and pass with the fix restored, using a real MPS device move rather than any
+simulation. The master notebook was generated twice byte-identically at SHA-256
+`4b853a8d6acf70e4b94d828cbb77672b92b1d017317425f755bb80b6caeb9d17`.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
 (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
 has not yet been re-run at the current commit (including the rehearsal CI step), and
 claim-safe local cell execution has not been re-verified at this commit either — both remain
 pending before the next real Colab attempt. The AMP-probe precision fix, the
-`Pad`/`seg_pad_val` fix, and the `last_checkpoint` absolute-path fix have all since been
-confirmed by real L4 runs; the `Pad`-orientation fix, the rehearsal harness itself, and this
-stale-Drive-recovery fix have not yet been confirmed by an actual L4 run.
+`Pad`/`seg_pad_val` fix, the `last_checkpoint` absolute-path fix, and the stale-Drive-
+recovery fix have all since been confirmed by real L4 runs (the stale-Drive-recovery fix
+specifically got a fresh smoke start and a step-25 interruption to succeed before the next,
+newly-fixed bug was reached); the RNG checkpoint-device fix and the self-test containment
+change have not yet been confirmed by an actual L4 run.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4
 five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
 result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is
