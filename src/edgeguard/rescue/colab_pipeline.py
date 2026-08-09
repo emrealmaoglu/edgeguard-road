@@ -19,6 +19,7 @@ from edgeguard.rescue.colab_recovery import (
     create_state_archive,
     publish_recovery_file,
     restore_recovery_file,
+    utc_now,
 )
 from edgeguard.rescue.multidomain import validate_dataset_manifest, verify_manifest_data_is_staged
 from edgeguard.rescue.release_acceptance import accept_release_candidate_by_policy
@@ -110,6 +111,7 @@ class PipelineInputs:
     campaign_id: str = CAMPAIGN_ID
     execution_mode: str = "production"
     state_store_root: Path | None = None
+    recovery_self_test_model: str | None = CORE_MODELS[0]
 
     def validated(self) -> PipelineInputs:
         if len(self.project_commit) != 40 or any(
@@ -127,6 +129,11 @@ class PipelineInputs:
             raise ValueError("Colab v3 final training requires all five models in frozen order")
         if self.ablation_model is not None:
             raise ValueError("Colab v3 derives the ablation model from train_select evidence")
+        if (
+            self.recovery_self_test_model is not None
+            and self.recovery_self_test_model not in ALL_MODELS
+        ):
+            raise ValueError("recovery_self_test_model must be one of the five known models")
         if self.execution_mode not in {"production", "acceptance"}:
             raise ValueError("execution_mode must be production or acceptance")
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", self.campaign_id) is None:
@@ -788,7 +795,16 @@ class ColabPipeline:
                 command.append("--acceptance-test")
             if device_batch is None:
                 command.extend(("--device-batch", "1"))
-        elif phase in {"smoke", "extension-smoke"}:
+        elif (
+            phase in {"smoke", "extension-smoke"}
+            and model is not None
+            and model == self.inputs.recovery_self_test_model
+        ):
+            # Prove the interrupt+resume path once on real hardware per campaign,
+            # not once per model: every deliberate crash+resume cycle is itself a
+            # chance for the recovery machinery to fail (see
+            # _restart_after_failed_self_test), and one proof is sufficient
+            # evidence that the shared code path works.
             command.extend(("--intentional-interrupt-step", "25"))
         if loss == "median_frequency":
             if self.inputs.class_weights_file is None:
@@ -1150,9 +1166,23 @@ class ColabPipeline:
                     stderr = str(error.stderr or "").lower()
                     intentional = "edgeguard_intentional_interruption" in stderr
                     if intentional:
-                        result = self._resume_after_intentional_interruption(
-                            phase, label, command, run_dir, error
-                        )
+                        try:
+                            result = self._resume_after_intentional_interruption(
+                                phase, label, command, run_dir, error
+                            )
+                        except (
+                            subprocess.CalledProcessError,
+                            RuntimeError,
+                            ValueError,
+                            OSError,
+                            json.JSONDecodeError,
+                        ) as resume_error:
+                            # The self-test's own resume leg is broken, not the
+                            # training itself -- do not let a verification
+                            # mechanism kill the whole multi-model campaign.
+                            result = self._restart_after_failed_self_test(
+                                phase, label, command, run_dir, resume_error
+                            )
                         results.append(result)
                         continue
                     if "out of memory" not in stderr and "cuda oom" not in stderr:
@@ -1208,6 +1238,71 @@ class ColabPipeline:
             "verified": True,
             "optimizer_step": optimizer_step,
             "checkpoint_sha256": checkpoint_sha256,
+        }
+        return result
+
+    @staticmethod
+    def _strip_self_test_flags(command: list[str]) -> list[str]:
+        """Drop --resume and --intentional-interrupt-step <value> from a
+        command, by index rather than by value, so a coincidental literal
+        "25" elsewhere in the command is never eaten."""
+        stripped: list[str] = []
+        skip_next = False
+        for value in command:
+            if skip_next:
+                skip_next = False
+                continue
+            if value == "--intentional-interrupt-step":
+                skip_next = True
+                continue
+            if value == "--resume":
+                continue
+            stripped.append(value)
+        return stripped
+
+    def _restart_after_failed_self_test(
+        self,
+        phase: str,
+        label: str,
+        command: list[str],
+        run_dir: Path,
+        resume_error: Exception,
+    ) -> dict[str, Any]:
+        """The recovery self-test's own resume leg failed on real hardware.
+
+        This is a failure of the *verification* mechanism (intentional
+        interrupt + resume), not necessarily of training itself, and it must
+        not kill the other four models' campaign. Record durable,
+        hash-sealed evidence of the failure, quarantine the aborted run
+        directory, and restart the model from scratch (never resume: the
+        flags that make identity/resume safe -- --resume and
+        --intentional-interrupt-step -- are stripped, matching
+        _prepare_oom_retry's quarantine-and-restart pattern for a run whose
+        local state can no longer be trusted). If the restart itself fails,
+        that is a genuine training failure and is left to propagate.
+        """
+        failure_record = {
+            "schema_version": "1.0",
+            "record_type": "edgeguard_recovery_self_test_failure",
+            "phase": phase,
+            "label": label,
+            "run_dir": str(run_dir),
+            "error_type": type(resume_error).__name__,
+            "message": str(resume_error)[:2000],
+            "detected_at": utc_now(),
+        }
+        atomic_json(run_dir / "recovery_self_test_failure.json", failure_record)
+        atomic_json(self._phase_root(phase) / "recovery_self_test_failure.json", failure_record)
+        if run_dir.exists():
+            quarantine = run_dir.with_name(f"{run_dir.name}.recovery-self-test-{time.time_ns()}")
+            run_dir.rename(quarantine)
+        restart_command = self._strip_self_test_flags(command)
+        result = self._run_command(phase, f"{label}-restart", restart_command)
+        result["interruption_resume"] = {
+            "verified": False,
+            "outcome": "restarted_without_resume",
+            "error_type": type(resume_error).__name__,
+            "message": str(resume_error)[:2000],
         }
         return result
 
@@ -1755,8 +1850,29 @@ class ColabPipeline:
         )
         return [result]
 
+    def _verify_recovery_self_test_not_failed(self, phase: str) -> None:
+        """Refuse to spend real training hours on an unproven recovery path.
+
+        A failed recovery self-test (see _restart_after_failed_self_test) is
+        allowed to let the cheap smoke/extension-smoke phases continue, since
+        those cost minutes -- but pilot/screening/hpo/final cost real hours,
+        and losing them to the first genuine Colab preemption because the
+        interrupt+resume machinery was silently broken is exactly the kind
+        of hidden cost this gate exists to prevent.
+        """
+        failures = sorted(self.state_root.rglob("recovery_self_test_failure.json"))
+        if failures:
+            raise RuntimeError(
+                f"refusing to start {phase!r}: the recovery self-test failed earlier "
+                f"in this campaign and was not re-verified -- see "
+                f"{failures[0]}. Delete the failure record(s) only after confirming "
+                "interrupt+resume works (e.g. a clean smoke rerun), then retry."
+            )
+
     def _run_phase(self, phase: str) -> dict[str, Any]:
         started = time.perf_counter()
+        if phase in {"pilot", "screening", "hpo", "final"}:
+            self._verify_recovery_self_test_not_failed(phase)
         if phase == "preflight":
             self._verify_preflight()
             commands: list[dict[str, Any]] = []

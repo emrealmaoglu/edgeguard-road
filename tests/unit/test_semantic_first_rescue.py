@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -317,6 +318,83 @@ default_hooks = dict(checkpoint=dict(type='CheckpointHook'))
         resume=False,
     )
     assert weighted.model.decode_head.loss_decode.class_weight == [1.0] * 19
+
+
+def test_amp_optim_wrapper_shape_is_correct_for_every_precision(tmp_path: Path) -> None:
+    """Config-level check for the AmpOptimWrapper branch (`build_training_config`,
+    precision in {"fp16", "bf16"}).
+
+    This branch is only reachable at *training* time via `resolve_auto_precision`,
+    which returns "fp32" whenever `torch.cuda.is_available()` is False --
+    meaning it is a dead branch in every CPU rehearsal run (this dev machine,
+    and CI). That is exactly how the first real bug found this session (a
+    hardcoded AMP dtype) reached a real Colab L4 GPU before being caught: no
+    local run ever actually built or exercised an Amp config. Real bf16/fp16
+    numerical behavior can only be observed on real CUDA hardware -- this
+    test cannot substitute for that -- but the *shape* of the config
+    `build_training_config` produces (which wrapper type, which dtype key,
+    whether loss_scale is present) needs zero GPU and should never regress
+    silently again.
+    """
+    pytest.importorskip("mmengine", reason="MMSeg config resolution is an optional integration")
+    protocol = load_rescue_config(Path("configs/rescue/semantic_first.yaml"))
+    sample = _sample(0)
+    record = {
+        "sample_id": sample.sample_id,
+        "group_id": sample.group_id,
+        "image": sample.image,
+        "mask": sample.mask,
+    }
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"roles": {"train_fit": [record], "train_select": [record]}}),
+        encoding="utf-8",
+    )
+    mmseg_root = tmp_path / "mmseg"
+    model = protocol.models[0]
+    upstream = mmseg_root / model.upstream_config
+    upstream.parent.mkdir(parents=True, exist_ok=True)
+    upstream.write_text(
+        "model = dict(type='EncoderDecoder', "
+        "data_preprocessor=dict(type='SegDataPreProcessor', size=(1024, 1024)), "
+        "decode_head=dict(type='FakeHead', num_classes=150, "
+        "loss_decode=dict(type='CrossEntropyLoss')))\n"
+        "default_hooks = dict(checkpoint=dict(type='CheckpointHook'))\n",
+        encoding="utf-8",
+    )
+
+    def _build(precision: str, work_dir_name: str) -> Any:
+        return build_training_config(
+            protocol,
+            model_name=model.name,
+            stage_name="smoke",
+            mmseg_root=mmseg_root,
+            dataset_root=tmp_path / "cityscapes",
+            split_manifest=manifest,
+            work_dir=tmp_path / "work" / work_dir_name,
+            loss="ce",
+            audit_report=None,
+            resume=False,
+            precision=precision,
+        )
+
+    fp32 = _build("fp32", "fp32")
+    assert fp32.optim_wrapper.type == "OptimWrapper"
+    assert "dtype" not in fp32.optim_wrapper
+    assert "loss_scale" not in fp32.optim_wrapper
+
+    bf16 = _build("bf16", "bf16")
+    assert bf16.optim_wrapper.type == "AmpOptimWrapper"
+    assert bf16.optim_wrapper.dtype == "bfloat16"
+    assert "loss_scale" not in bf16.optim_wrapper
+
+    fp16 = _build("fp16", "fp16")
+    assert fp16.optim_wrapper.type == "AmpOptimWrapper"
+    assert fp16.optim_wrapper.dtype == "float16"
+    assert fp16.optim_wrapper.loss_scale == "dynamic"
+
+    with pytest.raises(ValueError, match="precision must be fp32, fp16, or bf16"):
+        _build("auto", "invalid")
 
 
 def test_acdc_uses_the_original_condition_split_sequence_layout(tmp_path: Path) -> None:

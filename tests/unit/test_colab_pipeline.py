@@ -245,6 +245,102 @@ def test_smoke_command_enforces_cut_and_acceptance_command_stays_short(tmp_path:
     assert command[command.index("--precision") + 1] == "fp32"
 
 
+def test_recovery_self_test_runs_once_per_campaign_not_once_per_model(tmp_path: Path) -> None:
+    """The intentional-interrupt self-test only fires for
+    PipelineInputs.recovery_self_test_model (default CORE_MODELS[0]).
+    Every other model's smoke/extension-smoke command must train without
+    ever deliberately crashing itself -- five deliberate crashes per
+    campaign is what let bugs 3/5/6 each take the whole campaign down.
+    """
+    pipeline = _pipeline(tmp_path)
+    assert pipeline.inputs.recovery_self_test_model == CORE_MODELS[0]
+
+    self_test_command = pipeline._train_command("smoke", CORE_MODELS[0])  # noqa: SLF001
+    assert "--intentional-interrupt-step" in self_test_command
+
+    for model in CORE_MODELS[1:]:
+        command = pipeline._train_command("smoke", model)  # noqa: SLF001
+        assert "--intentional-interrupt-step" not in command
+
+    for model in EXTENSION_MODELS:
+        command = pipeline._train_command("extension-smoke", model)  # noqa: SLF001
+        assert "--intentional-interrupt-step" not in command
+
+
+def test_failed_recovery_self_test_restarts_the_model_instead_of_killing_the_campaign(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Reproduces the sixth real bug's failure MODE (not the RNG bug itself):
+    the self-test's own resume leg raises. The campaign must record durable
+    evidence and restart the model from scratch, not propagate the error and
+    kill the other four models.
+    """
+    pipeline = _pipeline(tmp_path)
+    model = CORE_MODELS[0]
+    run_dir = pipeline._run_directory("smoke", model)  # noqa: SLF001
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(colab_pipeline_module, "models_for_phase", lambda phase: (model,))
+
+    def fake_run_command(phase: str, label: str, command: list[str]) -> dict[str, object]:
+        calls.append(list(command))
+        if len(calls) == 1:
+            run_dir.mkdir(parents=True)
+            (run_dir / ".intentional-interruption-complete.json").write_text(
+                json.dumps(
+                    {
+                        "record_type": "edgeguard_intentional_interruption",
+                        "optimizer_step": 25,
+                        "checkpoint_sha256": "a" * 64,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            raise subprocess.CalledProcessError(
+                1,
+                command,
+                output="EDGEGUARD_INTENTIONAL_INTERRUPTION",
+                stderr="EDGEGUARD_INTENTIONAL_INTERRUPTION",
+            )
+        if len(calls) == 2:
+            # The self-test's own resume leg fails on real hardware.
+            raise subprocess.CalledProcessError(
+                1, command, output="RNG state must be a torch.ByteTensor", stderr="TypeError"
+            )
+        return {"label": label, "return_code": 0, "command": command}
+
+    monkeypatch.setattr(pipeline, "_run_command", fake_run_command)
+    results = pipeline._run_training_phase("smoke")  # noqa: SLF001
+
+    assert len(calls) == 3
+    restart_command = calls[2]
+    assert "--resume" not in restart_command
+    assert "--intentional-interrupt-step" not in restart_command
+    assert results[0]["interruption_resume"]["verified"] is False
+    assert results[0]["interruption_resume"]["outcome"] == "restarted_without_resume"
+
+    quarantined = sorted(run_dir.parent.glob(f"{run_dir.name}.recovery-self-test-*"))
+    assert len(quarantined) == 1
+    failure_record = json.loads((quarantined[0] / "recovery_self_test_failure.json").read_text())
+    assert failure_record["record_type"] == "edgeguard_recovery_self_test_failure"
+    phase_root_failure = pipeline._phase_root("smoke") / "recovery_self_test_failure.json"  # noqa: SLF001
+    assert phase_root_failure.is_file()
+
+
+def test_pilot_refuses_to_start_after_an_unresolved_recovery_self_test_failure(
+    tmp_path: Path,
+) -> None:
+    pipeline = _pipeline(tmp_path)
+    failure_path = pipeline.state_root / "smoke" / "recovery_self_test_failure.json"
+    failure_path.parent.mkdir(parents=True, exist_ok=True)
+    failure_path.write_text(
+        json.dumps({"record_type": "edgeguard_recovery_self_test_failure"}), encoding="utf-8"
+    )
+
+    with pytest.raises(RuntimeError, match="recovery self-test failed"):
+        pipeline._run_phase("pilot")  # noqa: SLF001
+
+
 def test_oom_retry_interruption_resumes_with_same_proven_checkpoint(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -25,6 +25,21 @@ from edgeguard.rescue.multidomain import (
 _REGISTERED = False
 
 
+def _cpu_rng_state(torch: Any, value: Any) -> Any:
+    """Coerce a checkpointed RNG state back to the CPU uint8 tensor that
+    torch.set_rng_state / torch.cuda.set_rng_state require.
+
+    Runner.resume loads with map_location=get_device(), so on Colab every
+    tensor in the checkpoint dict -- including these -- comes back on CUDA
+    (and on this dev machine, on MPS). Coerce on load as well as save:
+    checkpoints already published to Drive were written by the pre-fix code
+    and must keep resuming without republishing.
+    """
+    if not isinstance(value, torch.Tensor):
+        raise TypeError("recovery RNG state is not a tensor")
+    return value.detach().to(device="cpu", dtype=torch.uint8)
+
+
 def register_mmseg_components() -> None:
     """Register optional components only after the CUDA/MMSeg stack is available."""
     global _REGISTERED
@@ -203,9 +218,11 @@ def register_mmseg_components() -> None:
             checkpoint["edgeguard_recovery_state"] = {
                 "python_random": random.getstate(),
                 "numpy_random": np.random.get_state(),
-                "torch_random": torch.get_rng_state(),
+                "torch_random": _cpu_rng_state(torch, torch.get_rng_state()),
                 "cuda_random": (
-                    torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+                    [_cpu_rng_state(torch, item) for item in torch.cuda.get_rng_state_all()]
+                    if torch.cuda.is_available()
+                    else None
                 ),
                 "dataloader_iteration": int(runner.iter + 1),
                 "accumulation": self.accumulation,
@@ -219,9 +236,13 @@ def register_mmseg_components() -> None:
             torch = __import__("torch")
             random.setstate(state["python_random"])
             np.random.set_state(state["numpy_random"])
-            torch.set_rng_state(state["torch_random"])
-            if torch.cuda.is_available() and state.get("cuda_random") is not None:
-                torch.cuda.set_rng_state_all(state["cuda_random"])
+            torch.set_rng_state(_cpu_rng_state(torch, state["torch_random"]))
+            cuda_state = state.get("cuda_random")
+            if torch.cuda.is_available() and cuda_state is not None:
+                states = [_cpu_rng_state(torch, item) for item in cuda_state]
+                states = states[: torch.cuda.device_count()]
+                if states:
+                    torch.cuda.set_rng_state_all(states)
 
         def after_train_iter(
             self,

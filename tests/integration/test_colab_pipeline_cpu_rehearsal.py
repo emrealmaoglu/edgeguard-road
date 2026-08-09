@@ -73,7 +73,20 @@ def test_smoke_target_trains_and_resumes_core_models_through_real_pipeline(
     tmp_path: Path,
 ) -> None:
     """Real preflight/restore/stage-data/canary/smoke, real subprocess per
-    core model, real intentional-interruption-then-resume cycle."""
+    core model, real intentional-interruption-then-resume cycle for the
+    campaign's single recovery self-test model (CORE_MODELS[0]) only.
+
+    The self-test used to run once per model (5 deliberate crash+resume
+    cycles per campaign); it now runs once per campaign
+    (`PipelineInputs.recovery_self_test_model`, default `CORE_MODELS[0]`) --
+    proving the shared interrupt+resume code path once on real hardware is
+    sufficient evidence, and each extra cycle was itself a chance for the
+    self-test's own resume leg to fail and take the whole campaign down with
+    it (see `test_smoke_target_skips_stale_cross_commit_drive_recovery_checkpoint`'s
+    sibling in this file for the failure-handling case). The `>=` assertion
+    below guards against a future regression that shrinks the self-test
+    silently dropping a model from actually training.
+    """
     from support.tiny_pipeline_fixture import build_tiny_pipeline
 
     pipeline = build_tiny_pipeline(tmp_path, REPO_ROOT, mmseg_root=_MMSEG_CHECKOUT)  # type: ignore[arg-type]
@@ -83,9 +96,14 @@ def test_smoke_target_trains_and_resumes_core_models_through_real_pipeline(
     assert result["completed"] == ["preflight", "restore", "stage-data", "canary", "smoke"]
     metrics = json.loads((pipeline.state_root / "smoke/metrics.json").read_text())
     resumed = _interruption_resumes(metrics)
-    assert {command["label"] for command in resumed} == {
-        f"{model}-ce-resume" for model in CORE_MODELS
-    }
+    assert {command["label"] for command in resumed} == {f"{CORE_MODELS[0]}-ce-resume"}
+    assert len(resumed) == 1
+    # The self-test model's first attempt is deliberately interrupted before
+    # _run_command can return, so only its "-resume" label is ever recorded;
+    # every other core model trains straight through under its plain label.
+    expected_labels = {f"{model}-ce" for model in CORE_MODELS if model != CORE_MODELS[0]}
+    expected_labels.add(f"{CORE_MODELS[0]}-ce-resume")
+    assert {command["label"] for command in metrics["commands"]} >= expected_labels
     for command in resumed:
         proof = command["interruption_resume"]
         assert proof["verified"] is True
@@ -145,13 +163,18 @@ def test_smoke_target_skips_stale_cross_commit_drive_recovery_checkpoint(
     assert stale_marker["found_identity_sha256"] == "f" * 64
 
 
-def test_extension_smoke_trains_and_resumes_extension_models_bypassing_pilot(
+def test_extension_smoke_trains_extension_models_without_repeating_the_recovery_self_test(
     tmp_path: Path,
 ) -> None:
     """Covers ddrnet_23_slim/bisenetv2 by calling the internal extension-smoke
     phase directly, skipping the real 2000-step pilot stage it would
     otherwise require — matching the existing "call a private phase method
     directly" convention already used in tests/unit/test_colab_pipeline.py.
+
+    Neither extension model is `PipelineInputs.recovery_self_test_model`
+    (default `CORE_MODELS[0]`, already exercised by `smoke` above), so
+    neither should get an intentional-interrupt-then-resume cycle here —
+    the self-test runs once per campaign, not once per model.
     """
     from support.tiny_pipeline_fixture import build_tiny_pipeline
 
@@ -163,10 +186,7 @@ def test_extension_smoke_trains_and_resumes_extension_models_bypassing_pilot(
     assert pipeline._phase_complete("extension-smoke")  # noqa: SLF001
     metrics = json.loads((pipeline.state_root / "extension-smoke/metrics.json").read_text())
     resumed = _interruption_resumes(metrics)
-    assert {command["label"] for command in resumed} == {
-        f"{model}-ce-resume" for model in EXTENSION_MODELS
+    assert resumed == []
+    assert {command["label"] for command in metrics["commands"]} >= {
+        f"{model}-ce" for model in EXTENSION_MODELS
     }
-    for command in resumed:
-        proof = command["interruption_resume"]
-        assert proof["verified"] is True
-        assert proof["optimizer_step"] == 25
