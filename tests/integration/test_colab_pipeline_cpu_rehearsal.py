@@ -1,11 +1,12 @@
 """Run the real `ColabPipeline` orchestrator end to end on CPU, tiny data.
 
-Three real bugs (a hardcoded AMP dtype, a wrong `Pad` transform keyword
+Five real bugs (a hardcoded AMP dtype, a wrong `Pad` transform keyword
 argument, a bare-filename `last_checkpoint` marker breaking MMEngine's own
-auto-resume, and a fourth found *while building this test*: `Pad`'s `size`
-argument passed in the wrong (h, w)/(w, h) order) were each discovered one
-at a time on real Google Colab L4 GPU runs, one full Colab round-trip per
-bug. All but the AMP dtype bug (CUDA-only) are fully CPU-reproducible and
+auto-resume, a `Pad` `size` argument passed in the wrong (h, w)/(w, h)
+order, and a stale cross-commit Drive recovery pointer crashing the whole
+campaign before any training step ran) were each discovered one at a time
+on real Google Colab L4 GPU runs, one full Colab round-trip per bug. All
+but the AMP dtype bug (CUDA-only) are fully CPU-reproducible and
 device-independent; nothing in this repository drove the real orchestrator
 (`ColabPipeline.run`), the real `EdgeGuardRecoveryHook` interrupt+resume
 cycle, or the real `val_dataloader` build (`Compose()` with
@@ -93,6 +94,55 @@ def test_smoke_target_trains_and_resumes_core_models_through_real_pipeline(
     run_manifest = json.loads((pipeline.state_root / "smoke/run_manifest.json").read_text())
     assert run_manifest["scientific_status"] == "not_run"
     assert run_manifest["synthetic_or_smoke"] is True
+
+
+def test_smoke_target_skips_stale_cross_commit_drive_recovery_checkpoint(
+    tmp_path: Path,
+) -> None:
+    """A Drive recovery pointer left over from an earlier, incompatible commit
+    must not crash the campaign on a fresh Colab session's first attempt.
+
+    Reproduces the fifth real bug found on Colab L4: a brand-new session has
+    an empty local work_dir (no local run_identity.json), so
+    `ColabPipeline._run_training_phase` speculatively appends `--resume`
+    purely because a Drive pointer for this artifact_id exists
+    (`_recovery_pointer_exists` has zero identity awareness). `train_model()`
+    then restored the stale checkpoint, found its `identity_sha256` did not
+    match the current run (every commit changes `project_commit`, which is
+    part of the identity), and hard-raised
+    `ValueError("Drive recovery checkpoint belongs to a different immutable
+    run")`, crashing the whole 5-model campaign before a single training
+    step ran. The fix makes this speculative path degrade to a fresh run
+    instead of raising; an explicit resume of a known *local* run must still
+    raise (that check, `existing != identity` in `train_model()`, is
+    untouched by this fix and has no CPU-rehearsal coverage gap to close
+    here).
+    """
+    from support.tiny_pipeline_fixture import build_tiny_pipeline
+
+    from edgeguard.rescue.colab_recovery import publish_recovery_file
+
+    pipeline = build_tiny_pipeline(tmp_path, REPO_ROOT, mmseg_root=_MMSEG_CHECKOUT)  # type: ignore[arg-type]
+
+    stale_source = tmp_path / "stale-checkpoint.pth"
+    stale_source.write_bytes(b"stale-checkpoint-from-an-earlier-incompatible-commit")
+    publish_recovery_file(
+        stale_source,
+        pipeline.inputs.recovery_root,
+        artifact_id="smoke-segformer-b0-ce",
+        campaign_id=pipeline.inputs.campaign_id,
+        project_commit="0" * 40,
+        metadata={"identity_sha256": "f" * 64},
+    )
+
+    result = pipeline.run("smoke")
+
+    assert result["completed"] == ["preflight", "restore", "stage-data", "canary", "smoke"]
+    run_dir = pipeline.inputs.work_root / "runs" / "smoke" / "segformer_b0" / "ce"
+    assert not (run_dir / "recovered.pth").is_file()
+    stale_marker = json.loads((run_dir / "stale_recovery_skipped.json").read_text())
+    assert stale_marker["artifact_id"] == "smoke-segformer-b0-ce"
+    assert stale_marker["found_identity_sha256"] == "f" * 64
 
 
 def test_extension_smoke_trains_and_resumes_extension_models_bypassing_pilot(

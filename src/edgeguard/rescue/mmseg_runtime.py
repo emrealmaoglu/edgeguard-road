@@ -19,7 +19,12 @@ import numpy as np
 
 from edgeguard.calibration import apply_temperature, calibration_metrics, fit_temperature
 from edgeguard.evaluation.semantic import SemanticConfusionMatrix
-from edgeguard.rescue.colab_recovery import latest_checkpoint, restore_recovery_file
+from edgeguard.rescue.colab_recovery import (
+    latest_checkpoint,
+    peek_recovery_metadata,
+    restore_recovery_file,
+    utc_now,
+)
 from edgeguard.rescue.config import RescueConfig, model_by_name
 from edgeguard.rescue.dataset import (
     CITYSCAPES_CLASSES,
@@ -878,19 +883,40 @@ def train_model(
         except FileNotFoundError:
             needs_recovery_checkpoint = True
     if needs_recovery_checkpoint and recovery_root is not None:
+        speculative_auto_resume = not identity_path.is_file()
         if not identity_path.is_file():
             identity_path.write_text(canonical_json(identity) + "\n", encoding="utf-8")
-        restored = restore_recovery_file(
-            recovery_root,
-            artifact_id=recovery_artifact_id,
-            destination=work_dir / "recovered.pth",
+        pointer_metadata = peek_recovery_metadata(recovery_root, artifact_id=recovery_artifact_id)
+        stale_drive_checkpoint = (
+            pointer_metadata is not None
+            and pointer_metadata.get("identity_sha256") != identity_sha256
         )
-        metadata = restored.get("metadata", {})
-        if metadata.get("identity_sha256") != identity_sha256:
+        if stale_drive_checkpoint and not speculative_auto_resume:
             raise ValueError("Drive recovery checkpoint belongs to a different immutable run")
-        recovered_checkpoint = work_dir / "recovered.pth"
-        (work_dir / "last_checkpoint").write_text(f"{recovered_checkpoint}\n", encoding="utf-8")
-        restored_from_drive = True
+        if pointer_metadata is not None and not stale_drive_checkpoint:
+            restore_recovery_file(
+                recovery_root,
+                artifact_id=recovery_artifact_id,
+                destination=work_dir / "recovered.pth",
+            )
+            recovered_checkpoint = work_dir / "recovered.pth"
+            (work_dir / "last_checkpoint").write_text(f"{recovered_checkpoint}\n", encoding="utf-8")
+            restored_from_drive = True
+        elif pointer_metadata is not None:
+            (work_dir / "stale_recovery_skipped.json").write_text(
+                canonical_json(
+                    {
+                        "schema_version": "1.0",
+                        "record_type": "edgeguard_stale_recovery_skip",
+                        "artifact_id": recovery_artifact_id,
+                        "expected_identity_sha256": identity_sha256,
+                        "found_identity_sha256": pointer_metadata.get("identity_sha256"),
+                        "detected_at": utc_now(),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
     if resume:
         if not identity_path.is_file():
             raise FileNotFoundError("resume requires an existing run_identity.json")
