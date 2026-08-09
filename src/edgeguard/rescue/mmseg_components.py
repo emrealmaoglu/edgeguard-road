@@ -50,7 +50,8 @@ def register_mmseg_components() -> None:
         mmengine_dist = __import__("mmengine.dist", fromlist=["get_dist_info", "sync_random_seed"])
         mmengine_registry = __import__("mmengine.registry", fromlist=["DATA_SAMPLERS"])
         mmseg_datasets = __import__("mmseg.datasets", fromlist=["BaseSegDataset"])
-        mmseg_registry = __import__("mmseg.registry", fromlist=["DATASETS"])
+        mmseg_registry = __import__("mmseg.registry", fromlist=["DATASETS", "MODELS"])
+        mmseg_losses = __import__("mmseg.models.losses", fromlist=["BoundaryLoss"])
     except ModuleNotFoundError as error:
         raise RuntimeError(
             "MMSeg runtime is required to register multi-domain components"
@@ -425,5 +426,36 @@ def register_mmseg_components() -> None:
             ) as stream:
                 stream.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
             self.seen.add(optimizer_step)
+
+    boundary_loss_base: Any = mmseg_losses.BoundaryLoss
+
+    @mmseg_registry.MODELS.register_module(name="BoundaryLoss", force=True)
+    class EdgeGuardBoundaryLoss(boundary_loss_base):
+        """PIDNet's BoundaryLoss under real bf16 autocast (real Colab L4, not
+        this repo's fp32-only CPU rehearsal): `weight = torch.zeros_like(log_p)`
+        inherits log_p's autocast dtype (bfloat16), but the ratio assigned into
+        it (`neg_num * 1.0 / sum_num`) is plain float32, since pos_num/neg_num
+        come from summing a float32 label mask that autocast never touches.
+        `index_put_` refuses the implicit cast. Identical to upstream except
+        for the two `.to(weight.dtype)` casts before assignment -- numerics
+        are unchanged, only the dtype is aligned.
+        """
+
+        def forward(self, bd_pre: Any, bd_gt: Any) -> Any:
+            torch = __import__("torch")
+            log_p = bd_pre.permute(0, 2, 3, 1).contiguous().view(1, -1)
+            target_t = bd_gt.view(1, -1).float()
+            pos_index = target_t == 1
+            neg_index = target_t == 0
+            weight = torch.zeros_like(log_p)
+            pos_num = pos_index.sum()
+            neg_num = neg_index.sum()
+            sum_num = pos_num + neg_num
+            weight[pos_index] = (neg_num * 1.0 / sum_num).to(weight.dtype)
+            weight[neg_index] = (pos_num * 1.0 / sum_num).to(weight.dtype)
+            loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                log_p, target_t, weight, reduction="mean"
+            )
+            return self.loss_weight * loss
 
     _REGISTERED = True
