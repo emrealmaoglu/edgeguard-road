@@ -20,15 +20,23 @@ synthetic fixture data on CPU. It is not the same thing as "claim-safe local cel
 execution" (`scripts/dev/run_campaign_notebook_harness.py`), which only proves the
 generated notebook's cells import and execute correctly — the real training call there is
 stubbed behind a hardcoded `{"scientific_status": "not_run"}` dict and never touches
-`Runner.train()`. Six real bugs (a hardcoded AMP dtype, a wrong `Pad` transform keyword, a
+`Runner.train()`. Seven real bugs (a hardcoded AMP dtype, a wrong `Pad` transform keyword, a
 bare-filename `last_checkpoint` marker, a `Pad` size-argument dimension-order bug, a stale
 cross-commit Drive recovery pointer crashing the whole campaign before any training step
-ran, and a checkpoint RNG-state device mismatch) were each discovered one at a time on a
-real Colab L4 run before this rehearsal existed; the last five would all have been caught by
-it once run against a real foreign device — the stale-recovery scenario needed a dedicated
-new test that seeds the recovery store with a mismatched identity, since every other
-rehearsal test starts from a clean, empty recovery store; the RNG-state bug needed the
-harness to actually see a non-CPU device during `Runner.resume()`.
+ran, a checkpoint RNG-state device mismatch, and a PIDNet `BoundaryLoss` bf16 dtype
+mismatch) were each discovered one at a time on a real Colab L4 run before this rehearsal
+existed. Five would have been caught by this rehearsal once run against a real foreign
+device — the stale-recovery scenario needed a dedicated new test that seeds the recovery
+store with a mismatched identity, since every other rehearsal test starts from a clean,
+empty recovery store; the RNG-state bug needed the harness to actually see a non-CPU device
+during `Runner.resume()`. The seventh (`BoundaryLoss`) is structurally uncatchable by this
+CPU-only rehearsal even in principle: it only manifests under real bf16 autocast on real
+CUDA, and `resolve_auto_precision` always resolves to `fp32` without CUDA. This is the
+project's one remaining fully CPU-blind bug class (shared with the original AMP-dtype bug)
+— treat any future real-Colab crash that only reproduces under `precision: bf16`/`fp16` the
+same way: fix it, write the strongest CPU-checkable regression test possible (config shape,
+post-fix invariants, numerical no-op-at-matching-dtype), and say plainly in the commit that
+real L4 confirmation is the only real test.
 
 **Do not force `mmengine.device.utils.DEVICE = "cpu"`** (e.g. via a local
 `sitecustomize.py`) as a blanket workaround for MPS/CPU quirks on Apple Silicon dev
@@ -72,7 +80,7 @@ screening → hpo → final → selection → ablation → accept → validation
 evaluate → export → report → package
 ```
 
-The notebook checks out application commit `c88ac8f` (see `git log` for the full SHA).
+The notebook checks out application commit `4917c49` (see `git log` for the full SHA).
 It does not use the hosted Python,
 NumPy, Torch, or uv for training. The managed environment is Python 3.11.13, uv 0.8.8,
 NumPy 1.26.4, PyTorch 2.1.1/cu121, MMEngine 0.10.7, mmcv-lite 2.1.0,

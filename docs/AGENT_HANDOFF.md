@@ -2,29 +2,33 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `c88ac8f` (see `git log` for the full SHA)
+  `4917c49` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
   Jetson evidence remain external. Remote CI and claim-safe notebook execution have not yet
-  been re-run at this commit (see Local gates). A real L4 run at commit `3262af8…` confirmed
-  three fixes on real hardware in sequence — fresh smoke start, interruption at step 25, and
-  local resume from `recovery_25.pth` — then crashed inside the resume subprocess with
-  `TypeError: RNG state must be a torch.ByteTensor in EdgeGuardRecoveryHook`, a sixth real
-  bug, fixed by this commit (see below). Not yet re-confirmed on real L4 hardware (see Local
-  gates).
-- **Note on this session's root-cause pattern:** all six real bugs found across this
+  been re-run at this commit (see Local gates). A real L4 run at commit `2b078d3…` reached
+  the furthest point yet: `segformer_b0` completed its full smoke cycle end to end (fresh
+  start, interruption at step 25, real resume via the RNG-device fix, training to step 50,
+  validation, mIoU computed), and `fast_scnn` trained straight through (the recovery
+  self-test now runs once per campaign, not once per model). Then `pidnet_s` crashed on its
+  first training step with `RuntimeError: Index put requires the source and destination
+  dtypes match, got BFloat16 for the destination and Float for the source` inside
+  `boundary_loss.py`, a seventh real bug, fixed by this commit (see below). Not yet
+  re-confirmed on real L4 hardware (see Local gates).
+- **Note on this session's root-cause pattern:** all seven real bugs found across this
   session (AMP dtype, `Pad`/`seg_pad_val`, `last_checkpoint` bare filename, `Pad`
-  size-argument order, stale cross-commit Drive recovery, RNG checkpoint device) are in this
-  project's own bespoke Colab-orchestration/recovery layer — none are in
-  MMSeg/PyTorch/Cityscapes itself. This commit also found and fixed the reason the CPU
-  rehearsal harness missed bug 6: a local, never-committed `sitecustomize.py` had been
-  forcing `mmengine.device.utils.DEVICE = "cpu"` to work around unrelated MPS operator
-  gaps, which incidentally also hid every device-class bug (like this one) from ever
-  reproducing locally. `mmengine.device.get_device()` actually returns `"mps"` on this dev
-  machine — a real foreign device relative to a CPU RNG tensor — so the bug reproduces
-  without any GPU once that forcing is removed for tests that specifically target
-  device-transition logic.
+  size-argument order, stale cross-commit Drive recovery, RNG checkpoint device, PIDNet
+  `BoundaryLoss` bf16 dtype) are in this project's own bespoke Colab-orchestration/recovery
+  layer, or in a corner of pinned MMSeg that only a real bf16-autocast run on real CUDA ever
+  exercises — none are in the Cityscapes/IDD20K data or the choice of the five model
+  architectures. Six of the seven bugs are now confirmed closed on real L4 hardware; this
+  seventh is the first CUDA+bf16-specific surface reached, exactly the residual risk flagged
+  after the sixth fix ("the AMP branch is still dead on CPU — this bug class doesn't close,
+  it shrinks"). The prior commit also found and fixed the reason the CPU rehearsal harness
+  missed bug 6: a local, never-committed `sitecustomize.py` had been forcing
+  `mmengine.device.utils.DEVICE = "cpu"` to work around unrelated MPS operator gaps, which
+  incidentally also hid every device-class bug from reproducing locally.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -225,45 +229,63 @@
   hardcoded AMP dtype) escaped local testing; the new test cannot observe real bf16/fp16
   numerics (only real CUDA can), but locks the wrapper/dtype/loss_scale shape so it can
   never regress silently again. Not yet re-confirmed on real L4 hardware.
+- (Commit `4917c49…`) A real L4 run at `2b078d3…` confirmed `segformer_b0`'s and
+  `fast_scnn`'s full smoke cycles end to end — the RNG-device fix and the once-per-campaign
+  self-test both held up on real hardware — then `pidnet_s` crashed on its very first
+  training step (before any interruption) with `RuntimeError: Index put requires the source
+  and destination dtypes match, got BFloat16 for the destination and Float for the source`
+  inside `mmseg/models/losses/boundary_loss.py:52`. Root cause: upstream `BoundaryLoss.
+  forward` builds `weight = torch.zeros_like(log_p)`, and under real
+  `AmpOptimWrapper(dtype='bfloat16')` autocast on real CUDA, `log_p` (the boundary head's
+  raw logits) is already bfloat16; the ratio assigned into `weight`
+  (`neg_num * 1.0 / sum_num`) comes from summing a float32 label mask autocast never
+  touches, so it stays float32 — `index_put_` rejects the mismatch on the pinned Colab torch
+  (2.1.1+cu121). Fixed by registering `EdgeGuardBoundaryLoss` via this repo's existing
+  `force=True` override idiom (already used four times in the same file for the manifest
+  dataset, sampler, and recovery/metrics hooks) — identical to upstream except the two
+  assignments are cast to `weight.dtype` first; only `pidnet_s` uses `BoundaryLoss` among
+  the five models, and a scan of the pinned checkout's other loss files for the same
+  `zeros_like`-then-index-assign pattern found only one other occurrence
+  (`huasdorff_distance_loss.py`), unused by any of our five model configs. Local
+  reproduction note, recorded honestly rather than faked: this dev machine's torch (2.13.0)
+  silently allows the exact same implicit float32→bfloat16 `index_put_` that torch 2.1.1
+  rejects — a torch-version behavior difference, not a device one — so the new regression
+  test asserts the post-fix invariant (dtype-aligned `weight`, finite loss under mismatched
+  inputs, and numerically-identical output to upstream when dtypes already match) rather
+  than a raises-pre-fix reproduction; confirmed via `git stash` that the
+  override-registration itself is present only post-fix. The fast-tier CPU rehearsal
+  (including a real `pidnet_s` smoke run, fp32, unaffected by this bf16-only bug) was
+  re-run end to end and still passes. Not yet re-confirmed on real L4 hardware.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
-- Full pytest passes: 489 passed, 19 environment-gated skipped without the pinned MMSeg
-  stack; 22 of 22 in the mmseg-gated suite (`tests/unit/test_mmseg_real_training_step.py`,
-  `tests/unit/test_mmseg_recovery_checkpoint_marker.py`,
-  `tests/unit/test_mmseg_recovery_rng_state.py` (new), and
-  `tests/integration/test_colab_pipeline_cpu_rehearsal.py`) pass with
+- Full pytest passes: 489 passed, 21 environment-gated skipped without the pinned MMSeg
+  stack; 24 of 24 in the mmseg-gated suite (adds
+  `tests/unit/test_pidnet_boundary_loss_dtype.py`, new this commit) pass with
   `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`
-  checkout. None of this exercises real CUDA/AMP behavior — that only happens on a real L4.
-- All three `tests/integration/test_colab_pipeline_cpu_rehearsal.py` tests pass locally end
-  to end against the real pinned stack (confirmed manually, ~35 minutes combined; not yet
-  run in CI at this commit) — now on the real MPS device (`mmengine.device.get_device()`
-  returns `"mps"` here), not the CPU-forced device used for prior sessions' runs; a
-  temporary, never-committed `sitecustomize.py` was still needed to work around unrelated
-  MPS backward-pass operator gaps (`view size is not compatible with input tensor's size and
-  stride`, confirmed unrelated to any bug fixed this session), but it no longer forces
-  `mmengine.device.utils.DEVICE`, only the `torch.load(weights_only=...)` default. The new
-  RNG regression test needs no such forcing at all — it checks
-  `torch.backends.mps.is_available()` directly. Both `test_smoke_target_...` tests were
-  updated for the self-test now running once per campaign (previously once per model): only
-  `CORE_MODELS[0]` gets an `-ce-resume` record; every other model's plain `-ce` label is
-  still asserted present, so a regression that silently dropped a model from training
-  couldn't hide behind the reduced self-test count.
+  checkout. None of this exercises real CUDA/bf16 behavior — that only happens on a real L4.
+- The fast-tier `tests/integration/test_colab_pipeline_cpu_rehearsal.py` test (3 core
+  models, including a real `pidnet_s` smoke run) was re-run end to end against the real
+  pinned stack and still passes (~5.5 minutes; the full 3-test suite was not re-run this
+  commit since the bf16 branch this fix targets is unreachable on CPU regardless — see
+  below — so the other two rehearsal tests carry no new risk from this change).
 - Master notebook generation is byte-identical across two runs.
 - The notebook SHA-256 after pinning is
-  `4b853a8d6acf70e4b94d828cbb77672b92b1d017317425f755bb80b6caeb9d17`.
+  `6b1476c4c1eec40370673ae054b54952086a982031db6b0cff6e07734c5a688c`.
 - **Pending at this commit:** claim-safe local cell execution has not been re-verified,
   remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run (including
-  the rehearsal step), and this RNG-device fix plus the self-test containment change have
-  not been confirmed on real CUDA hardware — the AMP-probe, `Pad`/`seg_pad_val`,
-  `last_checkpoint`, `Pad`-orientation, and stale-Drive-recovery fixes all have
-  real-hardware confirmation so far (the stale-Drive-recovery fix specifically got a fresh
-  smoke start and a step-25 interruption to succeed on real L4 before this newest crash).
-  The prior application commit (`3f3ef8f…`) passed remote run `31129018003` with Colab's
-  exact hostile inline backend and host uv/virtualenv state injected; that evidence does not
-  carry over to this commit and should be re-established before a real Colab attempt.
+  the rehearsal step), and this `BoundaryLoss` dtype fix has not been confirmed on real CUDA
+  hardware — the AMP-probe, `Pad`/`seg_pad_val`, `last_checkpoint`, `Pad`-orientation,
+  stale-Drive-recovery, and RNG-device fixes all have real-hardware confirmation so far (the
+  RNG-device fix specifically got `segformer_b0` and `fast_scnn` both through a full smoke
+  cycle before this newest crash). This fix cannot be confirmed locally even in principle —
+  it depends on real bf16 autocast on real CUDA, which this dev machine does not have; the
+  next real Colab attempt is the actual test. The prior application commit (`3f3ef8f…`)
+  passed remote run `31129018003` with Colab's exact hostile inline backend and host
+  uv/virtualenv state injected; that evidence does not carry over to this commit and should
+  be re-established before a real Colab attempt.
 
 ## Next external action
 

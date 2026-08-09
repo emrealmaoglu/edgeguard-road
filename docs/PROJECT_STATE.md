@@ -5,7 +5,7 @@ Updated 2026-08-09 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`c88ac8f` (see `git log` for the full SHA). The only generated notebook is
+`4917c49` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -288,6 +288,32 @@ rehearsal run (`resolve_auto_precision` always returns `fp32` without CUDA) — 
 the session's very first bug (a hardcoded AMP dtype) escaped local testing. Not yet
 confirmed on real L4 hardware.
 
+A real L4 run at `2b078d3…` reached the furthest point yet: `segformer_b0` completed its
+full smoke cycle end to end (fresh start, interruption at step 25, real resume via the
+RNG-device fix, training to step 50, validation, mIoU computed), and `fast_scnn` trained
+straight through under the now-once-per-campaign self-test. Then `pidnet_s` crashed on its
+very first training step with `RuntimeError: Index put requires the source and destination
+dtypes match, got BFloat16 for the destination and Float for the source` inside
+`boundary_loss.py:52`. This is a **seventh** real bug: upstream `BoundaryLoss.forward`
+builds `weight = torch.zeros_like(log_p)`, and under real `AmpOptimWrapper(dtype='bfloat16')`
+autocast on real CUDA, `log_p` (the boundary head's raw logits) is already bfloat16; the
+ratio assigned into `weight` comes from summing a float32 label mask autocast never
+touches, so it stays float32 — `index_put_` rejects the mismatch on the pinned Colab torch
+(2.1.1+cu121). Fixed by registering `EdgeGuardBoundaryLoss` (application commit `4917c49…`)
+via this repo's existing `force=True` override idiom — identical to upstream except the two
+assignments are cast to `weight.dtype` first. Only `pidnet_s` uses `BoundaryLoss` among the
+five models; a scan of the pinned checkout's other loss files for the same pattern found
+only one other occurrence, used by none of our five model configs. This fix cannot be
+reproduced as a "raises pre-fix" test on this dev machine even in principle: its torch
+(2.13.0) silently permits the same implicit downcast that torch 2.1.1 (pinned for
+Colab/CI) rejects — a torch-version difference, not a device one. The new test instead
+asserts the fix's actual guarantee (dtype-aligned `weight`, finite loss under mismatched
+inputs, and bit-identical output to upstream when dtypes already match), and `git stash`
+confirms the override registration itself is present only post-fix. The fast-tier CPU
+rehearsal (a real `pidnet_s` smoke run, fp32, unaffected by this bf16-only bug) was re-run
+and still passes. Not yet confirmed on real L4 hardware — that is the only test that can
+actually exercise the bf16 code path this fixes.
+
 ## Deliveries
 
 The package stage produces `EdgeGuard_Jetson_Release.zip`,
@@ -308,33 +334,36 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-The current delivery passes 489 tests with nineteen environment-gated skips without the
+The current delivery passes 489 tests with twenty-one environment-gated skips without the
 pinned MMSeg stack present; with the pinned stack available (`EDGEGUARD_MMSEG_CHECKOUT`
 pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) the mmseg-
-gated suite passes 22 of 22, including the real per-architecture `model.loss()` regression
+gated suite passes 24 of 24, including the real per-architecture `model.loss()` regression
 tests, the `last_checkpoint` marker regression test, the `Pad` orientation regression test,
-the stale-Drive-recovery regression test, and the new RNG checkpoint-device regression test.
-All three `tests/integration/test_colab_pipeline_cpu_rehearsal.py` tests pass locally end to
-end against the real pinned stack (confirmed manually, ~35 minutes combined; not yet run in
-CI at this commit) — on the real MPS device this time (`mmengine.device.get_device()`
-returns `"mps"` here), not artificially forced to CPU; a temporary, never-committed
-`sitecustomize.py` was still needed for an unrelated MPS backward-pass operator gap, but no
-longer forces `mmengine.device.utils.DEVICE`. The new RNG test was confirmed, via a
-temporary `git stash` of the fix file, to fail pre-fix with the identical real-Colab error
-message and pass with the fix restored, using a real MPS device move rather than any
-simulation. The master notebook was generated twice byte-identically at SHA-256
-`4b853a8d6acf70e4b94d828cbb77672b92b1d017317425f755bb80b6caeb9d17`.
+the stale-Drive-recovery regression test, the RNG checkpoint-device regression test, and the
+new PIDNet `BoundaryLoss` dtype regression test. The fast-tier
+`tests/integration/test_colab_pipeline_cpu_rehearsal.py` test (3 core models, including a
+real `pidnet_s` smoke run) was re-run and still passes (~5.5 minutes); the full 3-test suite
+was not re-run this commit since the fix's bf16 code path is unreachable on CPU regardless,
+so the other two rehearsal tests carry no new risk. The `BoundaryLoss` test cannot be a
+"raises pre-fix" reproduction even in principle on this machine — its torch (2.13.0)
+silently permits the exact implicit downcast that the pinned Colab/CI torch (2.1.1) rejects,
+a torch-version difference, not a device one — so it asserts the fix's actual guarantee
+(dtype-aligned output, bit-identical to upstream when dtypes already match) instead, and
+`git stash` confirms the override registration is present only post-fix. The master
+notebook was generated twice byte-identically at SHA-256
+`6b1476c4c1eec40370673ae054b54952086a982031db6b0cff6e07734c5a688c`.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
 (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
 has not yet been re-run at the current commit (including the rehearsal CI step), and
 claim-safe local cell execution has not been re-verified at this commit either — both remain
 pending before the next real Colab attempt. The AMP-probe precision fix, the
-`Pad`/`seg_pad_val` fix, the `last_checkpoint` absolute-path fix, and the stale-Drive-
-recovery fix have all since been confirmed by real L4 runs (the stale-Drive-recovery fix
-specifically got a fresh smoke start and a step-25 interruption to succeed before the next,
-newly-fixed bug was reached); the RNG checkpoint-device fix and the self-test containment
-change have not yet been confirmed by an actual L4 run.
+`Pad`/`seg_pad_val` fix, the `last_checkpoint` absolute-path fix, the stale-Drive-recovery
+fix, and the RNG checkpoint-device fix have all since been confirmed by real L4 runs (the
+RNG-device fix specifically got `segformer_b0` and `fast_scnn` both through a full smoke
+cycle before the next, newly-fixed bug was reached); this `BoundaryLoss` dtype fix has not
+yet been confirmed by an actual L4 run — it is the only fix this session that cannot be
+confirmed any other way, since it depends on real bf16 autocast on real CUDA.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4
 five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
 result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is
