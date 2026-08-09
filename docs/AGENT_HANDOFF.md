@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `4917c49` (see `git log` for the full SHA)
+  `a50b635` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -29,6 +29,36 @@
   missed bug 6: a local, never-committed `sitecustomize.py` had been forcing
   `mmengine.device.utils.DEVICE = "cpu"` to work around unrelated MPS operator gaps, which
   incidentally also hid every device-class bug from reproducing locally.
+- **Note on the technical-takeover audit (commit `a50b635…`):** the user granted full
+  technical ownership with a "hostile reviewer" mandate — audit the repo with no loyalty to
+  prior decisions, issue an architecture verdict, and repair/replace/rebuild as evidence
+  demands. Three parallel read-only audits (repo hygiene/CI/ADRs, model/reliability/HPO/
+  export/Jetson, data ontology/notebook/Drive) plus direct reading of all 5 pinned upstream
+  MMSeg configs produced **VERDICT B — sound concept, real but bounded defects**, not the
+  "repeatedly failed" prior the framing assumed: ADR-0008/0009 already closed the
+  Codex-era instability, and the 7 bugs fixed this session were narrowly-scoped
+  orchestration/precision defects, not architectural rot. One real, quantified, previously
+  undetected methodology defect was found and fixed: `build_training_config` blanket-
+  overwrote every model's `optim_wrapper` with one shared `AdamW(lr=6e-5, wd=0.01)`
+  regardless of architecture. Reading each model's own pinned upstream MMSeg config found
+  4 of 5 (`fast_scnn`, `pidnet_s`, `ddrnet_23_slim`, `bisenetv2`) actually train with
+  SGD+momentum at learning rates 150-2000x higher, in the wrong optimizer family entirely —
+  Optuna's HPO space only ever searched LR/weight-decay within a fixed AdamW assumption, so
+  it could never have self-corrected this. Fixed by `resolve_model_optimizer_defaults()`,
+  which reads each model's real upstream `optim_wrapper.optimizer` as the baseline;
+  explicit HPO-trial overrides still apply on top, now preserving the model's own optimizer
+  type/momentum instead of forcing AdamW. The same commit also retargeted
+  `semantic-framework-cpu-probe.yml`'s push trigger to `stabilize/colab-v2`/`main` (it was
+  still scoped to the stale `feat/first-vertical-slice` and never ran automatically on the
+  branch all current work happens on) and documented a read-only `scripts/audit_dataset.py`
+  data-inventory command against staged training data in the runbook. The audit also
+  confirmed the dataset ontology (ADR-0009), reliability/OOD stack, dependency tri-tier
+  separation, and ONNX/TensorRT/Jetson code are all real and sound as-is — nothing there was
+  touched. Full plan and evidence:
+  `~/.claude/plans/yle-bir-projem-var-snazzy-blum.md`. **Not decided, deferred to the human
+  owner:** whether to eventually trim the 5-model comparison, and whether to ever pull
+  BDD100K/ACDC/WildDash into training roles (ADR-0009's existing answer stands unless the
+  owner reopens it).
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -256,27 +286,48 @@
   override-registration itself is present only post-fix. The fast-tier CPU rehearsal
   (including a real `pidnet_s` smoke run, fp32, unaffected by this bf16-only bug) was
   re-run end to end and still passes. Not yet re-confirmed on real L4 hardware.
+- (Commit `a50b635…`) Full technical-takeover audit (see note above); fixed the one real
+  defect found — `build_training_config` blanket-overwrote every model's optimizer with a
+  shared `AdamW(lr=6e-5, wd=0.01)` instead of each model's own upstream-tuned recipe
+  (4 of 5 models are natively SGD+momentum at 150-2000x higher LR). Added
+  `resolve_model_optimizer_defaults()`; `train_model()`'s identity record now includes
+  `optimizer_type`. Retargeted `semantic-framework-cpu-probe.yml`'s push trigger to
+  `stabilize/colab-v2`/`main`. Documented the `scripts/audit_dataset.py` data-inventory
+  command in the runbook (read-only, no artifacts generated locally — no real dataset on
+  this dev machine by design). Not yet confirmed on real L4 hardware; the optimizer-family
+  change directly affects what `pilot`-stage training will actually do for 4 of 5 models,
+  so the next real Colab run is the load-bearing test for this fix.
 
 ## Local gates
 
-- Ruff and format checks pass for the full repository.
-- Mypy passes for all 116 configured source modules.
-- Full pytest passes: 489 passed, 21 environment-gated skipped without the pinned MMSeg
-  stack; 24 of 24 in the mmseg-gated suite (adds
-  `tests/unit/test_pidnet_boundary_loss_dtype.py`, new this commit) pass with
-  `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`
-  checkout. None of this exercises real CUDA/bf16 behavior — that only happens on a real L4.
-- The fast-tier `tests/integration/test_colab_pipeline_cpu_rehearsal.py` test (3 core
-  models, including a real `pidnet_s` smoke run) was re-run end to end against the real
-  pinned stack and still passes (~5.5 minutes; the full 3-test suite was not re-run this
-  commit since the bf16 branch this fix targets is unreachable on CPU regardless — see
-  below — so the other two rehearsal tests carry no new risk from this change).
-- Master notebook generation is byte-identical across two runs.
+- Ruff and format checks pass for the full repository (`ruff check .`, `ruff format --check .`).
+- Mypy passes for all 116 configured source modules (`mypy src/edgeguard`, matching `ci.yml`).
+- Full pytest passes: 499 passed, 32 environment-gated skipped without the pinned MMSeg
+  stack (up from 489/21 — the new per-model native-optimizer tests are among the newly
+  skipped/gated ones). The mmseg-gated test files
+  (`test_mmseg_real_training_step.py`, `test_mmseg_recovery_checkpoint_marker.py`,
+  `test_mmseg_recovery_rng_state.py`, `test_pidnet_boundary_loss_dtype.py`) pass 27 of 27
+  with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
+  `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout, up from 24 (adds
+  `test_native_optimizer_matches_each_models_own_upstream_recipe`, parametrized over all 5
+  models, and `test_build_training_config_wires_the_native_optimizer_through`). **Noted, not
+  fixed, out of scope for this commit:** running the *entire* suite (all test files) with
+  `EDGEGUARD_MMSEG_CHECKOUT` set produces 12 failures in `tests/unit/test_dataset_preparation.py`
+  that do not reproduce when that file is run alone or as part of the mmseg-gated set above —
+  a pre-existing test-isolation/ordering issue unrelated to this session's changes (that file
+  never touches `mmseg_runtime.py`, the optimizer fix, or anything mmseg-related). None of
+  this exercises real CUDA/bf16 behavior — that only happens on a real L4.
+- The full `tests/integration/test_colab_pipeline_cpu_rehearsal.py` suite (all 3 tests: core
+  smoke+resume, stale-recovery skip, extension-model smoke) was re-run end to end against the
+  real pinned stack and still passes (3 passed in 18m40s).
+- Master notebook generation is byte-identical across two runs at commit `a50b635…`.
 - The notebook SHA-256 after pinning is
-  `6b1476c4c1eec40370673ae054b54952086a982031db6b0cff6e07734c5a688c`.
+  `263e9c1efec73ee18778ac460133c9fabc71e248d475250c3eccc153a72bc43b`.
 - **Pending at this commit:** claim-safe local cell execution has not been re-verified,
   remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run (including
-  the rehearsal step), and this `BoundaryLoss` dtype fix has not been confirmed on real CUDA
+  the rehearsal step) — its trigger now covers this branch as of this commit, so the next
+  push should be the first automatic run — and neither the optimizer fix nor the prior
+  `BoundaryLoss` dtype fix has been confirmed on real CUDA
   hardware — the AMP-probe, `Pad`/`seg_pad_val`, `last_checkpoint`, `Pad`-orientation,
   stale-Drive-recovery, and RNG-device fixes all have real-hardware confirmation so far (the
   RNG-device fix specifically got `segformer_b0` and `fast_scnn` both through a full smoke
@@ -292,13 +343,19 @@
 Push this commit, then open the master notebook from the pushed branch in a fresh Colab L4
 + High-RAM runtime and use Run all (Colab Pro/Pro+ background execution is recommended so
 the session survives closing the browser tab). The five-model AMP canary, the
-`val_dataloader` build, and the `last_checkpoint` resume are all already confirmed passing
-on real hardware; watch specifically whether `smoke` now reaches its end-of-stage
-validation pass cleanly for every model (previously untested on real hardware — this
-commit's `Pad`-orientation fix targets exactly that step) and whether all five models'
-smoke stages complete end to end. If the session ends, repeat Run all in a new compliant
-runtime — this is a Colab platform limit, not something the notebook can automate away. Do
-not change the notebook or select stages manually.
+`val_dataloader` build, the `last_checkpoint` resume, the RNG-device resume, and
+`pidnet_s`'s bf16 `BoundaryLoss` fix are all already confirmed passing on real hardware;
+watch specifically for two things this commit changes: (1) all five models' `smoke` stages
+should now complete end to end (the seven prior bugs blocking this are all fixed), and
+(2) `fast_scnn`/`pidnet_s`/`ddrnet_23_slim`/`bisenetv2` now train with their own native
+SGD+momentum optimizer instead of the shared AdamW — watch their smoke-stage loss curves
+for anything pathological (divergence, NaN) that the CPU rehearsal's tiny fixture data and
+50-step budget cannot surface. If that looks stable, the real next milestone (per the
+takeover-audit plan) is getting **one model through a real `pilot`-stage run** (2000 steps)
+— the first time any campaign will have gone past a 50-step smoke fixture. If the session
+ends, repeat Run all in a new compliant runtime — this is a Colab platform limit, not
+something the notebook can automate away. Do not change the notebook or select stages
+manually.
 
 Do not create `colab-v0.1.0-rc1` until two independent clean L4 sessions pass the exact
 lock/five-model FP32/AMP canary and the real 50-step interruption/resume proof. After the

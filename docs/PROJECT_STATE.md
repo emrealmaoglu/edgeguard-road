@@ -5,7 +5,7 @@ Updated 2026-08-09 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`4917c49` (see `git log` for the full SHA). The only generated notebook is
+`a50b635` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -314,6 +314,61 @@ rehearsal (a real `pidnet_s` smoke run, fp32, unaffected by this bf16-only bug) 
 and still passes. Not yet confirmed on real L4 hardware — that is the only test that can
 actually exercise the bf16 code path this fixes.
 
+A full technical-takeover audit (application commit `a50b635…`) was performed at the human
+owner's explicit request: read the repository with no loyalty to prior architectural
+decisions and issue an architecture verdict. Three parallel read-only audits (repo hygiene/
+CI/ADRs; model registry/reliability/HPO/ONNX/TensorRT/Jetson; data ontology/notebook/Drive
+architecture), plus direct reading of all 5 pinned upstream MMSeg configs, produced
+**VERDICT B — sound concept, real but bounded defects**. This is not the "repeatedly failed"
+prior the audit's own framing assumed: ADR-0008 (2026-07-28) already demoted the pre-existing
+detection/temporal campaign to non-blocking legacy and pivoted to the semantic-first rescue
+architecture; ADR-0009 (2026-07-28, amended 2026-07-30) already built the explicit
+multi-domain dataset ontology and role system this kind of audit would normally have to
+demand from scratch. The seven bugs fixed earlier this session were real but narrowly-scoped
+orchestration/precision defects, each fixed in isolation with a regression test — evidence of
+a sound design surviving real-world contact, not architectural rot. The audit found no
+component meeting the bar for REBUILD or REPLACE; the dataset ontology, reliability/OOD
+stack, dependency tri-tier separation, single generated notebook, ONNX export, and data
+inventory tooling (`scripts/audit_dataset.py`) were all confirmed real, tested, and already
+matching what the audit's own mandate asked for — left untouched.
+
+The audit found one real, quantified, previously undetected methodology defect:
+`build_training_config` in `mmseg_runtime.py` unconditionally overwrote every model's
+`optim_wrapper` with one shared `AdamW(lr=6e-5, wd=0.01)`, regardless of architecture.
+Reading each of the five models' own pinned upstream MMSeg configs directly (not just
+trusting a sub-agent's summary) found that only `segformer_b0` actually matches this recipe;
+`fast_scnn` (SGD, lr=0.12), `pidnet_s` (SGD, lr=0.01), `ddrnet_23_slim` (SGD, lr=0.01), and
+`bisenetv2` (SGD, lr=0.05) all natively train with SGD+momentum at learning rates 150-2000x
+higher than what was actually being applied, in the wrong optimizer family entirely. Optuna's
+HPO search space (`hpo_runtime.py`) only ever searched learning-rate/weight-decay *within* a
+fixed AdamW assumption, so it could never have self-corrected this — a real, previously
+unnoticed risk to the upcoming `pilot`/`screening` model comparison, since it would have made
+every non-SegFormer model look artificially weak for reasons unrelated to architecture
+quality. Application commit `a50b635…` fixes this with a new
+`resolve_model_optimizer_defaults()`, which reads each model's real upstream
+`optim_wrapper.optimizer` as the training baseline; explicit overrides (what every HPO trial
+already supplies) still apply on top, now preserving the model's own optimizer type and
+momentum instead of forcing AdamW. `train_model()`'s identity record now includes
+`optimizer_type`. The frozen HPO learning-rate/weight-decay *search range*
+(`[2e-5, 3e-4]`, tuned for AdamW-scale) was deliberately left untouched — that is now an open
+question for the SGD-native models once real HPO execution begins, flagged rather than
+silently resolved, since dataset/HPO scope decisions are the human owner's per this project's
+governance. The same commit retargets `semantic-framework-cpu-probe.yml`'s push trigger from
+the stale `feat/first-vertical-slice` to `stabilize/colab-v2`/`main` — this CI job runs the
+exact CPU rehearsal that caught most of this session's real bugs, and had never run
+automatically on the branch where all current work happens — and documents (in
+`docs/canonical-colab-runbook.md`) the exact `scripts/audit_dataset.py` invocation for
+inspecting staged Cityscapes/IDD20K training data before a full campaign; no inventory
+artifacts are claimed locally, since this dev machine has no real dataset by design.
+
+Full audit findings, evidence, and the explicit KEEP/REPAIR/REBUILD classification are
+recorded in the approved plan; **left open for the human owner, not decided by this audit:**
+whether to eventually trim the 5-model comparison to fewer models (defer until real
+`pilot`-stage signal exists — the current smoke-stage numbers are 50-step noise, not signal),
+and whether to ever pull BDD100K/ACDC/WildDash into training roles (ADR-0009's existing
+answer — Cityscapes+IDD20K as the frozen scientific core, the others correctly scoped
+narrower — is recommended as final).
+
 ## Deliveries
 
 The package stage produces `EdgeGuard_Jetson_Release.zip`,
@@ -334,36 +389,52 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-The current delivery passes 489 tests with twenty-one environment-gated skips without the
-pinned MMSeg stack present; with the pinned stack available (`EDGEGUARD_MMSEG_CHECKOUT`
-pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) the mmseg-
-gated suite passes 24 of 24, including the real per-architecture `model.loss()` regression
-tests, the `last_checkpoint` marker regression test, the `Pad` orientation regression test,
-the stale-Drive-recovery regression test, the RNG checkpoint-device regression test, and the
-new PIDNet `BoundaryLoss` dtype regression test. The fast-tier
-`tests/integration/test_colab_pipeline_cpu_rehearsal.py` test (3 core models, including a
-real `pidnet_s` smoke run) was re-run and still passes (~5.5 minutes); the full 3-test suite
-was not re-run this commit since the fix's bf16 code path is unreachable on CPU regardless,
-so the other two rehearsal tests carry no new risk. The `BoundaryLoss` test cannot be a
-"raises pre-fix" reproduction even in principle on this machine — its torch (2.13.0)
-silently permits the exact implicit downcast that the pinned Colab/CI torch (2.1.1) rejects,
-a torch-version difference, not a device one — so it asserts the fix's actual guarantee
-(dtype-aligned output, bit-identical to upstream when dtypes already match) instead, and
-`git stash` confirms the override registration is present only post-fix. The master
-notebook was generated twice byte-identically at SHA-256
-`6b1476c4c1eec40370673ae054b54952086a982031db6b0cff6e07734c5a688c`.
+The current delivery passes 499 tests with thirty-two environment-gated skips without the
+pinned MMSeg stack present (up from 489/21 — several new tests, including the per-model
+native-optimizer tests, are gated on the checkout); with the pinned stack available
+(`EDGEGUARD_MMSEG_CHECKOUT` pointed at the exact commit
+`c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) the mmseg-gated test files pass 27 of
+27 (up from 24 — adds `test_native_optimizer_matches_each_models_own_upstream_recipe`,
+parametrized over all 5 models, and `test_build_training_config_wires_the_native_optimizer_through`),
+including the real per-architecture `model.loss()` regression tests, the `last_checkpoint`
+marker regression test, the `Pad` orientation regression test, the stale-Drive-recovery
+regression test, the RNG checkpoint-device regression test, and the PIDNet `BoundaryLoss`
+dtype regression test. **Noted, not fixed, out of scope for this commit:** running the
+entire test suite (every file) with `EDGEGUARD_MMSEG_CHECKOUT` set produces 12 failures in
+`tests/unit/test_dataset_preparation.py` that do not reproduce when that file runs alone or
+alongside only the mmseg-gated files above — a pre-existing test-isolation/ordering issue,
+since that file has no connection to `mmseg_runtime.py` or this session's changes. The full
+`tests/integration/test_colab_pipeline_cpu_rehearsal.py` suite (all 3 tests) was re-run end
+to end and still passes (18m40s). The `BoundaryLoss` test still cannot be a "raises pre-fix"
+reproduction even in principle on this machine — its torch (2.13.0) silently permits the
+exact implicit downcast that the pinned Colab/CI torch (2.1.1) rejects, a torch-version
+difference, not a device one — so it asserts the fix's actual guarantee (dtype-aligned
+output, bit-identical to upstream when dtypes already match) instead, and `git stash`
+confirms the override registration is present only post-fix. The new optimizer-defaults
+regression tests use the same `git stash` technique: stashing only the fix produces a clean
+`ImportError` on `resolve_model_optimizer_defaults` at test collection, confirmed to fail
+pre-fix and pass post-fix. The master notebook was generated twice byte-identically at
+SHA-256 `263e9c1efec73ee18778ac460133c9fabc71e248d475250c3eccc153a72bc43b`, pinned to
+application commit `a50b635…`.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
 (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
 has not yet been re-run at the current commit (including the rehearsal CI step), and
 claim-safe local cell execution has not been re-verified at this commit either — both remain
-pending before the next real Colab attempt. The AMP-probe precision fix, the
+pending before the next real Colab attempt. As of application commit `a50b635…`, this
+workflow's push trigger now covers `stabilize/colab-v2`/`main` (previously scoped only to
+the stale `feat/first-vertical-slice`, where it never ran on real work), so the next push to
+this branch should be its first automatic run. The AMP-probe precision fix, the
 `Pad`/`seg_pad_val` fix, the `last_checkpoint` absolute-path fix, the stale-Drive-recovery
 fix, and the RNG checkpoint-device fix have all since been confirmed by real L4 runs (the
 RNG-device fix specifically got `segformer_b0` and `fast_scnn` both through a full smoke
-cycle before the next, newly-fixed bug was reached); this `BoundaryLoss` dtype fix has not
-yet been confirmed by an actual L4 run — it is the only fix this session that cannot be
-confirmed any other way, since it depends on real bf16 autocast on real CUDA.
+cycle before the next, newly-fixed bug was reached); neither the `BoundaryLoss` dtype fix nor
+the per-model native-optimizer fix (`a50b635…`) has yet been confirmed by an actual L4 run.
+The `BoundaryLoss` fix cannot be confirmed any other way, since it depends on real bf16
+autocast on real CUDA; the optimizer fix *could* in principle be judged by smoke-stage loss
+behavior on CPU, but the CPU rehearsal's 50-step budget and tiny synthetic fixture are too
+short/small to say anything meaningful about optimizer-family correctness — real L4
+`smoke`/`pilot`-stage loss curves for the four newly-SGD models are the actual test.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4
 five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
 result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is
