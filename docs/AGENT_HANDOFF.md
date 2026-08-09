@@ -2,18 +2,17 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `c4008d9efeabf5bb056919bf9b579138beea6774`
+  `3262af8` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
   Jetson evidence remain external. Remote CI and claim-safe notebook execution have not yet
-  been re-run at this commit (see Local gates). A real L4 run at the prior commit
-  (`e3f3159…`) confirmed the `last_checkpoint` absolute-path fix works: `smoke`/
-  `segformer_b0` resumed correctly from `recovery_25.pth` and continued training. This
-  commit fixes a fourth real bug found while building the new local rehearsal harness (see
-  below) — the evaluation `Pad` transform's `size` argument used the wrong `(h, w)`/`(w, h)`
-  order — and adds that harness itself so this bug class no longer requires a real Colab
-  round-trip to discover. Neither is yet re-confirmed on real L4 hardware (see Local gates).
+  been re-run at this commit (see Local gates). A real L4 run at commit `c4008d9…`
+  confirmed the five-model canary and data-staging phases both pass cleanly, but crashed on
+  the very first `smoke`/`segformer_b0` attempt with `ValueError("Drive recovery checkpoint
+  belongs to a different immutable run")` before any training step ran — a fifth real bug,
+  fixed by this commit (see below). Not yet re-confirmed on real L4 hardware (see Local
+  gates).
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -147,31 +146,68 @@
   caught. Confirmed locally: passes end to end for all 3 core models, including a real
   computed mIoU at the final validation step. Wired into
   `semantic-framework-cpu-probe.yml` as a mandatory CI step.
+- (Commit `3262af8…`) A real L4 run at `c4008d9…` (five-model canary and data staging both
+  passed) crashed on the first `smoke`/`segformer_b0` attempt — no training step ever
+  started — with `ValueError("Drive recovery checkpoint belongs to a different immutable
+  run")` (`mmseg_runtime.py:890`). Root cause: on a fresh Colab session, local `/content` is
+  empty (no local `run_identity.json`), so `ColabPipeline._run_training_phase`'s decision to
+  append `--resume` rests entirely on `_recovery_pointer_exists()`, which only checks
+  whether a Drive pointer *file* exists for the artifact_id — it has zero identity
+  awareness. Every commit changes `project_commit`, which is one of ~20 fields in
+  `train_model()`'s `identity` dict, so it invalidates `identity_sha256` for every
+  previously-published Drive checkpoint campaign-wide, including ones from unrelated
+  stages/models. `train_model()` then correctly detected the mismatch but incorrectly
+  treated it as fatal, crashing the whole 5-model campaign instead of just ignoring an
+  opportunistic resume that turned out to be stale. Fixed by distinguishing this
+  *speculative* auto-resume (no local `run_identity.json` ever existed) from an *explicit*
+  resume of a known local run: a stale Drive checkpoint under the speculative path is now
+  skipped gracefully (a `stale_recovery_skipped.json` record is written for evidence) and
+  training proceeds fresh; the explicit local-resume identity check
+  (`existing != identity`, further down in `train_model()`) is untouched — that one is a
+  real safety property against silently mixing checkpoints across incompatible protocol
+  versions, and should stay a hard failure. Added `colab_recovery.peek_recovery_metadata()`
+  to read a pointer's receipt metadata cheaply (no full checkpoint byte-copy) before
+  deciding whether to restore. Added a CPU rehearsal regression test
+  (`test_smoke_target_skips_stale_cross_commit_drive_recovery_checkpoint`) that publishes a
+  Drive recovery pointer with a fabricated mismatched identity before running the pipeline;
+  confirmed it fails on the pre-fix code with the exact real-Colab error, and passes on the
+  fix. Not yet re-confirmed on real L4 hardware. **Left as an explicit open question, not
+  implemented:** whether `project_commit` should remain part of the strict identity-compare
+  value at all, versus being recorded as provenance-only metadata (so only
+  scientifically-relevant fields — protocol/dataset/hyperparameter hashes — invalidate a
+  Drive checkpoint, not any unrelated commit). This is a reproducibility/scientific-
+  integrity policy call reserved for the human project owner, not an engineering decision.
 
 ## Local gates
 
 - Ruff and format checks pass for the full repository.
 - Mypy passes for all 116 configured source modules.
 - Full pytest passes: 485 passed, 17 environment-gated skipped without the pinned MMSeg
-  stack; 502 passed, 0 skipped with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
-  `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout (includes the real per-architecture
-  `model.loss()` tests, the `last_checkpoint` marker regression test, and the new `Pad`
-  orientation regression test). None of this exercises real CUDA/AMP behavior — that only
+  stack; 19 of 19 in the mmseg-gated suite (`tests/unit/test_mmseg_real_training_step.py` +
+  `tests/integration/test_colab_pipeline_cpu_rehearsal.py`) pass with
+  `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`
+  checkout, including the real per-architecture `model.loss()` tests, the `last_checkpoint`
+  marker regression test, the `Pad` orientation regression test, and the new stale-Drive-
+  recovery regression test. None of this exercises real CUDA/AMP behavior — that only
   happens on a real L4.
-- The new `tests/integration/test_colab_pipeline_cpu_rehearsal.py` fast-tier test (3 core
-  models) passes locally end to end against the real pinned stack (confirmed manually,
-  ~8 minutes; not yet run in CI at this commit).
+- All three `tests/integration/test_colab_pipeline_cpu_rehearsal.py` tests (fast-tier 3
+  core models, full-tier 5 models via extension-smoke, and the new stale-recovery test)
+  pass locally end to end against the real pinned stack (confirmed manually, ~24 minutes
+  combined; not yet run in CI at this commit). The new stale-recovery test was confirmed to
+  fail on the pre-fix code with the exact real-Colab error
+  (`ValueError("Drive recovery checkpoint belongs to a different immutable run")`) via a
+  temporary `git stash` of only the two fix files, and to pass with the fix restored.
 - Master notebook generation is byte-identical across two runs.
 - The notebook SHA-256 after pinning is
-  `20aca870baa26c0991cb5c547827f084984e9250c50110f3222cfef4fd26ff94`.
+  `ad026d4ec1209b40c2b8a8a5499cb19111403f26adc272792cce17dd1ffa4944`.
 - **Pending at this commit:** claim-safe local cell execution has not been re-verified,
   remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run (including
-  the new rehearsal step), and the `Pad`-orientation fix and rehearsal harness have not
-  been confirmed on real CUDA hardware — the AMP-probe, `Pad`/`seg_pad_val`, and
-  `last_checkpoint` fixes all have real-hardware confirmation so far. The prior application
-  commit (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact hostile inline
-  backend and host uv/virtualenv state injected; that evidence does not carry over to this
-  commit and should be re-established before a real Colab attempt.
+  the rehearsal step), and this stale-Drive-recovery fix has not been confirmed on real CUDA
+  hardware — the AMP-probe, `Pad`/`seg_pad_val`, `last_checkpoint`, and `Pad`-orientation
+  fixes all have real-hardware confirmation so far. The prior application commit
+  (`3f3ef8f…`) passed remote run `31129018003` with Colab's exact hostile inline backend and
+  host uv/virtualenv state injected; that evidence does not carry over to this commit and
+  should be re-established before a real Colab attempt.
 
 ## Next external action
 

@@ -5,7 +5,7 @@ Updated 2026-08-09 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`c4008d9efeabf5bb056919bf9b579138beea6774`. The only generated notebook is
+`3262af8` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -226,6 +226,31 @@ being caught. The notebook is repinned to commit `c4008d9…`; the hostile-conte
 Linux workflow and a real L4 run exercising the fixed validation step have not yet been
 re-run against it.
 
+A real L4 run at `c4008d9…` confirmed the five-model canary and data staging both pass
+cleanly, then crashed on the very first `smoke`/`segformer_b0` attempt — no training step
+ever ran — with `ValueError("Drive recovery checkpoint belongs to a different immutable
+run")`. This is a **fifth** real bug: on a fresh Colab session with no local
+`run_identity.json`, `ColabPipeline._run_training_phase` decides to append `--resume` purely
+because a Drive recovery pointer *file* exists for the artifact_id
+(`_recovery_pointer_exists` has no identity awareness at all); `train_model()`'s `identity`
+dict includes `project_commit` among its ~20 fields, so every commit — even one unrelated to
+the model/stage in question — invalidates every previously-published Drive checkpoint's
+`identity_sha256` campaign-wide; `train_model()` then correctly detected the resulting
+mismatch but incorrectly treated it as fatal, crashing the whole 5-model campaign rather
+than simply abandoning an opportunistic resume that turned out to be stale. Fixed by
+distinguishing this *speculative* auto-resume (no local run ever existed) from an *explicit*
+resume of a known local run: the speculative path now degrades gracefully to a fresh run
+(recording a `stale_recovery_skipped.json` evidence file) instead of raising; the explicit
+local-resume identity check is untouched, since that one is a genuine safety property.
+Application commit `3262af8…` adds this fix, a new `peek_recovery_metadata()` helper in
+`colab_recovery.py`, and a CPU rehearsal regression test that reproduces the exact crash
+(confirmed to fail on the pre-fix code with the identical error message, and pass on the
+fix). **Left open, not implemented:** whether `project_commit` should remain part of the
+strict identity-compare value at all, or be recorded as provenance-only metadata so only
+scientifically-relevant fields (protocol/dataset/hyperparameter hashes) invalidate a Drive
+checkpoint — a reproducibility-policy call reserved for the human project owner. Not yet
+confirmed on real L4 hardware.
+
 ## Deliveries
 
 The package stage produces `EdgeGuard_Jetson_Release.zip`,
@@ -248,22 +273,26 @@ against tiny synthetic fixture data, and is what actually caught the fourth (`Pa
 orientation) bug above before any Colab GPU time was spent on it.
 The current delivery passes 485 tests with seventeen environment-gated skips without the
 pinned MMSeg stack present; with the pinned stack available (`EDGEGUARD_MMSEG_CHECKOUT`
-pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) it passes
-502 tests with zero skips, including the real per-architecture `model.loss()` regression
-tests, the `last_checkpoint` marker regression test, and the new `Pad` orientation
-regression test. The new rehearsal test's fast tier (3 core models) additionally passes
-locally end to end against the real pinned stack (confirmed manually, ~8 minutes; not yet
-run in CI at this commit). The master notebook was generated twice byte-identically at
-SHA-256 `20aca870baa26c0991cb5c547827f084984e9250c50110f3222cfef4fd26ff94`.
+pointed at the exact commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) the mmseg-
+gated suite passes 19 of 19, including the real per-architecture `model.loss()` regression
+tests, the `last_checkpoint` marker regression test, the `Pad` orientation regression test,
+and the new stale-Drive-recovery regression test. All three
+`tests/integration/test_colab_pipeline_cpu_rehearsal.py` tests (fast-tier 3 core models,
+full-tier 5 models, and the new stale-recovery test) pass locally end to end against the
+real pinned stack (confirmed manually, ~24 minutes combined; not yet run in CI at this
+commit). The new stale-recovery test was confirmed, via a temporary `git stash` of only the
+two fix files, to fail pre-fix with the identical real-Colab error message and pass with the
+fix restored. The master notebook was generated twice byte-identically at SHA-256
+`ad026d4ec1209b40c2b8a8a5499cb19111403f26adc272792cce17dd1ffa4944`.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
 (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
-has not yet been re-run at the current commit `c4008d9…` (including the new rehearsal CI
-step), and claim-safe local cell execution has not been re-verified at this commit either —
-both remain pending before the next real Colab attempt. The AMP-probe precision fix, the
+has not yet been re-run at the current commit (including the rehearsal CI step), and
+claim-safe local cell execution has not been re-verified at this commit either — both remain
+pending before the next real Colab attempt. The AMP-probe precision fix, the
 `Pad`/`seg_pad_val` fix, and the `last_checkpoint` absolute-path fix have all since been
-confirmed by real L4 runs; this commit's `Pad`-orientation fix and the rehearsal harness
-itself have not yet been confirmed by an actual L4 run.
+confirmed by real L4 runs; the `Pad`-orientation fix, the rehearsal harness itself, and this
+stale-Drive-recovery fix have not yet been confirmed by an actual L4 run.
 The notebook is not eligible for a Colab-ready tag until two independent clean L4
 five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
 result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is
