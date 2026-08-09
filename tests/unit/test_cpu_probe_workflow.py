@@ -12,13 +12,20 @@ def test_linux_cpu_probe_is_manual_bounded_and_mmcv_lite_only() -> None:
     assert "workflow_dispatch:" in source
     assert "push:" in source
     assert "branches:" in source
-    assert "feat/first-vertical-slice" in source
+    # Retargeted from the stale feat/first-vertical-slice (superseded by the
+    # rescue/semantic-first architecture, ADR-0008/0009) to the branches real
+    # work actually happens on -- this CPU rehearsal caught 3-4 of the seven
+    # real Colab bugs found in the stabilize/colab-v2 session and previously
+    # never ran automatically on pushes to that branch.
+    assert "stabilize/colab-v2" in source
+    assert "main" in source
     for restricted_path in (
         ".github/workflows/semantic-framework-cpu-probe.yml",
         "scripts/dev/**",
         "scripts/train/**",
         "src/edgeguard/**",
         "configs/training/segmentation/**",
+        "configs/rescue/**",
         "tests/**",
     ):
         assert restricted_path in source

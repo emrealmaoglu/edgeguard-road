@@ -25,7 +25,7 @@ from edgeguard.rescue.colab_recovery import (
     restore_recovery_file,
     utc_now,
 )
-from edgeguard.rescue.config import RescueConfig, model_by_name
+from edgeguard.rescue.config import ModelConfig, RescueConfig, model_by_name
 from edgeguard.rescue.dataset import (
     CITYSCAPES_CLASSES,
     discover_cityscapes,
@@ -134,6 +134,36 @@ def resolve_auto_precision(precision: str, *, torch: Any) -> str:
     if bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)()):
         return "bf16"
     return "fp16"
+
+
+def resolve_model_optimizer_defaults(mmseg_root: Path, model: ModelConfig) -> dict[str, Any]:
+    """Return one model's own upstream-config optimizer as the training baseline.
+
+    Each of this project's five model configs already defines its own
+    optimizer, either inline or via an MMSeg `_base_/schedules/` include:
+    SegFormer-B0 uses AdamW at 6e-5, but Fast-SCNN (SGD, lr=0.12),
+    PIDNet-S (SGD, lr=0.01), DDRNet-23-Slim (SGD, lr=0.01), and BiSeNetV2
+    (SGD, lr=0.05) all train with SGD+momentum at learning rates one to
+    three orders of magnitude higher than SegFormer's. Read that baseline
+    from the real upstream config file instead of assuming one optimizer
+    family fits every architecture.
+    """
+    mmengine = _config_import()
+    upstream = mmseg_root / model.upstream_config
+    if not upstream.is_file():
+        raise FileNotFoundError(f"missing upstream MMSeg config: {upstream}")
+    cfg = mmengine.Config.fromfile(str(upstream))
+    optimizer = cfg.get("optim_wrapper", {}).get("optimizer") if "optim_wrapper" in cfg else None
+    if not isinstance(optimizer, dict) or "type" not in optimizer or "lr" not in optimizer:
+        raise ValueError(f"model {model.name} upstream config has no usable optimizer")
+    resolved: dict[str, Any] = {
+        "type": str(optimizer["type"]),
+        "learning_rate": float(optimizer["lr"]),
+        "weight_decay": float(optimizer.get("weight_decay", 0.0)),
+    }
+    if "momentum" in optimizer:
+        resolved["momentum"] = float(optimizer["momentum"])
+    return resolved
 
 
 def _strip_pretrained(value: Any) -> None:
@@ -615,19 +645,25 @@ def build_training_config(
         "val_interval": validation_interval,
     }
     scheduler_end = scheduler_iterations
-    resolved_lr = protocol.learning_rate if learning_rate is None else learning_rate
-    resolved_weight_decay = protocol.weight_decay if weight_decay is None else weight_decay
+    native_optimizer = resolve_model_optimizer_defaults(mmseg_root, model)
+    resolved_lr = native_optimizer["learning_rate"] if learning_rate is None else learning_rate
+    resolved_weight_decay = (
+        native_optimizer["weight_decay"] if weight_decay is None else weight_decay
+    )
     if resolved_lr <= 0 or resolved_weight_decay < 0:
         raise ValueError("optimizer overrides must be positive")
     if precision not in {"fp32", "fp16", "bf16"}:
         raise ValueError("precision must be fp32, fp16, or bf16")
+    optimizer_cfg: dict[str, Any] = {
+        "type": native_optimizer["type"],
+        "lr": resolved_lr,
+        "weight_decay": resolved_weight_decay,
+    }
+    if "momentum" in native_optimizer:
+        optimizer_cfg["momentum"] = native_optimizer["momentum"]
     cfg.optim_wrapper = {
         "type": "OptimWrapper" if precision == "fp32" else "AmpOptimWrapper",
-        "optimizer": {
-            "type": "AdamW",
-            "lr": resolved_lr,
-            "weight_decay": resolved_weight_decay,
-        },
+        "optimizer": optimizer_cfg,
         "accumulative_counts": protocol.gradient_accumulation,
         "clip_grad": {
             "max_norm": float("inf"),
@@ -843,6 +879,7 @@ def train_model(
     work_dir.mkdir(parents=True, exist_ok=True)
     model = model_by_name(protocol, model_name)
     upstream = mmseg_root / model.upstream_config
+    native_optimizer = resolve_model_optimizer_defaults(mmseg_root, model)
     identity = {
         "schema_version": "1.0",
         "model": model_name,
@@ -852,8 +889,13 @@ def train_model(
         "split_manifest_sha256": sha256_file(split_manifest) if split_manifest else None,
         "dataset_manifest_sha256s": [sha256_file(path) for path in manifests],
         "datasets": datasets,
-        "learning_rate": protocol.learning_rate if learning_rate is None else learning_rate,
-        "weight_decay": protocol.weight_decay if weight_decay is None else weight_decay,
+        "optimizer_type": native_optimizer["type"],
+        "learning_rate": (
+            native_optimizer["learning_rate"] if learning_rate is None else learning_rate
+        ),
+        "weight_decay": (
+            native_optimizer["weight_decay"] if weight_decay is None else weight_decay
+        ),
         "scheduler": scheduler,
         "warmup_ratio": warmup_ratio,
         "initialization": initialization,

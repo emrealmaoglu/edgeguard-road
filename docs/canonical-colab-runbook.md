@@ -52,6 +52,42 @@ commit message that the run cannot see device-class bugs when you do. A `torch.l
 `weights_only` default patch (needed separately, for this machine's newer local torch
 versus the pinned Colab/CI torch) does not have this problem and can stay.
 
+## Data inventory (optional, before a full campaign)
+
+`scripts/audit_dataset.py` already computes per-class pixel/image counts, corrupt-file
+detection, exact and near-duplicate detection (sha256 + perceptual hash), a resolution
+histogram, a class cooccurrence matrix, and crop-survival stats — this is the same tool
+`ColabPipeline._run_validation_data_phase` already runs automatically, but only for the
+sealed official-validation split, late in the campaign (`evaluate`/`validation-data`,
+opened only after release acceptance per ADR-0005). To look at the **training** data
+(`train_fit`/`train_select`) before committing to a full run, invoke it directly against
+the data `stage-data` has already staged to local `/content`, from inside a Colab cell
+(or an SSH/terminal session on the runtime) after the `stage-data` phase has completed:
+
+```bash
+python scripts/audit_dataset.py \
+  --dataset cityscapes \
+  --dataset-root /content/edgeguard-data/cityscapes \
+  --output-root /content/edgeguard-inventory/cityscapes \
+  --source-split train
+
+python scripts/audit_dataset.py \
+  --dataset idd20k \
+  --dataset-root /content/edgeguard-data/idd20k \
+  --output-root /content/edgeguard-inventory/idd20k \
+  --source-split train
+```
+
+Results land under `<output-root>/dataset_audit/` (CSVs: `duplicates.csv`,
+`near_duplicates.csv`, `corrupt_files.csv`; figures: `class_cooccurrence.png`,
+`image_resolution_histogram.png`, `city_distribution.png`, `ignore_pixel_ratio.png`; JSON:
+`dataset_manifest.candidate.json`). This is read-only — it does not freeze, mutate, or gate
+anything; it exists purely so a human can look at what the campaign is about to train on
+before spending real Colab GPU time. No local run of this repository has real
+Cityscapes/IDD20K data available to generate these artifacts outside Colab (by design —
+see "Boundaries" below), so no inventory output is claimed or fabricated here; run the
+commands above for real, current numbers.
+
 ## Run
 
 1. Open the master notebook in Colab.

@@ -253,6 +253,7 @@ model = dict(
     ),
 )
 default_hooks = dict(checkpoint=dict(type='CheckpointHook'))
+optim_wrapper = dict(type='OptimWrapper', optimizer=dict(type='AdamW', lr=6e-05, weight_decay=0.01))
 """
     for model in protocol.models:
         upstream = mmseg_root / model.upstream_config
@@ -359,7 +360,9 @@ def test_amp_optim_wrapper_shape_is_correct_for_every_precision(tmp_path: Path) 
         "data_preprocessor=dict(type='SegDataPreProcessor', size=(1024, 1024)), "
         "decode_head=dict(type='FakeHead', num_classes=150, "
         "loss_decode=dict(type='CrossEntropyLoss')))\n"
-        "default_hooks = dict(checkpoint=dict(type='CheckpointHook'))\n",
+        "default_hooks = dict(checkpoint=dict(type='CheckpointHook'))\n"
+        "optim_wrapper = dict(type='OptimWrapper', "
+        "optimizer=dict(type='AdamW', lr=6e-05, weight_decay=0.01))\n",
         encoding="utf-8",
     )
 

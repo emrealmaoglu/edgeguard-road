@@ -30,12 +30,13 @@ from edgeguard.models.semantic_local import (
     local_mmseg_checkout_from_environment,
     semantic_environment_ready,
 )
-from edgeguard.rescue.config import load_rescue_config
+from edgeguard.rescue.config import load_rescue_config, model_by_name
 from edgeguard.rescue.mmseg_runtime import (
     _evaluation_pipeline,
     _inference_pipeline,
     build_training_config,
     install_mmcv_lite_guard,
+    resolve_model_optimizer_defaults,
 )
 from edgeguard.serialization import sha256_file, sha256_payload
 
@@ -292,3 +293,71 @@ def test_evaluation_and_inference_pad_produce_crop_size_shaped_output(tmp_path: 
     inference_result = inference_pipeline({"img_path": str(image_path), "seg_fields": []})
     assert tuple(inference_result["inputs"].shape[-2:]) == protocol.crop_size
     assert inference_result["data_samples"].img_shape == protocol.crop_size
+
+
+# Read directly from each pinned upstream MMSeg config's own optim_wrapper --
+# confirmed by reading configs/{segformer,fastscnn,pidnet,ddrnet,bisenetv2}/*.py
+# in the pinned checkout. Only segformer_b0 is close to what this project used
+# to hardcode (AdamW, 6e-5); the other four use SGD+momentum at learning rates
+# one to three orders of magnitude higher -- the exact regression this test
+# locks in.
+_EXPECTED_NATIVE_OPTIMIZERS = {
+    "segformer_b0": {"type": "AdamW", "learning_rate": 6e-5, "weight_decay": 0.01},
+    "fast_scnn": {
+        "type": "SGD",
+        "learning_rate": 0.12,
+        "weight_decay": 4e-5,
+        "momentum": 0.9,
+    },
+    "pidnet_s": {
+        "type": "SGD",
+        "learning_rate": 0.01,
+        "weight_decay": 0.0005,
+        "momentum": 0.9,
+    },
+    "ddrnet_23_slim": {
+        "type": "SGD",
+        "learning_rate": 0.01,
+        "weight_decay": 0.0005,
+        "momentum": 0.9,
+    },
+    "bisenetv2": {
+        "type": "SGD",
+        "learning_rate": 0.05,
+        "weight_decay": 0.0005,
+        "momentum": 0.9,
+    },
+}
+
+
+@pytest.mark.parametrize("model_name", _MODEL_NAMES)
+def test_native_optimizer_matches_each_models_own_upstream_recipe(model_name: str) -> None:
+    """Regression test for the uniform-AdamW bug found in the technical takeover
+    audit: `build_training_config` used to unconditionally overwrite every
+    model's `optim_wrapper` with one shared `AdamW(lr=6e-5)`, silently training
+    four of five models at a learning rate 150-2000x lower than their own
+    published recipe, in the wrong optimizer family entirely.
+    """
+    protocol = load_rescue_config(Path("configs/rescue/semantic_first.yaml"))
+    model = model_by_name(protocol, model_name)
+    resolved = resolve_model_optimizer_defaults(_MMSEG_CHECKOUT, model)  # type: ignore[arg-type]
+    assert resolved == _EXPECTED_NATIVE_OPTIMIZERS[model_name]
+
+
+def test_build_training_config_wires_the_native_optimizer_through(tmp_path: Path) -> None:
+    """End-to-end check that the resolved native optimizer actually reaches
+    the config `build_training_config` hands to the real MMEngine Runner, not
+    just that the resolver function itself returns the right values."""
+    manifest_path = _write_manifest(tmp_path)
+    cfg = _resolved_model_config(
+        model_name="fast_scnn",
+        work_dir=tmp_path / "work",
+        manifest_path=manifest_path,
+        loss="ce",
+        audit_report=None,
+    )
+    optimizer = cfg.optim_wrapper["optimizer"]
+    assert optimizer["type"] == "SGD"
+    assert optimizer["lr"] == pytest.approx(0.12)
+    assert optimizer["momentum"] == pytest.approx(0.9)
+    assert optimizer["weight_decay"] == pytest.approx(4e-5)

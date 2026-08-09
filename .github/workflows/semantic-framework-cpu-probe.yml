@@ -4,13 +4,15 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feat/first-vertical-slice
+      - stabilize/colab-v2
+      - main
     paths:
       - .github/workflows/semantic-framework-cpu-probe.yml
       - scripts/dev/**
       - scripts/train/**
       - src/edgeguard/**
       - configs/training/segmentation/**
+      - configs/rescue/**
       - tests/**
 
 permissions:
