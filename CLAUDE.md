@@ -36,6 +36,33 @@ sources. It does not extend to the core `train_fit`/`train_select`/official-vali
 roles for Cityscapes/IDD20K, or to any other boundary listed above, all of which remain
 reserved and unchanged.
 
+**2026-08-12 broad scientific-decision delegation.** With a hard external deadline
+(presentation video due in 4 days, written report in 8 days, at the end of a 6-week
+development window) and repeated real-Colab bugs having eaten a large share of that
+time, the owner explicitly lifted the **scientific conclusions** and **HPO scope and
+thresholds** boundaries above for the rest of this campaign: "Claude md'de iznin olmayan
+hiçbirşey bırakma... SENDEN istediğim herşeye sen karar ver... bilimsel deneysel fln her
+ne bok varsa hepsi sende" (roughly: put everything you're authorized for in this file;
+you decide everything scientific/experimental; direct me on physical actions and I'll
+run them). Claude Code now decides, directly and without a separate per-decision
+approval request: which model(s) are prioritized for remaining HPO/final compute, which
+classes (if any) are excluded from headline metrics and why, and acceptance/rejection
+thresholds for screening/HPO/final — always grounded in real measured evidence (see
+`scripts/analyze_training_results.py`/`training_analysis.json`, and the existing
+`archive_inventory.py`/dataset-audit tooling), never fabricated or inflated. The owner
+keeps the physical/execution side: starting or resuming Colab runs, Jetson setup and
+flashing, anything requiring their hands on real hardware or a real Colab session —
+Claude Code directs what to run.
+
+This does **not** extend to the two boundaries the owner did not address here, which
+this file already marks as surviving *any* other authority grant: **opening the sealed
+final test data** (`docs/adr/0005` — still human-triggered only, no exception) and
+**weakening the non-fabrication contract** (`scientific_status` fields still must always
+reflect what was actually run, never what is hoped for). The `docs/AI_USAGE_LOG.md`
+append-only rule is likewise unaffected. Every scientific/HPO decision made under this
+delegation is still reported in the conversation and logged in `docs/AI_USAGE_LOG.md`,
+same as any other material change.
+
 Claude Code must not work concurrently with Codex on the same branch or file group.
 
 Every Claude task ends with a risk list, tests performed or required, and a rollback
