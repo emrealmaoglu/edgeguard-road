@@ -2,59 +2,25 @@
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import os
 import shutil
-import signal
 import tarfile
-import threading
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, cast
 
 import yaml
 
 from edgeguard.config import UniqueKeySafeLoader
+from edgeguard.rescue import stall_guard as _stall_guard_module
+from edgeguard.rescue.stall_guard import DEFAULT_STALL_TIMEOUT_SECONDS
 from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
 
+_StallTimeout = _stall_guard_module.StallTimeout  # re-exported for existing test imports
+_stall_guard = _stall_guard_module.stall_guard
+
 GIB = 1024**3
-
-# A mounted Google Drive FUSE volume can stall indefinitely on a single read
-# instead of raising an OSError, which the retry loops below only catch on
-# genuine errors. This is the default ceiling on how long one read() call may
-# block before it is treated as a hang and retried.
-DEFAULT_STALL_TIMEOUT_SECONDS = 120
-
-
-class _StallTimeout(TimeoutError):
-    """Raised when a single read from a (likely Drive-mounted) source stalls."""
-
-
-def _stall_guard(seconds: int | None) -> contextlib.AbstractContextManager[None]:
-    """Best-effort read-stall guard; a no-op where SIGALRM is unavailable."""
-    if seconds is None or seconds <= 0:
-        return contextlib.nullcontext()
-    if not hasattr(signal, "alarm") or threading.current_thread() is not threading.main_thread():
-        return contextlib.nullcontext()
-    return _AlarmGuard(seconds)
-
-
-class _AlarmGuard(contextlib.AbstractContextManager["None"]):
-    def __init__(self, seconds: int) -> None:
-        self.seconds = seconds
-        self._previous: Any = None
-
-    def __enter__(self) -> None:
-        def _raise_stall(signum: int, frame: Any) -> None:
-            raise _StallTimeout(f"no data received for {self.seconds}s; likely a Drive/FUSE hang")
-
-        self._previous = signal.signal(signal.SIGALRM, _raise_stall)
-        signal.alarm(self.seconds)
-
-    def __exit__(self, *_exc: Any) -> None:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, self._previous)
 
 
 SOURCE_DATASETS = ("cityscapes", "bdd100k", "idd20k")

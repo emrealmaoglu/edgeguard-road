@@ -9,7 +9,6 @@ import json
 import shutil
 from pathlib import Path, PurePosixPath
 from typing import Any
-from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 import numpy as np
 
@@ -17,7 +16,12 @@ from edgeguard.deployment.jetson_bundle import (
     build_jetson_deployment_bundle,
     verify_jetson_deployment_bundle,
 )
-from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
+from edgeguard.serialization import (
+    canonical_json,
+    sha256_file,
+    sha256_payload,
+    write_verified_zip,
+)
 
 
 def _release_artifact(root: Path, payload: object, label: str) -> Path:
@@ -30,28 +34,6 @@ def _release_artifact(root: Path, payload: object, label: str) -> Path:
     if not path.is_file() or sha256_file(path) != payload.get("sha256"):
         raise ValueError(f"release {label} identity mismatch")
     return path
-
-
-def _zip_members(destination: Path, members: dict[str, Path | bytes]) -> None:
-    with ZipFile(destination, "x", compression=ZIP_DEFLATED, compresslevel=9) as archive:
-        for name, source in sorted(members.items()):
-            relative = PurePosixPath(name)
-            if relative.is_absolute() or ".." in relative.parts:
-                raise ValueError("delivery archive member is unsafe")
-            payload = source if isinstance(source, bytes) else source.read_bytes()
-            info = ZipInfo(name, (1980, 1, 1, 0, 0, 0))
-            info.compress_type = ZIP_DEFLATED
-            info.external_attr = 0o100644 << 16
-            archive.writestr(info, payload)
-    with ZipFile(destination) as archive:
-        if archive.testzip() is not None:
-            raise ValueError(f"delivery archive CRC verification failed: {destination.name}")
-        if set(archive.namelist()) != set(members):
-            raise ValueError(f"delivery archive member verification failed: {destination.name}")
-        for name, source in members.items():
-            expected = source if isinstance(source, bytes) else source.read_bytes()
-            if hashlib.sha256(archive.read(name)).digest() != hashlib.sha256(expected).digest():
-                raise ValueError(f"delivery archive payload verification failed: {name}")
 
 
 def build_colab_release_packages(
@@ -215,7 +197,7 @@ def build_colab_release_packages(
     }
     jetson_members["artifact_index.json"] = (canonical_json(jetson_index) + "\n").encode()
     jetson_archive = output_root / "EdgeGuard_Jetson_Release.zip"
-    _zip_members(jetson_archive, jetson_members)
+    write_verified_zip(jetson_archive, jetson_members)
 
     demo_members: dict[str, Path | bytes] = {}
     for record in models:
@@ -292,7 +274,7 @@ def build_colab_release_packages(
         + "\n"
     ).encode()
     streamlit_archive = output_root / "EdgeGuard_Streamlit_Demo.zip"
-    _zip_members(streamlit_archive, demo_members)
+    write_verified_zip(streamlit_archive, demo_members)
 
     thesis_source = work_root / "reports/report" / f"{release_id}.zip"
     if not thesis_source.is_file():

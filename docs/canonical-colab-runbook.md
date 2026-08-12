@@ -88,6 +88,38 @@ Cityscapes/IDD20K data available to generate these artifacts outside Colab (by d
 see "Boundaries" below), so no inventory output is claimed or fabricated here; run the
 commands above for real, current numbers.
 
+### Automatic raw-archive inventory (runs every session, before staging)
+
+`scripts/audit_dataset.py` above requires already-staged, decoded on-disk image/mask
+directories — it cannot look inside a raw `.zip`/`.tar.gz` sitting in Drive. The master
+notebook's second code cell now runs `scripts/inventory_private_inputs.py`
+(`src/edgeguard/rescue/archive_inventory.py`) directly against
+`Drive/EdgeGuard/private_inputs/` before `stage-data` and before the main campaign
+subprocess starts, so it is available within the first few minutes of every session
+regardless of what happens to the campaign afterward, and never blocks or fails it (the
+cell is wrapped in `try`/`except` and only prints on failure).
+
+Every file under `private_inputs/` is inspected with the same depth regardless of name —
+there is no per-dataset shortcut. For every archive: every entry's name, size, and
+extension-based classification is recorded (central-directory listing, exhaustive, not
+sampled); every image entry is fully decoded (`PIL.Image.open(...).load()`, not a
+header-only peek) to get real resolution/format/mode counts and to catch corrupt files;
+and every entry whose decoded mode looks label-like (`L`/`P`/`I`/`1`) additionally gets a
+real, measured per-class pixel- and image-count histogram via
+`numpy.unique(..., return_counts=True)` — not a declared/ontology class count. Declared
+metadata from `configs/dataset/colab_data_access_v1.yaml` (dataset id, campaign role) is
+attached afterward as annotation only, matched by exact filename, and never used to skip
+or shorten the scan; an unrecognized file is scanned exactly as thoroughly and reported
+as having no declared role rather than being guessed. The report
+(`dataset_inventory.json`/`.md`, `record_type: "raw_archive_inventory"`, no
+`scientific_status` field — this is an engineering/audit artifact, not a training result)
+is written to `Drive/EdgeGuard/reports/private_inputs_inventory/inventory-<content
+hash>/` and downloaded as `EdgeGuard_Data_Inventory.zip` at the start of the session. The
+output directory name is content-addressed from `private_inputs/`'s current file listing
+(names + sizes + mtimes), so an unchanged folder reuses the same report on the next
+session instead of re-scanning every file again; adding or changing any archive triggers
+a fresh full scan.
+
 ## Run
 
 1. Open the master notebook in Colab.

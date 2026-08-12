@@ -44,6 +44,8 @@ def build_master_notebook(*, branch: str, project_commit: str) -> Path:
 Colab'da **L4 GPU** ve **Yüksek RAM** seçin, ardından yalnızca **Çalışma zamanı → Tümünü çalıştır** deyin. Notebook; Cityscapes + IDD20K verisini Drive'daki doğrulanmış paketlerden yerel diske alır, beş modeli canary/smoke/pilot/screening/HPO/final aşamalarından geçirir, seçim ve ablation'ları tamamlar, resmî kaynak değerlendirmesini kabul sonrasında açar ve Jetson/tez/Streamlit paketlerini Drive'a yazar.
 
 Oturum kapanırsa yeni L4 + Yüksek RAM oturumunda aynı notebook için yeniden **Tümünü çalıştır** deyin. Hash-doğrulanmış aşamalar atlanır; eksik eğitim Drive checkpoint'inden devam eder. TensorRT engine Colab'da üretilmez; gerçek Jetson üzerinde oluşturulur. Jetson ölçümleri gelene kadar `not_run` kalır.
+
+Kod çekilir çekilmez, ana kampanyadan bağımsız ve onu asla durdurmayan küçük bir adım `private_inputs/` klasöründeki her ham arşivi (isim bazlı kısayol yok, hepsi aynı derinlikte) tarar; boyut/görüntü sayısı/çözünürlük/format ve etiket dosyalarında gerçek ölçülmüş piksel-sınıf histogramlarını `dataset_inventory.json`/`.md` olarak Drive'a yazar ve zip halinde indirir.
 """,
         ),
         _cell(
@@ -236,6 +238,41 @@ try:
 except BaseException as error:
     persist_failure("immutable-source-checkout", error)
     raise
+""",
+        ),
+        _cell(
+            "code",
+            """
+try:
+    if LOCAL_TEST_MODE:
+        print("LOCAL_TEST_MODE: private_inputs envanteri atlandı (gerçek Drive verisi yok).")
+    else:
+        PRIVATE_INPUTS_ROOT = DRIVE_ROOT / "EdgeGuard/private_inputs"
+        INVENTORY_OUTPUT_PARENT = DRIVE_ROOT / "EdgeGuard/reports/private_inputs_inventory"
+        INVENTORY_ZIP = CONTENT_ROOT / "EdgeGuard_Data_Inventory.zip"
+        if PRIVATE_INPUTS_ROOT.is_dir():
+            run_visible(
+                [
+                    "/usr/bin/python3",
+                    str(PROJECT_ROOT / "scripts/inventory_private_inputs.py"),
+                    "--private-inputs-root",
+                    str(PRIVATE_INPUTS_ROOT),
+                    "--output-parent",
+                    str(INVENTORY_OUTPUT_PARENT),
+                    "--zip-out",
+                    str(INVENTORY_ZIP),
+                ],
+                cwd=PROJECT_ROOT,
+            )
+            if INVENTORY_ZIP.is_file():
+                from google.colab import files
+
+                files.download(str(INVENTORY_ZIP))
+                print("private_inputs envanteri indirildi:", INVENTORY_ZIP)
+        else:
+            print("private_inputs klasörü bulunamadı, envanter atlandı:", PRIVATE_INPUTS_ROOT)
+except BaseException as error:
+    print("private_inputs envanteri başarısız oldu (ana kampanya etkilenmedi):", repr(error))
 """,
         ),
         _cell(

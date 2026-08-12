@@ -6,8 +6,9 @@ import hashlib
 import json
 from collections.abc import Mapping
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 import numpy as np
 import numpy.typing as npt
@@ -65,3 +66,27 @@ def sha256_array(array: npt.NDArray[Any]) -> str:
     digest.update(b"\0")
     digest.update(contiguous.tobytes(order="C"))
     return digest.hexdigest()
+
+
+def write_verified_zip(destination: Path, members: dict[str, Path | bytes]) -> None:
+    """Build a deterministic zip, then reopen and re-hash every member to confirm it
+    wrote back exactly what was asked, catching silent disk/filesystem corruption."""
+    with ZipFile(destination, "x", compression=ZIP_DEFLATED, compresslevel=9) as archive:
+        for name, source in sorted(members.items()):
+            relative = PurePosixPath(name)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError("zip member path is unsafe")
+            payload = source if isinstance(source, bytes) else source.read_bytes()
+            info = ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+            info.compress_type = ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, payload)
+    with ZipFile(destination) as archive:
+        if archive.testzip() is not None:
+            raise ValueError(f"zip CRC verification failed: {destination.name}")
+        if set(archive.namelist()) != set(members):
+            raise ValueError(f"zip member verification failed: {destination.name}")
+        for name, source in members.items():
+            expected = source if isinstance(source, bytes) else source.read_bytes()
+            if hashlib.sha256(archive.read(name)).digest() != hashlib.sha256(expected).digest():
+                raise ValueError(f"zip payload verification failed: {name}")
