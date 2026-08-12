@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `24dd782` (see `git log` for the full SHA)
+  `f2f2110` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -183,6 +183,28 @@
   was diagnosed with an Explore agent plus direct reads of `colab_data.py`, then
   implemented under `plan mode` (system-enforced) with explicit user approval via
   `ExitPlanMode` before any code changed.
+- **Note on live progress output for the private_inputs inventory (commit `f2f2110…`):**
+  the user asked for the inventory cell to show, while it runs, which file it's
+  currently scanning, which have finished, and an ETA — they had waited on a real Colab
+  run with zero output and couldn't tell whether it was working or stuck.
+  `build_inventory_report()` (`archive_inventory.py`) now prints, per file, `"[i/N]
+  taranıyor: name (size)"` before and `"[i/N] tamamlandı: name — type, image count,
+  corrupt count, elapsed, genel tahmini kalan süre"` after; `_inspect_zip()`/
+  `_inspect_tar()` print an intra-archive `"... name: completed/total giriş tarandı
+  (%X) — tahmini kalan: Y"` line at the first entry, the last entry, and at least every
+  2 seconds while scanning, so one very large archive (e.g. IDD20K's 32127-entry
+  shards) doesn't look stuck either. The overall ETA is a bytes-remaining /
+  bytes-per-second-observed-so-far estimate — an honest proxy for total work, since
+  archive sizes in `private_inputs/` vary by orders of magnitude. All prints use
+  `flush=True` so they stream through `run_visible()`'s live subprocess output exactly
+  as produced, matching the periodic-progress-line pattern already used elsewhere in
+  this project (`create_dataset_bundle`'s per-1000-files prints). The CLI's cache-hit
+  path also now prints why nothing is happening instead of staying silent. Progress
+  lines share stdout with the final `canonical_json` result line (same pattern
+  `run_colab_master.py`'s own stages already use), so `test_archive_inventory.py`'s CLI
+  test helper was updated to parse only the last stdout line; added a new regression
+  test locking in the progress-output shape via `capsys`. Purely an observability
+  change — no scan logic, statistics, or report schema changed.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -430,6 +452,18 @@
 
 ## Local gates
 
+- **As of commit `f2f2110…` (live progress output for the private_inputs inventory):**
+  Ruff and format checks pass for the full repository. Mypy passes for all 118
+  configured source modules. Full pytest passes: 523 passed, 32 environment-gated
+  skipped without the pinned MMSeg stack (up from 522/32 — 1 new case in
+  `test_archive_inventory.py` locking in the progress-output shape via `capsys`). This
+  commit touches no training/mmseg-runtime code path, so the mmseg-gated test files and
+  the full CPU rehearsal suite were not re-run this round. Master notebook generation is
+  byte-identical across two runs at commit `f2f2110…`, SHA-256
+  `97198ac21eddf1ed1ffca4376c6ae4cebe0212a2d0fab95ffe4816cfceb5c427` (superseding the
+  `24dd782…`/`1110e0ef…` pin — no cell text changed, only `EXPECTED_PROJECT_COMMIT`).
+  `tests/integration/test_notebook.py` (3/3) and the local claim-safe execution harness
+  (all 5 cells) both pass.
 - **As of commit `24dd782…` (ninth real Colab bug — `cityscapes bundle identity
   mismatch`):** Ruff and format checks pass for the full repository. Mypy passes for
   all 118 configured source modules. Full pytest passes: 522 passed, 32

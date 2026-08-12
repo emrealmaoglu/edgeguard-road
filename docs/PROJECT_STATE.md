@@ -5,7 +5,7 @@ Updated 2026-08-12 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`24dd782` (see `git log` for the full SHA). The only generated notebook is
+`f2f2110` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -463,6 +463,18 @@ stored verbatim in every existing receipt, so no Drive-side rebuild is needed �
 still failing closed if a dataset's own `required_paths` genuinely changes. Two new
 regression tests in `tests/unit/test_colab_data.py` cover both directions.
 
+**Live progress output (`f2f2110…`):** the user watched a real Colab run of the
+inventory cell with no visible output for a while and asked whether it was still
+working. `build_inventory_report()` now prints, per file, which archive it's about to
+scan, which have finished (with type/image/corrupt counts and elapsed time), and an
+overall ETA (a bytes-remaining/bytes-per-second-observed estimate); `_inspect_zip()`/
+`_inspect_tar()` additionally print an intra-archive progress line at the first entry,
+the last entry, and at least every 2 seconds while scanning a single large archive
+(e.g. IDD20K's 32127-entry shards). All prints use `flush=True` to stream live through
+`run_visible()`'s subprocess output, matching the periodic-progress-line pattern
+already used elsewhere (`create_dataset_bundle`'s per-1000-files prints). Purely an
+observability change — no scan logic, statistics, or report schema changed.
+
 ## Verification boundary
 
 Local Ruff, mypy, pytest, deterministic notebook generation, claim-safe local cell
@@ -475,13 +487,16 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-As of application commit `24dd782…`, the current delivery passes 522 tests with
+As of application commit `f2f2110…`, the current delivery passes 523 tests with
 thirty-two environment-gated skips without the pinned MMSeg stack present (up from
-520/32 — 2 new cases in `test_colab_data.py` covering the ninth-bug fix: one reproduces
-the exact real-world scenario of an unrelated dataset's config being edited and confirms
-staging still succeeds, one confirms the check still rejects a genuine change to the
-affected dataset's own `required_paths`). At the prior commit (`7ffef5c…`), the suite
-passed 520 tests with the same thirty-two skips (up from 499/32 — 20 new cases in
+522/32 — 1 new case in `test_archive_inventory.py` locking in the live-progress-output
+shape via `capsys`). At the prior commit (`24dd782…`), the suite passed 522 tests with
+the same thirty-two skips (up from 520/32 — 2 new cases in `test_colab_data.py`
+covering the ninth-bug fix: one reproduces the exact real-world scenario of an unrelated
+dataset's config being edited and confirms staging still succeeds, one confirms the
+check still rejects a genuine change to the affected dataset's own `required_paths`).
+At the commit before that (`7ffef5c…`), the suite passed 520 tests with the same
+thirty-two skips (up from 499/32 — 20 new cases in
 `test_archive_inventory.py` for the raw-archive inventory feature, plus corrections to
 `test_delivery_notebooks.py`'s hardcoded cell count and `test_notebook.py`'s PYTHONPATH
 guard made while fixing the private_inputs inventory bootstrap bug). This range touches
@@ -523,10 +538,13 @@ generated twice byte-identically at SHA-256
 from 4). At commit `7ffef5c…` (bootstrap fix applied), it was regenerated twice
 byte-identically again at SHA-256
 `2e89a7ba32ed9b5f5c451650231aaca0bd67a6a5de2b4a790a8434f43a2a73d7` (still 5 code cells).
-At the current commit `24dd782…` (ninth-bug fix — no cell text changed, only the pinned
-commit), it was regenerated twice byte-identically at SHA-256
-`1110e0ef65fa675cdf247fb967a860931c848ae62ea3a2e72e505cd4b617ba77`, and both
-`tests/integration/test_notebook.py` (now including `test_delivery_notebooks.py`'s
+At commit `24dd782…` (ninth-bug fix — no cell text changed, only the pinned commit), it
+was regenerated twice byte-identically at SHA-256
+`1110e0ef65fa675cdf247fb967a860931c848ae62ea3a2e72e505cd4b617ba77`. At the current
+commit `f2f2110…` (live progress output — again no cell text changed), it was
+regenerated twice byte-identically at SHA-256
+`97198ac21eddf1ed1ffca4376c6ae4cebe0212a2d0fab95ffe4816cfceb5c427`, and both
+`tests/integration/test_notebook.py` (including `test_delivery_notebooks.py`'s
 corrected assertion) and the local claim-safe execution harness
 (`scripts/dev/run_delivery_notebooks_local.py`) pass at this commit.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
