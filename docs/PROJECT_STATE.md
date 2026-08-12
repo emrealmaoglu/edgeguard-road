@@ -5,7 +5,7 @@ Updated 2026-08-12 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`2b1ebff` (see `git log` for the full SHA). The only generated notebook is
+`7b604c9` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -420,6 +420,19 @@ The package stage produces `EdgeGuard_Jetson_Release.zip`,
 checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson telemetry stays
 `not_run` until a target-device benchmark is supplied.
 
+Separately, as of application commit `7b604c9…`, every notebook session also produces
+`EdgeGuard_Data_Inventory.zip` (`dataset_inventory.json`/`.md`, `record_type:
+"raw_archive_inventory"`) — an exhaustive, name-agnostic scan of every raw file in
+`Drive/EdgeGuard/private_inputs/`: byte sizes, entry/image counts, resolution/format/mode
+histograms, corrupt-file detection, and real *measured* per-class pixel/image frequency
+histograms for any label-like image found (not sampled, not just declared ontology
+counts). This is independent of the four package-stage deliveries above: it runs early,
+before the campaign subprocess, is wrapped so it can never block or fail the campaign,
+and is content-addressed so an unchanged `private_inputs/` folder reuses the prior
+session's report instead of re-scanning. It is an engineering/audit artifact (no
+`scientific_status` field) for the thesis report and for spotting optimization targets —
+not a training or acceptance result.
+
 ## Verification boundary
 
 Local Ruff, mypy, pytest, deterministic notebook generation, claim-safe local cell
@@ -432,9 +445,16 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-The current delivery passes 499 tests with thirty-two environment-gated skips without the
-pinned MMSeg stack present (up from 489/21 — several new tests, including the per-model
-native-optimizer tests, are gated on the checkout); with the pinned stack available
+As of application commit `7b604c9…`, the current delivery passes 520 tests with
+thirty-two environment-gated skips without the pinned MMSeg stack present (up from 499/32
+— 20 new cases in `test_archive_inventory.py` for the raw-archive inventory feature,
+which touches no mmseg/training code path so the mmseg-gated counts below and the CPU
+rehearsal suite were not re-run this round). Mypy passes for all 118 configured source
+modules (`mypy src/edgeguard`, up from 116 — adds `archive_inventory.py` and
+`stall_guard.py`). At the prior commit (`2b1ebff…`), the suite passed 499 tests with
+thirty-two environment-gated skips without the pinned MMSeg stack present (up from 489/21
+— several new tests, including the per-model native-optimizer tests, are gated on the
+checkout); with the pinned stack available
 (`EDGEGUARD_MMSEG_CHECKOUT` pointed at the exact commit
 `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) the mmseg-gated test files pass 27 of
 27 (up from 24 — adds `test_native_optimizer_matches_each_models_own_upstream_recipe`,
@@ -456,9 +476,14 @@ output, bit-identical to upstream when dtypes already match) instead, and `git s
 confirms the override registration is present only post-fix. The new optimizer-defaults
 regression tests use the same `git stash` technique: stashing only the fix produces a clean
 `ImportError` on `resolve_model_optimizer_defaults` at test collection, confirmed to fail
-pre-fix and pass post-fix. The master notebook was generated twice byte-identically at
-SHA-256 `263e9c1efec73ee18778ac460133c9fabc71e248d475250c3eccc153a72bc43b`, pinned to
-application commit `a50b635…`.
+pre-fix and pass post-fix. At commit `a50b635…`, the master notebook was generated twice
+byte-identically at SHA-256
+`263e9c1efec73ee18778ac460133c9fabc71e248d475250c3eccc153a72bc43b`. At the current
+commit `7b604c9…`, it was again generated twice byte-identically at SHA-256
+`b06b373a2c5c3ab9e1a02f891abcc9d1973655cb69fb1d04281f3f24ddcd6e8d` (now 5 code cells, up
+from 4 — the new private_inputs inventory cell), and both
+`tests/integration/test_notebook.py` and the local claim-safe execution harness
+(`scripts/dev/run_delivery_notebooks_local.py`) pass at this commit.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
 (`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it

@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `2b1ebff` (see `git log` for the full SHA)
+  `7b604c9` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -86,6 +86,41 @@
   input tensor's size and stride` during `backward()` — the known MPS operator-gap class
   of issue already documented in `canonical-colab-runbook.md`, identical on both
   pre-fix and post-fix code. Needs separate investigation, does not block this fix.
+- **Note on the private_inputs raw-archive inventory (commit `7b604c9…`):** the user asked
+  for a full automatic inventory of every raw archive under Drive's
+  `EdgeGuard/private_inputs/` (sizes, image counts, resolutions, formats, and real
+  per-class pixel/image frequencies where masks exist), runnable inside the master
+  notebook and downloadable at the start of every session — for the thesis report and to
+  surface future optimization targets, including a possible class-imbalance-driven
+  ontology reduction. The user explicitly rejected a bounded-sample design ("basite
+  kaçma") and required every file to get the same depth of inspection regardless of name,
+  with real *measured* per-class histograms rather than declared ontology counts, since
+  this data may inform an actual future class-reduction decision. Implemented as
+  `src/edgeguard/rescue/archive_inventory.py`: dispatch is purely on file format
+  (zip/tar/standalone) and entry extension/PIL mode, never on dataset name; every image
+  entry is fully decoded (not header-sampled); every label-like entry (mode `L`/`P`/`I`/
+  `1`) gets a real `np.unique`-based per-class pixel/image histogram; declared metadata
+  from `colab_data_access_v1.yaml` is attached afterward as annotation only, matched by
+  exact filename, and an undeclared file is reported as having no known role rather than
+  guessed. Deliberately **not** a new `ColabPipeline` phase and **not** gated behind the
+  accepted-release-gated `package` phase (`build_colab_release_packages` requires a fully
+  accepted 5-model release) — that gate would make the report unavailable for weeks given
+  how often real sessions die mid-campaign. Instead it is a new, independent, early
+  notebook cell (`scripts/inventory_private_inputs.py`, `build_colab_notebooks.py`),
+  wrapped in try/except-and-continue so it can never block or fail the real campaign, run
+  immediately after checkout and before the main campaign subprocess. The report
+  directory is content-addressed from `private_inputs/`'s file listing
+  (names+sizes+mtimes), so an unchanged folder reuses the prior session's report instead
+  of re-scanning every file again. `record_type: "raw_archive_inventory"` carries no
+  `scientific_status` field (engineering/audit artifact, not a training result); measured
+  histograms are labeled `_measured` and kept separate from `known_role_declared`
+  throughout. Also extracted `src/edgeguard/rescue/stall_guard.py` (Drive/FUSE
+  read-stall guard, previously inlined in `colab_data.py`) and
+  `write_verified_zip()` in `serialization.py` (previously `colab_release.py`'s private
+  `_zip_members()`) as shared infrastructure used by both the new tool and the existing
+  code. Purely additive: does not touch `ColabPipeline`/`PHASES`, does not change any
+  dataset role/scope decision, does not affect the in-progress real-L4 campaign state
+  above.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -333,51 +368,49 @@
 
 ## Local gates
 
-- Ruff and format checks pass for the full repository (`ruff check .`, `ruff format --check .`).
-- Mypy passes for all 116 configured source modules (`mypy src/edgeguard`, matching `ci.yml`).
-- Full pytest passes: 499 passed, 32 environment-gated skipped without the pinned MMSeg
-  stack (up from 489/21 — the new per-model native-optimizer tests are among the newly
-  skipped/gated ones). The mmseg-gated test files
-  (`test_mmseg_real_training_step.py`, `test_mmseg_recovery_checkpoint_marker.py`,
-  `test_mmseg_recovery_rng_state.py`, `test_pidnet_boundary_loss_dtype.py`) pass 27 of 27
-  with `EDGEGUARD_MMSEG_CHECKOUT` pointed at the pinned
-  `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout, up from 24 (adds
-  `test_native_optimizer_matches_each_models_own_upstream_recipe`, parametrized over all 5
-  models, and `test_build_training_config_wires_the_native_optimizer_through`). **Noted, not
-  fixed, out of scope for this commit:** running the *entire* suite (all test files) with
-  `EDGEGUARD_MMSEG_CHECKOUT` set produces 12 failures in `tests/unit/test_dataset_preparation.py`
-  that do not reproduce when that file is run alone or as part of the mmseg-gated set above —
-  a pre-existing test-isolation/ordering issue unrelated to this session's changes (that file
-  never touches `mmseg_runtime.py`, the optimizer fix, or anything mmseg-related). None of
-  this exercises real CUDA/bf16 behavior — that only happens on a real L4.
-- The full `tests/integration/test_colab_pipeline_cpu_rehearsal.py` suite (all 3 tests: core
-  smoke+resume, stale-recovery skip, extension-model smoke) was re-run end to end against the
-  real pinned stack and still passes (3 passed in 18m40s).
-- **As of commit `2b1ebff…`:** this rehearsal suite now fails on this machine with
-  `RuntimeError: view size is not compatible with input tensor's size and stride` during
-  `backward()` — the known MPS operator-gap class of issue documented in
-  `canonical-colab-runbook.md`. Confirmed via `git stash` to be identical on both pre-fix
-  and post-fix code (i.e., unrelated to the `clip_grad` fix; a separate, pre-existing
-  local-environment regression that needs its own investigation). The `clip_grad` fix
-  itself is verified independently via a direct dump/reload unit test plus the full
-  local suite (500 passed/32 skipped) and the mmseg-gated test files (27/27).
-- Master notebook generation is byte-identical across two runs at commit `2b1ebff…`.
-- The notebook SHA-256 after pinning is
+- **As of commit `7b604c9…` (private_inputs archive inventory):** Ruff and format checks
+  pass for the full repository (`ruff check .`, `ruff format --check .`). Mypy passes for
+  all 118 configured source modules (`mypy src/edgeguard`, matching `ci.yml`; up from 116
+  — adds `archive_inventory.py` and `stall_guard.py`). Full pytest passes: 520 passed, 32
+  environment-gated skipped without the pinned MMSeg stack (up from 499/32 — 20 new cases
+  in `test_archive_inventory.py`, covering exhaustive zip/tar scanning, measured
+  per-class histogram correctness against a hand-built mask, corrupt-entry detection,
+  exact-filename-only role matching that refuses to guess undeclared files, CLI
+  cache-hit/cache-miss identity behavior, and hash-verified zip output). This commit does
+  not touch any training/mmseg-runtime code path, so the mmseg-gated test files and the
+  full CPU rehearsal suite were not re-run this round — nothing in this diff can affect
+  their outcome. Master notebook generation is byte-identical across two runs at commit
+  `7b604c9…`, SHA-256 `b06b373a2c5c3ab9e1a02f891abcc9d1973655cb69fb1d04281f3f24ddcd6e8d`.
+  `tests/integration/test_notebook.py` passes (2/2), and the local claim-safe execution
+  harness (`scripts/dev/run_delivery_notebooks_local.py`) passes all 5 code cells (up from
+  4 — the new inventory cell correctly no-ops under `LOCAL_TEST_MODE`).
+- **Prior state (commit `2b1ebff…`, the eighth-bug fix):** Ruff/format/mypy passed for 116
+  modules; full pytest 499 passed/32 skipped; mmseg-gated files 27/27 with
+  `EDGEGUARD_MMSEG_CHECKOUT` at `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`; the full CPU
+  rehearsal suite failed on this Mac with `RuntimeError: view size is not compatible with
+  input tensor's size and stride` during `backward()` — the known MPS operator-gap class
+  of issue documented in `canonical-colab-runbook.md`, confirmed via `git stash` to be
+  identical on pre-fix and post-fix code (unrelated to the `clip_grad` fix; a separate,
+  pre-existing local-environment regression that still needs its own investigation — not
+  touched by the archive-inventory commit either). Notebook SHA-256 at that commit was
   `25c7393e4ac216700bba35a9b846ba89bc97d5b32700cca09a0dfad6003334e1`.
-- **Pending at this commit:** claim-safe local cell execution has not been re-verified,
-  remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run (including
-  the rehearsal step) — its trigger now covers this branch as of this commit, so the next
-  push should be the first automatic run — and neither the optimizer fix nor the prior
-  `BoundaryLoss` dtype fix has been confirmed on real CUDA
-  hardware — the AMP-probe, `Pad`/`seg_pad_val`, `last_checkpoint`, `Pad`-orientation,
-  stale-Drive-recovery, and RNG-device fixes all have real-hardware confirmation so far (the
-  RNG-device fix specifically got `segformer_b0` and `fast_scnn` both through a full smoke
-  cycle before this newest crash). This fix cannot be confirmed locally even in principle —
-  it depends on real bf16 autocast on real CUDA, which this dev machine does not have; the
-  next real Colab attempt is the actual test. The prior application commit (`3f3ef8f…`)
-  passed remote run `31129018003` with Colab's exact hostile inline backend and host
-  uv/virtualenv state injected; that evidence does not carry over to this commit and should
-  be re-established before a real Colab attempt.
+- **Noted, not fixed, out of scope, carried over from commit `a50b635…`:** running the
+  *entire* suite with `EDGEGUARD_MMSEG_CHECKOUT` set produces 12 failures in
+  `tests/unit/test_dataset_preparation.py` that do not reproduce when that file is run
+  alone or as part of the mmseg-gated set — a pre-existing test-isolation/ordering issue
+  unrelated to any change in this session (that file never touches `mmseg_runtime.py` or
+  anything mmseg-related).
+- **Pending at this commit:** claim-safe local cell execution above only proves the
+  generated notebook's cells import/execute their own syntax correctly under
+  `EDGEGUARD_NOTEBOOK_LOCAL_TEST=1` (see the note on this above) — the new inventory cell
+  itself has not been exercised against a real Drive-mounted `private_inputs/` folder or
+  real archive files; only the module-level logic is unit-tested (against small synthetic
+  zip/tar fixtures) and the CLI subprocess path is tested end to end locally. Remote
+  Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run at this commit,
+  and neither the optimizer fix nor the `BoundaryLoss` dtype fix has been confirmed on
+  real CUDA hardware yet — the next real Colab attempt is the actual test for those; this
+  commit is purely additive engineering and does not change what that attempt needs to
+  prove.
 
 ## Next external action
 
@@ -396,6 +429,14 @@ the real next milestone is HPO for the top-two screening models, then `final` (4
 steps) for all five. If the session ends, repeat Run all in a new compliant runtime —
 this is a Colab platform limit, not something the notebook can automate away. Do not
 change the notebook or select stages manually.
+
+This run will also, for the first time, exercise the new private_inputs archive-inventory
+cell for real against the actual Drive-mounted `EdgeGuard/private_inputs/` folder (18
+files as of this commit) — it runs early, before the campaign subprocess, and is wrapped
+to never block or fail the campaign if it errors. Confirm it prints a completed report and
+that `EdgeGuard_Data_Inventory.zip` downloads; if it fails, the printed exception plus
+`Drive/EdgeGuard/reports/private_inputs_inventory/` (if partially written) has the
+diagnostic — it does not need to succeed for the real campaign to proceed.
 
 Do not create `colab-v0.1.0-rc1` until two independent clean L4 sessions pass the exact
 lock/five-model FP32/AMP canary and the real 50-step interruption/resume proof. After the
