@@ -43,6 +43,39 @@ STRUCTURED_EXTENSIONS = {".json"}
 WEIGHT_EXTENSIONS = {".pt", ".pth", ".onnx", ".ckpt", ".safetensors"}
 
 
+def _format_bytes(num_bytes: float) -> str:
+    value = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.2f} {unit}"
+        value /= 1024
+    return f"{value:.2f} TB"
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds != seconds or seconds < 0:  # NaN or negative
+        return "hesaplanıyor"
+    total_seconds = int(seconds)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}sa {minutes}dk"
+    if minutes:
+        return f"{minutes}dk {secs}sn"
+    return f"{secs}sn"
+
+
+def _print_entry_progress(filename: str, completed: int, total: int, elapsed: float) -> None:
+    percent = (completed / total * 100) if total else 100.0
+    rate = completed / elapsed if elapsed > 0 else 0.0
+    eta = _format_duration((total - completed) / rate) if rate > 0 else "hesaplanıyor"
+    print(
+        f"    ... {filename}: {completed}/{total} giriş tarandı "
+        f"(%{percent:.0f}) — tahmini kalan: {eta}",
+        flush=True,
+    )
+
+
 def classify_entry(name: str) -> str:
     """Classify one archive member (or a standalone file) purely by extension."""
     suffix = Path(name).suffix.lower()
@@ -147,19 +180,24 @@ def _inspect_zip(
         infos = [info for info in archive.infolist() if not info.is_dir()]
         entry_count = len(infos)
         uncompressed_total = sum(info.file_size for info in infos)
-        for info in infos:
+        started = time.perf_counter()
+        last_print = started
+        for entry_index, info in enumerate(infos, start=1):
             classification = classify_entry(info.filename)
             accumulator.classification_counts[classification] += 1
-            if classification != "image":
-                continue
-            try:
-                with stall_guard(stall_timeout_seconds), archive.open(info) as stream:
-                    data = stream.read()
-            except OSError as error:
-                accumulator.image_count += 1
-                accumulator.corrupt_entries.append({"name": info.filename, "error": str(error)})
-                continue
-            accumulator.record_image_bytes(data, entry_name=info.filename)
+            if classification == "image":
+                try:
+                    with stall_guard(stall_timeout_seconds), archive.open(info) as stream:
+                        data = stream.read()
+                except OSError as error:
+                    accumulator.image_count += 1
+                    accumulator.corrupt_entries.append({"name": info.filename, "error": str(error)})
+                else:
+                    accumulator.record_image_bytes(data, entry_name=info.filename)
+            now = time.perf_counter()
+            if entry_index == 1 or entry_index == entry_count or now - last_print >= 2.0:
+                last_print = now
+                _print_entry_progress(archive_path.name, entry_index, entry_count, now - started)
     return entry_count, uncompressed_total, accumulator
 
 
@@ -180,20 +218,25 @@ def _inspect_tar(
         members = [member for member in archive.getmembers() if member.isfile()]
         entry_count = len(members)
         uncompressed_total = sum(member.size for member in members)
-        for member in members:
+        started = time.perf_counter()
+        last_print = started
+        for entry_index, member in enumerate(members, start=1):
             classification = classify_entry(member.name)
             accumulator.classification_counts[classification] += 1
-            if classification != "image":
-                continue
-            try:
-                with stall_guard(stall_timeout_seconds):
-                    extracted = archive.extractfile(member)
-                    data = extracted.read() if extracted is not None else b""
-            except OSError as error:
-                accumulator.image_count += 1
-                accumulator.corrupt_entries.append({"name": member.name, "error": str(error)})
-                continue
-            accumulator.record_image_bytes(data, entry_name=member.name)
+            if classification == "image":
+                try:
+                    with stall_guard(stall_timeout_seconds):
+                        extracted = archive.extractfile(member)
+                        data = extracted.read() if extracted is not None else b""
+                except OSError as error:
+                    accumulator.image_count += 1
+                    accumulator.corrupt_entries.append({"name": member.name, "error": str(error)})
+                else:
+                    accumulator.record_image_bytes(data, entry_name=member.name)
+            now = time.perf_counter()
+            if entry_index == 1 or entry_index == entry_count or now - last_print >= 2.0:
+                last_print = now
+                _print_entry_progress(archive_path.name, entry_index, entry_count, now - started)
     return entry_count, uncompressed_total, accumulator
 
 
@@ -294,13 +337,37 @@ def build_inventory_report(
         access_plan = yaml.safe_load(access_plan_path.read_text(encoding="utf-8")) or {}
     started = time.perf_counter()
     identity = inventory_identity(private_inputs_root)
+    files = [path for path in sorted(private_inputs_root.iterdir()) if path.is_file()]
+    total_bytes = sum(path.stat().st_size for path in files)
+    print(
+        f"private_inputs taraması başlıyor: {len(files)} dosya, "
+        f"toplam {_format_bytes(total_bytes)}",
+        flush=True,
+    )
     archives: list[dict[str, Any]] = []
-    for path in sorted(private_inputs_root.iterdir()):
-        if not path.is_file():
-            continue
+    bytes_done = 0
+    for file_index, path in enumerate(files, start=1):
+        byte_size = path.stat().st_size
+        print(
+            f"[{file_index}/{len(files)}] taranıyor: {path.name} ({_format_bytes(byte_size)})",
+            flush=True,
+        )
+        file_started = time.perf_counter()
         result = inspect_path(path, stall_timeout_seconds=stall_timeout_seconds)
         result.known_role = known_role_for_filename(path.name, access_plan)
         archives.append(result.to_jsonable())
+        bytes_done += byte_size
+        elapsed_so_far = time.perf_counter() - started
+        rate = bytes_done / elapsed_so_far if elapsed_so_far > 0 else 0.0
+        remaining_bytes = max(0, total_bytes - bytes_done)
+        overall_eta = _format_duration(remaining_bytes / rate) if rate > 0 else "hesaplanıyor"
+        print(
+            f"[{file_index}/{len(files)}] tamamlandı: {path.name} — {result.file_type}, "
+            f"{result.image_count} görüntü, {result.corrupt_count} bozuk "
+            f"({time.perf_counter() - file_started:.1f}sn) "
+            f"— genel tahmini kalan süre: {overall_eta}",
+            flush=True,
+        )
     elapsed = time.perf_counter() - started
     report = {
         "schema_version": "1.0",
@@ -318,6 +385,12 @@ def build_inventory_report(
     (output_root / "dataset_inventory.json").write_text(canonical_json(report), encoding="utf-8")
     (output_root / "dataset_inventory.md").write_text(
         _render_markdown_report(report), encoding="utf-8"
+    )
+    print(
+        f"private_inputs taraması tamamlandı: {report['archive_count']} dosya, "
+        f"{report['total_image_count']} görüntü, {report['total_corrupt_count']} bozuk giriş, "
+        f"toplam süre {_format_duration(elapsed)}",
+        flush=True,
     )
     return report
 

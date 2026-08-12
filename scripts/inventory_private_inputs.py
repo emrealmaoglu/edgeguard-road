@@ -61,7 +61,13 @@ def main() -> int:
     else:
         cache_hit = False
 
-    if not cache_hit:
+    if cache_hit:
+        print(
+            f"private_inputs değişmemiş (kimlik: {identity[:16]}...), "
+            "önceki envanter yeniden kullanılıyor, tarama atlandı.",
+            flush=True,
+        )
+    else:
         report = build_inventory_report(
             private_inputs_root,
             output_root,

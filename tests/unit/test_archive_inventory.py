@@ -195,6 +195,27 @@ def test_build_inventory_report_covers_every_file_and_writes_outputs(tmp_path: P
     assert (output_root / "dataset_inventory.md").is_file()
 
 
+def test_build_inventory_report_prints_live_per_file_progress_and_eta(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    private_inputs = tmp_path / "private_inputs"
+    private_inputs.mkdir()
+    _build_zip(private_inputs / "toy.zip")
+    _build_tar(private_inputs / "toy.tar.gz", tmp_path)
+    (private_inputs / "checkpoint.pt").write_bytes(b"\x00" * 64)
+
+    build_inventory_report(private_inputs, tmp_path / "out")
+    output = capsys.readouterr().out
+
+    assert "taranıyor" in output
+    assert "tamamlandı" in output
+    assert "tahmini kalan" in output
+    assert "giriş tarandı" in output
+    assert "toy.zip" in output
+    assert "toy.tar.gz" in output
+    assert "checkpoint.pt" in output
+
+
 def test_build_inventory_report_refuses_to_overwrite_existing_output(tmp_path: Path) -> None:
     private_inputs = tmp_path / "private_inputs"
     private_inputs.mkdir()
@@ -218,7 +239,10 @@ def _run_inventory_cli(private_inputs: Path, output_parent: Path, **extra: str) 
     for key, value in extra.items():
         args.extend([f"--{key.replace('_', '-')}", value])
     completed = subprocess.run(args, check=True, capture_output=True, text=True)
-    return dict(json.loads(completed.stdout))
+    # Human-readable progress lines share stdout with the final canonical_json result,
+    # which is always printed last (mirroring run_colab_master.py's own stages).
+    last_line = completed.stdout.strip().splitlines()[-1]
+    return dict(json.loads(last_line))
 
 
 def test_inventory_cli_scans_then_reuses_cache_on_second_run(tmp_path: Path) -> None:
