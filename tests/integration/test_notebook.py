@@ -48,7 +48,15 @@ def test_master_notebook_is_thin_immutable_and_run_all_only() -> None:
     assert "GERÇEK DURMA AŞAMASI" in source
     assert "edgeguard-master-child-failure.json" in source
     assert "edgeguard-master-child.log" in source
-    assert 'environment["PYTHONPATH"]' not in source
+    # The shared `environment` dict feeding the main run_colab_master.py subprocess must
+    # stay PYTHONPATH-free: that host process is stdlib-only by design, and PYTHONPATH for
+    # the actually-isolated locked training runtime is set exclusively inside
+    # run_colab_master.py's own _runtime_environment(). A scoped, differently-named dict
+    # (e.g. the private_inputs inventory step's own `inventory_environment`) setting
+    # PYTHONPATH for its own unrelated, non-training subprocess call is fine and expected.
+    assert re.search(r'(?<!\w)environment\["PYTHONPATH"\]', source) is None
+    assert 'inventory_environment["PYTHONPATH"]' in source
+    assert "scripts/inventory_private_inputs.py" in source
     lowered = source.lower()
     for prohibited in ("api_key", "password=", "token=", "credential="):
         assert prohibited not in lowered

@@ -251,6 +251,28 @@ try:
         INVENTORY_OUTPUT_PARENT = DRIVE_ROOT / "EdgeGuard/reports/private_inputs_inventory"
         INVENTORY_ZIP = CONTENT_ROOT / "EdgeGuard_Data_Inventory.zip"
         if PRIVATE_INPUTS_ROOT.is_dir():
+            # This step runs before the locked training runtime is provisioned (that can
+            # take minutes and pulls in torch/mmseg, which this step does not need), so it
+            # cannot rely on that venv. It only needs a few small pure-Python packages on
+            # top of the host system Python3 that already runs this notebook's own driver
+            # code (Drive mount, files.download) — install them here if missing, and set
+            # PYTHONPATH so the pinned, un-installed `edgeguard` package (source only, no
+            # `pip install -e` per this notebook's own contract) can be imported directly.
+            run_visible(
+                [
+                    "/usr/bin/python3",
+                    "-m",
+                    "pip",
+                    "install",
+                    "--quiet",
+                    "numpy>=1.24,<3",
+                    "Pillow>=10,<13",
+                    "pydantic>=2,<3",
+                    "PyYAML>=6,<7",
+                ]
+            )
+            inventory_environment = os.environ.copy()
+            inventory_environment["PYTHONPATH"] = str(PROJECT_ROOT / "src")
             run_visible(
                 [
                     "/usr/bin/python3",
@@ -263,6 +285,7 @@ try:
                     str(INVENTORY_ZIP),
                 ],
                 cwd=PROJECT_ROOT,
+                env=inventory_environment,
             )
             if INVENTORY_ZIP.is_file():
                 from google.colab import files
