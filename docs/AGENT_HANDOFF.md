@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `7ffef5c` (see `git log` for the full SHA)
+  `24dd782` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -153,6 +153,36 @@
   suite was run before that commit's notebook regeneration, not after — a process gap
   for this session, not a design defect; the full suite is now confirmed green *after*
   the notebook regeneration for this commit.
+- **Note on the ninth real Colab-path bug — `cityscapes bundle identity mismatch`
+  (commit `24dd782…`):** the private_inputs inventory cell's bootstrap fix worked on the
+  next real L4 run (application commit `7ffef5c…`) — `EdgeGuard_Data_Inventory.zip`
+  downloaded successfully — but the main campaign then crashed in the `data` stage with
+  `ValueError: cityscapes bundle identity mismatch` from `_canonical_bundle_receipt`
+  (`colab_data.py:902-905`). Root cause: that check compared the receipt's
+  `plan_sha256` — a SHA-256 of the *entire* `colab_data_access_v1.yaml` at
+  bundle-creation time — against a fresh hash of the *entire current file*. Any edit
+  anywhere in that YAML, even to a completely unrelated dataset, invalidates every other
+  dataset's already-built, still-correct Drive bundle. That's exactly what happened:
+  commit `bd3ea56` (WildDash2/RailSem19 role assignment) edited only the `wilddash2`
+  section — `cityscapes`'s own config entry was untouched — but the whole-file hash
+  changed anyway, so the already-published ~8.26 GB `cityscapes` bundle on Drive got
+  rejected on this run. `create_dataset_bundle`'s own bundle-reuse path never checked
+  `plan_sha256` at all (confirmed by reading `colab_data.py:646-654` directly), showing
+  this field was never meant to be load-bearing across the whole file — an accidental
+  side effect of hashing too much, not a deliberate integrity design; there is also no
+  test coverage of `plan_sha256` anywhere in `tests/unit/test_colab_data.py`. Fixed by
+  comparing the receipt's `required_paths` field directly (already stored verbatim,
+  unchanged, in every previously-published receipt) instead of the whole-plan hash —
+  backward-compatible with the bundle already on Drive, so no expensive rebuild is
+  needed, and still fails closed if a dataset's own `required_paths` genuinely changes.
+  Also scoped the now-informational (no longer gating) `plan_sha256` field written on
+  bundle creation to just that dataset's own plan subsection, so it can't set the same
+  trap again if something reads it later. Two new regression tests reproduce the exact
+  real-world scenario (unrelated dataset edited, staging must still succeed) and confirm
+  the check still rejects a genuine change to the dataset's own `required_paths`. This
+  was diagnosed with an Explore agent plus direct reads of `colab_data.py`, then
+  implemented under `plan mode` (system-enforced) with explicit user approval via
+  `ExitPlanMode` before any code changed.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -400,6 +430,20 @@
 
 ## Local gates
 
+- **As of commit `24dd782…` (ninth real Colab bug — `cityscapes bundle identity
+  mismatch`):** Ruff and format checks pass for the full repository. Mypy passes for
+  all 118 configured source modules. Full pytest passes: 522 passed, 32
+  environment-gated skipped without the pinned MMSeg stack (up from 520/32 — 2 new cases
+  in `test_colab_data.py`: one reproduces the exact real-world scenario of an unrelated
+  dataset's config being edited and confirms staging still succeeds, one confirms the
+  check still rejects a genuine change to the affected dataset's own `required_paths`).
+  This commit touches no training/mmseg-runtime code path, so the mmseg-gated test files
+  and the full CPU rehearsal suite were not re-run this round. Master notebook
+  generation is byte-identical across two runs at commit `24dd782…`, SHA-256
+  `1110e0ef65fa675cdf247fb967a860931c848ae62ea3a2e72e505cd4b617ba77` (superseding the
+  `7ffef5c…`/`2e89a7ba…` pin — no cell text changed, only `EXPECTED_PROJECT_COMMIT`).
+  `tests/integration/test_notebook.py` (3/3, including `test_delivery_notebooks.py`) and
+  the local claim-safe execution harness (all 5 cells) both pass.
 - **As of commit `7ffef5c…` (private_inputs archive inventory + real-Colab bootstrap
   fix):** Ruff and format checks pass for the full repository (`ruff check .`,
   `ruff format --check .`). Mypy passes for all 118 configured source modules
@@ -469,6 +513,16 @@ the real next milestone is HPO for the top-two screening models, then `final` (4
 steps) for all five. If the session ends, repeat Run all in a new compliant runtime —
 this is a Colab platform limit, not something the notebook can automate away. Do not
 change the notebook or select stages manually.
+
+The most recent real attempt (application commit `7ffef5c…`) never reached that
+screening-evidence step this time: it crashed earlier, in the `data` stage, with
+`cityscapes bundle identity mismatch` (see the ninth-bug note above) — an unrelated
+config-file edit (`bd3ea56`, the WildDash2/RailSem19 role commit) had invalidated the
+already-staged `cityscapes` bundle's identity check, purely as a side effect of hashing
+the whole plan file instead of just the relevant dataset's section. This is now fixed at
+`24dd782…`. Watch specifically that the `data` stage completes cleanly for both
+`cityscapes` and `idd20k` (staging from the existing Drive bundles, no rebuild needed),
+then that the campaign proceeds to resume mid-screening as before.
 
 This run will also, for the first time with the bootstrap fix applied, exercise the
 private_inputs archive-inventory cell for real against the actual Drive-mounted

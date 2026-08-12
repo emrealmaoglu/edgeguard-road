@@ -5,7 +5,7 @@ Updated 2026-08-12 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`7ffef5c` (see `git log` for the full SHA). The only generated notebook is
+`24dd782` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -448,6 +448,21 @@ giving the inventory subprocess its own scoped environment dict with `PYTHONPATH
 verified directly against a throwaway venv with only those four packages installed and
 no `edgeguard-road` install at all.
 
+**Ninth real Colab bug (`24dd782…`):** with the inventory bootstrap fixed, the same real
+L4 attempt (application commit `7ffef5c…`) crashed later, in the main campaign's `data`
+stage, with `ValueError: cityscapes bundle identity mismatch` from
+`_canonical_bundle_receipt` in `src/edgeguard/rescue/colab_data.py`. That check compared
+the receipt's `plan_sha256` — a hash of the *entire* `colab_data_access_v1.yaml` at
+bundle-creation time — against a fresh hash of the *entire current file*, so any edit
+anywhere in that YAML invalidates every dataset's already-built Drive bundle, not just
+the edited one. Commit `bd3ea56` (WildDash2/RailSem19 role assignment) had edited only
+the `wilddash2` section; `cityscapes`'s own config was untouched, but the whole-file
+hash changed anyway, rejecting the already-published ~8.26 GB `cityscapes` bundle.
+Fixed by comparing the receipt's `required_paths` field directly instead — already
+stored verbatim in every existing receipt, so no Drive-side rebuild is needed — while
+still failing closed if a dataset's own `required_paths` genuinely changes. Two new
+regression tests in `tests/unit/test_colab_data.py` cover both directions.
+
 ## Verification boundary
 
 Local Ruff, mypy, pytest, deterministic notebook generation, claim-safe local cell
@@ -460,13 +475,18 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-As of application commit `7ffef5c…`, the current delivery passes 520 tests with
-thirty-two environment-gated skips without the pinned MMSeg stack present (up from 499/32
-— 20 new cases in `test_archive_inventory.py` for the raw-archive inventory feature,
-plus corrections to `test_delivery_notebooks.py`'s hardcoded cell count and
-`test_notebook.py`'s PYTHONPATH guard made while fixing the real-Colab bootstrap bug
-described above; this range touches no mmseg/training code path so the mmseg-gated
-counts below and the CPU rehearsal suite were not re-run this round). Mypy passes for
+As of application commit `24dd782…`, the current delivery passes 522 tests with
+thirty-two environment-gated skips without the pinned MMSeg stack present (up from
+520/32 — 2 new cases in `test_colab_data.py` covering the ninth-bug fix: one reproduces
+the exact real-world scenario of an unrelated dataset's config being edited and confirms
+staging still succeeds, one confirms the check still rejects a genuine change to the
+affected dataset's own `required_paths`). At the prior commit (`7ffef5c…`), the suite
+passed 520 tests with the same thirty-two skips (up from 499/32 — 20 new cases in
+`test_archive_inventory.py` for the raw-archive inventory feature, plus corrections to
+`test_delivery_notebooks.py`'s hardcoded cell count and `test_notebook.py`'s PYTHONPATH
+guard made while fixing the private_inputs inventory bootstrap bug). This range touches
+no mmseg/training code path so the mmseg-gated counts below and the CPU rehearsal suite
+were not re-run this round. Mypy passes for
 all 118 configured source modules (`mypy src/edgeguard`, up from 116 — adds
 `archive_inventory.py` and `stall_guard.py`). At the prior commit (`2b1ebff…`), the
 suite passed 499 tests with
@@ -500,10 +520,14 @@ byte-identically at SHA-256
 `7b604c9…` (the private_inputs inventory feature, before the bootstrap fix), it was
 generated twice byte-identically at SHA-256
 `b06b373a2c5c3ab9e1a02f891abcc9d1973655cb69fb1d04281f3f24ddcd6e8d` (5 code cells, up
-from 4). At the current commit `7ffef5c…` (bootstrap fix applied), it was regenerated
-twice byte-identically again at SHA-256
-`2e89a7ba32ed9b5f5c451650231aaca0bd67a6a5de2b4a790a8434f43a2a73d7` (still 5 code cells),
-and both `tests/integration/test_notebook.py` and the local claim-safe execution harness
+from 4). At commit `7ffef5c…` (bootstrap fix applied), it was regenerated twice
+byte-identically again at SHA-256
+`2e89a7ba32ed9b5f5c451650231aaca0bd67a6a5de2b4a790a8434f43a2a73d7` (still 5 code cells).
+At the current commit `24dd782…` (ninth-bug fix — no cell text changed, only the pinned
+commit), it was regenerated twice byte-identically at SHA-256
+`1110e0ef65fa675cdf247fb967a860931c848ae62ea3a2e72e505cd4b617ba77`, and both
+`tests/integration/test_notebook.py` (now including `test_delivery_notebooks.py`'s
+corrected assertion) and the local claim-safe execution harness
 (`scripts/dev/run_delivery_notebooks_local.py`) pass at this commit.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected
