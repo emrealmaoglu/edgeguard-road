@@ -5,13 +5,25 @@ Updated 2026-08-12 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`f2f2110` (see `git log` for the full SHA). The only generated notebook is
+`38df2ae` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
 The old two delivery notebooks and twelve numbered notebooks are deleted from the current
 tree but recoverable through Git history. No old Drive campaign, prepared dataset, audit,
 or artifact is deleted.
+
+**2026-08-12 delegation and model-scope decision.** With a hard external deadline
+(presentation video due in 4 days, report in 8, end of a 6-week development window), the
+owner explicitly delegated scientific/HPO-scope decisions to Claude Code for the rest of
+this campaign (see `CLAUDE.md`'s 2026-08-12 entry; the sealed-test-opening gate and the
+non-fabrication contract are unaffected). Under that delegation, remaining HPO/final
+compute is prioritized for `segformer_b0` and `pidnet_s` based on real measured
+screening/pilot results (see `src/edgeguard/rescue/training_log_analysis.py` and
+`docs/AGENT_HANDOFF.md`'s 2026-08-12 note for the full evidence and reasoning); `fast_scnn`
+and `bisenetv2`'s measured per-iteration cost (~18x and ~24x slower than `segformer_b0`,
+respectively) would make a full `final` run infeasible within the remaining timeline, and
+`ddrnet_23_slim` has no real screening result yet.
 
 ## Data state
 
@@ -487,10 +499,15 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-As of application commit `f2f2110…`, the current delivery passes 523 tests with
+As of application commit `38df2ae…`, the current delivery passes 533 tests with
 thirty-two environment-gated skips without the pinned MMSeg stack present (up from
+523/32 — 10 new cases in `test_training_log_analysis.py`, using the user's own real
+pasted Colab log excerpt as the primary fixture rather than a synthetic one). Mypy
+passes for all 119 configured source modules (up from 118 — adds
+`training_log_analysis.py`). At the prior commit (`f2f2110…`), the suite passed 523
+tests with the same thirty-two skips (up from
 522/32 — 1 new case in `test_archive_inventory.py` locking in the live-progress-output
-shape via `capsys`). At the prior commit (`24dd782…`), the suite passed 522 tests with
+shape via `capsys`). At the commit before that (`24dd782…`), the suite passed 522 tests with
 the same thirty-two skips (up from 520/32 — 2 new cases in `test_colab_data.py`
 covering the ninth-bug fix: one reproduces the exact real-world scenario of an unrelated
 dataset's config being edited and confirms staging still succeeds, one confirms the
@@ -540,10 +557,14 @@ byte-identically again at SHA-256
 `2e89a7ba32ed9b5f5c451650231aaca0bd67a6a5de2b4a790a8434f43a2a73d7` (still 5 code cells).
 At commit `24dd782…` (ninth-bug fix — no cell text changed, only the pinned commit), it
 was regenerated twice byte-identically at SHA-256
-`1110e0ef65fa675cdf247fb967a860931c848ae62ea3a2e72e505cd4b617ba77`. At the current
-commit `f2f2110…` (live progress output — again no cell text changed), it was
-regenerated twice byte-identically at SHA-256
-`97198ac21eddf1ed1ffca4376c6ae4cebe0212a2d0fab95ffe4816cfceb5c427`, and both
+`1110e0ef65fa675cdf247fb967a860931c848ae62ea3a2e72e505cd4b617ba77`. At commit
+`f2f2110…` (live progress output — again no cell text changed), it was regenerated
+twice byte-identically at SHA-256
+`97198ac21eddf1ed1ffca4376c6ae4cebe0212a2d0fab95ffe4816cfceb5c427`. At the current
+commit `38df2ae…` (real-evidence training-log analysis tool — no notebook cell text
+changed either, this tool is deliberately a standalone script, not wired into the
+notebook), it was regenerated twice byte-identically at SHA-256
+`7237aee68f3cd53ea346abe2874c173f235e3e775774eee02671648f42a70290`, and both
 `tests/integration/test_notebook.py` (including `test_delivery_notebooks.py`'s
 corrected assertion) and the local claim-safe execution harness
 (`scripts/dev/run_delivery_notebooks_local.py`) pass at this commit.

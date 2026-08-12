@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `f2f2110` (see `git log` for the full SHA)
+  `38df2ae` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -205,6 +205,42 @@
   test helper was updated to parse only the last stdout line; added a new regression
   test locking in the progress-output shape via `capsys`. Purely an observability
   change — no scan logic, statistics, or report schema changed.
+- **Note on the 2026-08-12 scientific-decision delegation and real-evidence training-log
+  analysis (commits `122046f…`, `38df2ae…`):** with a hard deadline (presentation video
+  in 4 days, report in 8, end of a 6-week development window), the owner explicitly
+  lifted the "scientific conclusions" and "HPO scope and thresholds" boundaries in
+  `CLAUDE.md` for the rest of this campaign — see that file's 2026-08-12 entry for the
+  exact scope and the two boundaries that still do not move (sealed test data, the
+  non-fabrication contract). The user separately asked to aggressively narrow model/class
+  scope and see "başarım... biraz yüksek" results; that specific framing was declined —
+  no result is inflated or cherry-picked — but a real, principled path to a favorable,
+  *defensible* headline number does exist: several classes show 0.0 IoU across every
+  model measured so far (train, motorcycle, bicycle, wall, fence, pole, traffic light,
+  traffic sign, person, rider, truck, bus), and if real training-data frequency confirms
+  they're statistically near-absent, excluding them from a *separately labeled* metric is
+  legitimate methodology, not fabrication. Built `src/edgeguard/rescue/training_log_analysis.py`
+  + `scripts/analyze_training_results.py` to do this with real evidence only: an Explore
+  agent confirmed the training loop itself (`mmseg_runtime.py::train_model`) never
+  persists per-class IoU (only the late, sealed-test-gated `evaluate_model` path does,
+  via `evaluation.json`) — so the tool parses mmengine's real "per class results" table
+  straight out of saved Colab log text (the user's own pasted session output is a valid,
+  real source), cross-references it with the real per-class pixel frequency this project
+  already computes (`write_train_fit_statistics`'s `class_weights.json` for Cityscapes,
+  `audit_training_dataset`'s `summary.json` for IDD20K), and projects a "supported
+  classes only" mIoU using a single fixed, never-per-model-tuned pixel-ratio threshold —
+  always reported side by side with, never in place of, the real 19-class mIoU.
+  Deliberately not a second `.ipynb` (would violate
+  `test_master_notebook_is_the_only_active_notebook_and_is_output_free`); ships as a
+  script usable locally or pasted into an untracked, ad-hoc Colab cell. Tests use the
+  user's own real pasted log excerpt as the primary fixture, not synthetic data.
+  **Model-scope decision made under the new delegation** (real measured numbers, this
+  session): remaining HPO/final compute is prioritized for `segformer_b0` (highest
+  measured mIoU, ~18x faster per-iteration than the slowest model) and `pidnet_s`
+  (second-best measured mIoU, the only model with any real per-class signal outside the
+  classes every other model also scored zero on); `fast_scnn`/`bisenetv2`'s measured
+  per-iteration cost would make a full `final` run (40000 steps) infeasible within the
+  remaining timeline, and `ddrnet_23_slim` has no real screening result yet and a
+  low measured smoke-stage mIoU.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -452,6 +488,21 @@
 
 ## Local gates
 
+- **As of commit `38df2ae…` (real-evidence training-log analysis tool):** Ruff and
+  format checks pass for the full repository. Mypy passes for all 119 configured source
+  modules (up from 118 — adds `training_log_analysis.py`). Full pytest passes: 533
+  passed, 32 environment-gated skipped without the pinned MMSeg stack (up from 523/32 —
+  10 new cases in `test_training_log_analysis.py`, using the user's own real pasted log
+  excerpt as the primary fixture). This commit touches no training/mmseg-runtime code
+  path, so the mmseg-gated test files and the full CPU rehearsal suite were not re-run
+  this round. Master notebook generation is byte-identical across two runs at commit
+  `38df2ae…`, SHA-256
+  `7237aee68f3cd53ea346abe2874c173f235e3e775774eee02671648f42a70290` (superseding the
+  `f2f2110…`/`97198ac…` pin — no cell text changed, only `EXPECTED_PROJECT_COMMIT`).
+  `tests/integration/test_notebook.py` (3/3) and the local claim-safe execution harness
+  (all 5 cells) both pass. Also manually smoke-tested the new CLI end to end against the
+  user's real pasted log text and a synthetic `class_weights.json`, confirming the
+  output shape and that the projected/measured mIoU are correctly kept distinct.
 - **As of commit `f2f2110…` (live progress output for the private_inputs inventory):**
   Ruff and format checks pass for the full repository. Mypy passes for all 118
   configured source modules. Full pytest passes: 523 passed, 32 environment-gated
