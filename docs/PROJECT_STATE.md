@@ -5,7 +5,7 @@ Updated 2026-08-12 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`7b604c9` (see `git log` for the full SHA). The only generated notebook is
+`7ffef5c` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -420,7 +420,9 @@ The package stage produces `EdgeGuard_Jetson_Release.zip`,
 checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson telemetry stays
 `not_run` until a target-device benchmark is supplied.
 
-Separately, as of application commit `7b604c9…`, every notebook session also produces
+Separately, as of application commit `7ffef5c…` (see the bootstrap-fix note below —
+the initial `7b604c9…` cell failed on real Colab with `ModuleNotFoundError: No module
+named 'edgeguard'` before this fix), every notebook session also produces
 `EdgeGuard_Data_Inventory.zip` (`dataset_inventory.json`/`.md`, `record_type:
 "raw_archive_inventory"`) — an exhaustive, name-agnostic scan of every raw file in
 `Drive/EdgeGuard/private_inputs/`: byte sizes, entry/image counts, resolution/format/mode
@@ -432,6 +434,19 @@ and is content-addressed so an unchanged `private_inputs/` folder reuses the pri
 session's report instead of re-scanning. It is an engineering/audit artifact (no
 `scientific_status` field) for the thesis report and for spotting optimization targets —
 not a training or acceptance result.
+
+**Bootstrap fix (`7ffef5c…`):** the inventory cell's first real-Colab run
+(`7b604c9…`) crashed cleanly with `ModuleNotFoundError: No module named 'edgeguard'`
+(caught by the cell's own try/except; the campaign was unaffected, exactly as designed,
+but no report was produced). The cell invoked the CLI via bare `/usr/bin/python3` the
+same way `run_colab_master.py` is invoked, but unlike that script (which never imports
+`edgeguard` at its own top level), the CLI imports `edgeguard.rescue.archive_inventory`
+immediately, and nothing had put `src/` on that interpreter's `sys.path`. Fixed by
+giving the inventory subprocess its own scoped environment dict with `PYTHONPATH` set to
+`src/`, and by installing the small set of pure-Python packages
+(`numpy`/`Pillow`/`pydantic`/`PyYAML`) its import chain needs before invoking it —
+verified directly against a throwaway venv with only those four packages installed and
+no `edgeguard-road` install at all.
 
 ## Verification boundary
 
@@ -445,13 +460,16 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-As of application commit `7b604c9…`, the current delivery passes 520 tests with
+As of application commit `7ffef5c…`, the current delivery passes 520 tests with
 thirty-two environment-gated skips without the pinned MMSeg stack present (up from 499/32
 — 20 new cases in `test_archive_inventory.py` for the raw-archive inventory feature,
-which touches no mmseg/training code path so the mmseg-gated counts below and the CPU
-rehearsal suite were not re-run this round). Mypy passes for all 118 configured source
-modules (`mypy src/edgeguard`, up from 116 — adds `archive_inventory.py` and
-`stall_guard.py`). At the prior commit (`2b1ebff…`), the suite passed 499 tests with
+plus corrections to `test_delivery_notebooks.py`'s hardcoded cell count and
+`test_notebook.py`'s PYTHONPATH guard made while fixing the real-Colab bootstrap bug
+described above; this range touches no mmseg/training code path so the mmseg-gated
+counts below and the CPU rehearsal suite were not re-run this round). Mypy passes for
+all 118 configured source modules (`mypy src/edgeguard`, up from 116 — adds
+`archive_inventory.py` and `stall_guard.py`). At the prior commit (`2b1ebff…`), the
+suite passed 499 tests with
 thirty-two environment-gated skips without the pinned MMSeg stack present (up from 489/21
 — several new tests, including the per-model native-optimizer tests, are gated on the
 checkout); with the pinned stack available
@@ -478,11 +496,14 @@ regression tests use the same `git stash` technique: stashing only the fix produ
 `ImportError` on `resolve_model_optimizer_defaults` at test collection, confirmed to fail
 pre-fix and pass post-fix. At commit `a50b635…`, the master notebook was generated twice
 byte-identically at SHA-256
-`263e9c1efec73ee18778ac460133c9fabc71e248d475250c3eccc153a72bc43b`. At the current
-commit `7b604c9…`, it was again generated twice byte-identically at SHA-256
-`b06b373a2c5c3ab9e1a02f891abcc9d1973655cb69fb1d04281f3f24ddcd6e8d` (now 5 code cells, up
-from 4 — the new private_inputs inventory cell), and both
-`tests/integration/test_notebook.py` and the local claim-safe execution harness
+`263e9c1efec73ee18778ac460133c9fabc71e248d475250c3eccc153a72bc43b`. At commit
+`7b604c9…` (the private_inputs inventory feature, before the bootstrap fix), it was
+generated twice byte-identically at SHA-256
+`b06b373a2c5c3ab9e1a02f891abcc9d1973655cb69fb1d04281f3f24ddcd6e8d` (5 code cells, up
+from 4). At the current commit `7ffef5c…` (bootstrap fix applied), it was regenerated
+twice byte-identically again at SHA-256
+`2e89a7ba32ed9b5f5c451650231aaca0bd67a6a5de2b4a790a8434f43a2a73d7` (still 5 code cells),
+and both `tests/integration/test_notebook.py` and the local claim-safe execution harness
 (`scripts/dev/run_delivery_notebooks_local.py`) pass at this commit.
 Remote Linux workflow `31129018003` completed successfully at an earlier application commit
 (`3f3ef8f…`) with the exact Colab failure context injected

@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `7b604c9` (see `git log` for the full SHA)
+  `7ffef5c` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -121,6 +121,38 @@
   code. Purely additive: does not touch `ColabPipeline`/`PHASES`, does not change any
   dataset role/scope decision, does not affect the in-progress real-L4 campaign state
   above.
+- **Note on the private_inputs inventory cell's real-Colab bootstrap bug (commits
+  `1a859aa…`, `7ffef5c…`):** the user ran the newly-pushed `7b604c9` on real L4 and the
+  new inventory cell immediately crashed with `ModuleNotFoundError: No module named
+  'edgeguard'` (caught by the cell's own try/except, so it did not block the campaign,
+  exactly as designed — but the report was never produced). Root cause: the cell invoked
+  `scripts/inventory_private_inputs.py` via bare `/usr/bin/python3`, the same pattern
+  used for `run_colab_master.py` — but `run_colab_master.py` deliberately never imports
+  `edgeguard` at its own top level (it only sets `PYTHONPATH` for the children it spawns
+  later, inside its own `_runtime_environment()`), while the new script imports
+  `edgeguard.rescue.archive_inventory` immediately, and nothing had ever put `src/` on
+  that bare interpreter's `sys.path`. Fixed by giving the inventory subprocess its own
+  scoped environment dict (`inventory_environment`, deliberately not the shared
+  `environment` dict used for the main `run_colab_master.py` call) with `PYTHONPATH` set
+  to `src/`, and by `pip install`-ing the small set of pure-Python packages
+  (`numpy`/`Pillow`/`pydantic`/`PyYAML`, at `pyproject.toml`'s pinned ranges) the
+  import chain needs, since this step deliberately runs before the locked training
+  runtime is provisioned and cannot assume Colab's bare system Python already has them —
+  a materially lower-risk category of host-touching than the CUDA/torch locked-runtime
+  isolation this project hardened earlier (small pure-Python packages into the
+  notebook's own already-mutable per-session system Python, not the version-pinned ML
+  stack). Verified directly: built a throwaway venv with only the four light packages
+  installed and no `edgeguard-road` install at all, ran the CLI against it with only
+  `PYTHONPATH` set, confirmed a correct report. `tests/integration/test_notebook.py`'s
+  existing `'environment["PYTHONPATH"]' not in source` guard (added 2026-08-06 to keep
+  the *shared* `environment` dict feeding `run_colab_master.py` PYTHONPATH-free) used a
+  bare substring check that also matched `inventory_environment["PYTHONPATH"]` —
+  tightened to a word-boundary regex so it still guards what it always meant to guard.
+  Also fixed a stale hardcoded `code_cell_count == 4` in
+  `tests/unit/test_delivery_notebooks.py`, missed in the prior commit because the full
+  suite was run before that commit's notebook regeneration, not after — a process gap
+  for this session, not a design defect; the full suite is now confirmed green *after*
+  the notebook regeneration for this commit.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -368,22 +400,30 @@
 
 ## Local gates
 
-- **As of commit `7b604c9…` (private_inputs archive inventory):** Ruff and format checks
-  pass for the full repository (`ruff check .`, `ruff format --check .`). Mypy passes for
-  all 118 configured source modules (`mypy src/edgeguard`, matching `ci.yml`; up from 116
-  — adds `archive_inventory.py` and `stall_guard.py`). Full pytest passes: 520 passed, 32
-  environment-gated skipped without the pinned MMSeg stack (up from 499/32 — 20 new cases
-  in `test_archive_inventory.py`, covering exhaustive zip/tar scanning, measured
-  per-class histogram correctness against a hand-built mask, corrupt-entry detection,
-  exact-filename-only role matching that refuses to guess undeclared files, CLI
-  cache-hit/cache-miss identity behavior, and hash-verified zip output). This commit does
-  not touch any training/mmseg-runtime code path, so the mmseg-gated test files and the
-  full CPU rehearsal suite were not re-run this round — nothing in this diff can affect
-  their outcome. Master notebook generation is byte-identical across two runs at commit
-  `7b604c9…`, SHA-256 `b06b373a2c5c3ab9e1a02f891abcc9d1973655cb69fb1d04281f3f24ddcd6e8d`.
-  `tests/integration/test_notebook.py` passes (2/2), and the local claim-safe execution
-  harness (`scripts/dev/run_delivery_notebooks_local.py`) passes all 5 code cells (up from
-  4 — the new inventory cell correctly no-ops under `LOCAL_TEST_MODE`).
+- **As of commit `7ffef5c…` (private_inputs archive inventory + real-Colab bootstrap
+  fix):** Ruff and format checks pass for the full repository (`ruff check .`,
+  `ruff format --check .`). Mypy passes for all 118 configured source modules
+  (`mypy src/edgeguard`, matching `ci.yml`; up from 116 — adds `archive_inventory.py` and
+  `stall_guard.py`). Full pytest passes: 520 passed, 32 environment-gated skipped without
+  the pinned MMSeg stack (up from 499/32 — 20 new cases in `test_archive_inventory.py`,
+  covering exhaustive zip/tar scanning, measured per-class histogram correctness against
+  a hand-built mask, corrupt-entry detection, exact-filename-only role matching that
+  refuses to guess undeclared files, CLI cache-hit/cache-miss identity behavior, and
+  hash-verified zip output; `test_delivery_notebooks.py`'s cell-count assertion and
+  `test_notebook.py`'s PYTHONPATH guard were also corrected at this commit). This commit
+  range does not touch any training/mmseg-runtime code path, so the mmseg-gated test
+  files and the full CPU rehearsal suite were not re-run this round — nothing in this
+  diff can affect their outcome. Master notebook generation is byte-identical across two
+  runs at commit `7ffef5c…`, SHA-256
+  `2e89a7ba32ed9b5f5c451650231aaca0bd67a6a5de2b4a790a8434f43a2a73d7` (superseding the
+  `7b604c9…`/`b06b373a…` pin, which shipped with the PYTHONPATH bootstrap bug described
+  above). `tests/integration/test_notebook.py` passes (2/2), and the local claim-safe
+  execution harness (`scripts/dev/run_delivery_notebooks_local.py`) passes all 5 code
+  cells (up from 4 — the new inventory cell correctly no-ops under `LOCAL_TEST_MODE`) —
+  note this harness only proves syntax/import correctness under `LOCAL_TEST_MODE`, which
+  is exactly the class of bug (a bare-interpreter import failure) that slipped through it
+  before being caught on real Colab; the direct throwaway-venv verification described
+  above is what actually confirms the fix.
 - **Prior state (commit `2b1ebff…`, the eighth-bug fix):** Ruff/format/mypy passed for 116
   modules; full pytest 499 passed/32 skipped; mmseg-gated files 27/27 with
   `EDGEGUARD_MMSEG_CHECKOUT` at `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`; the full CPU
@@ -430,11 +470,15 @@ steps) for all five. If the session ends, repeat Run all in a new compliant runt
 this is a Colab platform limit, not something the notebook can automate away. Do not
 change the notebook or select stages manually.
 
-This run will also, for the first time, exercise the new private_inputs archive-inventory
-cell for real against the actual Drive-mounted `EdgeGuard/private_inputs/` folder (18
-files as of this commit) — it runs early, before the campaign subprocess, and is wrapped
-to never block or fail the campaign if it errors. Confirm it prints a completed report and
-that `EdgeGuard_Data_Inventory.zip` downloads; if it fails, the printed exception plus
+This run will also, for the first time with the bootstrap fix applied, exercise the
+private_inputs archive-inventory cell for real against the actual Drive-mounted
+`EdgeGuard/private_inputs/` folder (18 files as of this commit) — it runs early, before
+the campaign subprocess, and is wrapped to never block or fail the campaign if it errors.
+The first real attempt at commit `7b604c9…` failed cleanly with `ModuleNotFoundError: No
+module named 'edgeguard'` (caught, campaign unaffected) — fixed at `7ffef5c…` (see the
+note above) by scoping `PYTHONPATH` to this step's own subprocess call and installing its
+few light pure-Python dependencies first. Confirm it prints a completed report and that
+`EdgeGuard_Data_Inventory.zip` downloads; if it still fails, the printed exception plus
 `Drive/EdgeGuard/reports/private_inputs_inventory/` (if partially written) has the
 diagnostic — it does not need to succeed for the real campaign to proceed.
 
