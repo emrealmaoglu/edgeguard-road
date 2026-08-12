@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `a50b635` (see `git log` for the full SHA)
+  `2b1ebff` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -59,6 +59,33 @@
   owner:** whether to eventually trim the 5-model comparison, and whether to ever pull
   BDD100K/ACDC/WildDash into training roles (ADR-0009's existing answer stands unless the
   owner reopens it).
+- **Note on the eighth real Colab bug (commit `2b1ebff…`):** a real L4 run at `a50b635…`
+  got all five models through a full `screening` stage (6000 steps each) for the first
+  time — real mIoU: segformer_b0 16.48%, fast_scnn 20.53%, pidnet_s 26.54%,
+  ddrnet_23_slim 25.21%, bisenetv2 17.41% — then crashed in the screening-evidence
+  evaluation step with `NameError: name 'inf' is not defined`. Root cause:
+  `build_training_config()`'s `clip_grad.max_norm` was `float("inf")`
+  (`error_if_nonfinite=True` is the real safety net; `max_norm` was never meant to
+  actually clip). `train_model()` dumps the resolved config to `resolved.py` via
+  `mmengine.Config.dump()` before every training call — including no-op
+  resume-and-skip re-entries — and `evaluate.py` (used by the screening/final evidence
+  phases) reloads it via `mmengine.Config.fromfile()`, which `eval()`s the dumped Python
+  source; mmengine's dumper serializes `float("inf")` as the bare token `inf`, not a
+  valid Python literal without `float(...)`/`math.inf` in scope. This is structurally
+  unreachable by any test exercising only the in-memory `cfg` — every prior stage did
+  exactly that — so it survived undetected through 7 prior bug fixes and ~20 hours of
+  real L4 compute until the pipeline finally reached a real dump-then-reload path. Fixed
+  by replacing `float("inf")` with a large finite sentinel (`1e9`), which round-trips
+  cleanly and stays effectively unbounded for any real gradient norm (this session's
+  real runs, including a visibly diverging `bisenetv2` screening run, topped out around
+  `grad_norm ~560`). Reproduced with zero GPU dependency (pure Python dump/reload) and
+  regression-tested; confirmed via `git stash` to fail pre-fix with the identical error
+  and pass post-fix. **Noted, not fixed, confirmed pre-existing and unrelated via the
+  same `git stash` check:** the full `tests/integration/test_colab_pipeline_cpu_rehearsal.py`
+  suite currently fails on this Mac with `RuntimeError: view size is not compatible with
+  input tensor's size and stride` during `backward()` — the known MPS operator-gap class
+  of issue already documented in `canonical-colab-runbook.md`, identical on both
+  pre-fix and post-fix code. Needs separate investigation, does not block this fix.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -297,6 +324,12 @@
   this dev machine by design). Not yet confirmed on real L4 hardware; the optimizer-family
   change directly affects what `pilot`-stage training will actually do for 4 of 5 models,
   so the next real Colab run is the load-bearing test for this fix.
+- (Commit `2b1ebff…`) Eighth real Colab bug (see note above): `float("inf")` in
+  `clip_grad.max_norm` doesn't survive `mmengine.Config.dump()`/`fromfile()`'s
+  eval()-based `.py` round-trip, crashing `evaluate.py` the first time the pipeline
+  reached the screening-evidence step — after all five models completed a full real
+  6000-step `screening` run. Replaced with a large finite sentinel (`1e9`). Reproduced
+  and regression-tested with zero GPU dependency.
 
 ## Local gates
 
@@ -320,9 +353,17 @@
 - The full `tests/integration/test_colab_pipeline_cpu_rehearsal.py` suite (all 3 tests: core
   smoke+resume, stale-recovery skip, extension-model smoke) was re-run end to end against the
   real pinned stack and still passes (3 passed in 18m40s).
-- Master notebook generation is byte-identical across two runs at commit `a50b635…`.
+- **As of commit `2b1ebff…`:** this rehearsal suite now fails on this machine with
+  `RuntimeError: view size is not compatible with input tensor's size and stride` during
+  `backward()` — the known MPS operator-gap class of issue documented in
+  `canonical-colab-runbook.md`. Confirmed via `git stash` to be identical on both pre-fix
+  and post-fix code (i.e., unrelated to the `clip_grad` fix; a separate, pre-existing
+  local-environment regression that needs its own investigation). The `clip_grad` fix
+  itself is verified independently via a direct dump/reload unit test plus the full
+  local suite (500 passed/32 skipped) and the mmseg-gated test files (27/27).
+- Master notebook generation is byte-identical across two runs at commit `2b1ebff…`.
 - The notebook SHA-256 after pinning is
-  `263e9c1efec73ee18778ac460133c9fabc71e248d475250c3eccc153a72bc43b`.
+  `25c7393e4ac216700bba35a9b846ba89bc97d5b32700cca09a0dfad6003334e1`.
 - **Pending at this commit:** claim-safe local cell execution has not been re-verified,
   remote Linux workflow `semantic-framework-cpu-probe.yml` has not been re-run (including
   the rehearsal step) — its trigger now covers this branch as of this commit, so the next
@@ -342,20 +383,19 @@
 
 Push this commit, then open the master notebook from the pushed branch in a fresh Colab L4
 + High-RAM runtime and use Run all (Colab Pro/Pro+ background execution is recommended so
-the session survives closing the browser tab). The five-model AMP canary, the
-`val_dataloader` build, the `last_checkpoint` resume, the RNG-device resume, and
-`pidnet_s`'s bf16 `BoundaryLoss` fix are all already confirmed passing on real hardware;
-watch specifically for two things this commit changes: (1) all five models' `smoke` stages
-should now complete end to end (the seven prior bugs blocking this are all fixed), and
-(2) `fast_scnn`/`pidnet_s`/`ddrnet_23_slim`/`bisenetv2` now train with their own native
-SGD+momentum optimizer instead of the shared AdamW — watch their smoke-stage loss curves
-for anything pathological (divergence, NaN) that the CPU rehearsal's tiny fixture data and
-50-step budget cannot surface. If that looks stable, the real next milestone (per the
-takeover-audit plan) is getting **one model through a real `pilot`-stage run** (2000 steps)
-— the first time any campaign will have gone past a 50-step smoke fixture. If the session
-ends, repeat Run all in a new compliant runtime — this is a Colab platform limit, not
-something the notebook can automate away. Do not change the notebook or select stages
-manually.
+the session survives closing the browser tab). This picks up mid-campaign: the previous
+real L4 run at `a50b635…` already got all five models through smoke, pilot, and a full
+6000-step screening run — real screening mIoU: segformer_b0 16.48%, fast_scnn 20.53%,
+pidnet_s 26.54%, ddrnet_23_slim 25.21%, bisenetv2 17.41% — before crashing on the
+`clip_grad` dump/reload bug this commit fixes. Watch specifically that the
+screening-evidence evaluation step (the exact thing that crashed) now completes cleanly
+for all five models. `train_model()` dumps a fresh `resolved.py` on every entry —
+including no-op resume-and-skip re-entries — so no manual Drive cleanup is needed; the
+next run will regenerate a correctly-serializable config automatically. If that holds,
+the real next milestone is HPO for the top-two screening models, then `final` (40000
+steps) for all five. If the session ends, repeat Run all in a new compliant runtime —
+this is a Colab platform limit, not something the notebook can automate away. Do not
+change the notebook or select stages manually.
 
 Do not create `colab-v0.1.0-rc1` until two independent clean L4 sessions pass the exact
 lock/five-model FP32/AMP canary and the real 50-step interruption/resume proof. After the

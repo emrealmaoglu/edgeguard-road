@@ -1,11 +1,11 @@
 # Project State
 
-Updated 2026-08-09 on `stabilize/colab-v2`.
+Updated 2026-08-12 on `stabilize/colab-v2`.
 
 ## Current delivery
 
 The Colab v3 application commit is
-`a50b635` (see `git log` for the full SHA). The only generated notebook is
+`2b1ebff` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -368,6 +368,49 @@ whether to eventually trim the 5-model comparison to fewer models (defer until r
 and whether to ever pull BDD100K/ACDC/WildDash into training roles (ADR-0009's existing
 answer — Cityscapes+IDD20K as the frozen scientific core, the others correctly scoped
 narrower — is recommended as final).
+
+A real L4 run at `a50b635…` reached the furthest point yet: all five models completed
+`smoke`, `pilot`, and — for the first time in this project's history — a full real
+6000-step `screening` run, with real measured mIoU (segformer_b0 16.48%, fast_scnn
+20.53%, pidnet_s 26.54%, ddrnet_23_slim 25.21%, bisenetv2 17.41%, all `scientific_status:
+"measured"`, `synthetic_or_smoke: false`, from a real ~20-hour combined L4 session). The
+run then crashed in the screening-evidence evaluation step with `NameError: name 'inf' is
+not defined`. This is an **eighth real bug**: `build_training_config()`'s
+`clip_grad.max_norm` was `float("inf")` (`error_if_nonfinite=True` is the actual safety
+net; `max_norm` was never meant to bind). `train_model()` dumps the resolved config to
+`resolved.py` via `mmengine.Config.dump()` before every training call, including no-op
+resume-and-skip re-entries; `scripts/evaluate.py` (used by the screening/final evidence
+phases — the first phase in this project to ever reload a dumped config rather than use
+the in-memory `cfg`) reloads it via `mmengine.Config.fromfile()`, which `eval()`s the
+dumped Python source. mmengine's dumper serializes `float("inf")` as the bare token
+`inf`, not a valid Python literal without `float(...)`/`math.inf` in scope — crashing on
+reload. This bug was structurally unreachable by any prior test or training stage, since
+none of them ever re-parsed a dumped config from disk; it survived undetected through all
+seven prior bug fixes and roughly 20 hours of real L4 compute until the pipeline finally
+reached this one, previously-unexercised code path. Application commit `2b1ebff…` fixes
+this by replacing `float("inf")` with a large finite sentinel (`1e9`), which round-trips
+cleanly through dump/reload and stays effectively unbounded for any real gradient norm
+observed this session (even a visibly diverging `bisenetv2` screening run topped out
+around `grad_norm ~560`). Reproduced and regression-tested with zero GPU dependency — the
+dump/reload path is pure Python — confirmed via `git stash` to fail pre-fix with the
+identical error and pass post-fix. Separately noted, not fixed, confirmed pre-existing
+and unrelated (identical on both pre-fix and post-fix code via the same `git stash`
+check): the full `tests/integration/test_colab_pipeline_cpu_rehearsal.py` suite currently
+fails on this dev machine with `RuntimeError: view size is not compatible with input
+tensor's size and stride` during `backward()` — the known MPS operator-gap class of issue
+already documented in `canonical-colab-runbook.md`. This needs its own investigation in a
+future session; it does not affect the validity of the `clip_grad` fix, which is verified
+independently via a direct dump/reload unit test plus the full local suite (500
+passed/32 skipped) and the mmseg-gated test files (27/27, up from 24 — adds the new
+dump/reload round-trip test).
+
+Because `train_model()` dumps `resolved.py` fresh on every entry — including the
+near-instant resume-and-skip re-entry a completed stage takes on a new Colab session —
+no manual Drive cleanup is required for this fix to take effect: the next Colab run will
+regenerate a correctly-serializable `resolved.py` automatically the moment it re-enters
+each stage, and the screening-evidence step that crashed should then complete cleanly for
+all five models. The real next milestone after that is HPO for the top-two screening
+models, then `final` (40000 steps) for all five.
 
 ## Deliveries
 
