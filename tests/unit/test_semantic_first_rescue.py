@@ -400,6 +400,72 @@ def test_amp_optim_wrapper_shape_is_correct_for_every_precision(tmp_path: Path) 
         _build("auto", "invalid")
 
 
+def test_resolved_config_survives_dump_and_reload_round_trip(tmp_path: Path) -> None:
+    """`train_model()` writes `resolved.py` via `cfg.dump()` right after building the
+    config, then `evaluate_model()` (used by the screening/final evidence phases) reloads
+    it via `mmengine.Config.fromfile()`, which `eval()`s the dumped Python source. A real
+    L4 run reached this exact reload path for the first time after all five models
+    completed a full 6000-step screening run and crashed with
+    `NameError: name 'inf' is not defined` -- `clip_grad.max_norm` was `float("inf")`,
+    which mmengine's dumper serializes as the bare token `inf`, not a valid Python literal
+    without `float(...)`/`math.inf` in scope. `error_if_nonfinite=True` is the real safety
+    net (raises on NaN/Inf gradients); `max_norm` only needs to be large enough to never
+    bind for any real gradient norm, so a large finite sentinel round-trips safely.
+    """
+    mmengine = pytest.importorskip(
+        "mmengine", reason="MMSeg config resolution is an optional integration"
+    )
+    protocol = load_rescue_config(Path("configs/rescue/semantic_first.yaml"))
+    sample = _sample(0)
+    record = {
+        "sample_id": sample.sample_id,
+        "group_id": sample.group_id,
+        "image": sample.image,
+        "mask": sample.mask,
+    }
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"roles": {"train_fit": [record], "train_select": [record]}}),
+        encoding="utf-8",
+    )
+    mmseg_root = tmp_path / "mmseg"
+    model = protocol.models[0]
+    upstream = mmseg_root / model.upstream_config
+    upstream.parent.mkdir(parents=True, exist_ok=True)
+    upstream.write_text(
+        "model = dict(type='EncoderDecoder', "
+        "data_preprocessor=dict(type='SegDataPreProcessor', size=(1024, 1024)), "
+        "decode_head=dict(type='FakeHead', num_classes=150, "
+        "loss_decode=dict(type='CrossEntropyLoss')))\n"
+        "default_hooks = dict(checkpoint=dict(type='CheckpointHook'))\n"
+        "optim_wrapper = dict(type='OptimWrapper', "
+        "optimizer=dict(type='AdamW', lr=6e-05, weight_decay=0.01))\n",
+        encoding="utf-8",
+    )
+    cfg = build_training_config(
+        protocol,
+        model_name=model.name,
+        stage_name="smoke",
+        mmseg_root=mmseg_root,
+        dataset_root=tmp_path / "cityscapes",
+        split_manifest=manifest,
+        work_dir=tmp_path / "work",
+        loss="ce",
+        audit_report=None,
+        resume=False,
+    )
+    assert cfg.optim_wrapper.clip_grad.max_norm == pytest.approx(1e9)
+    assert cfg.optim_wrapper.clip_grad.error_if_nonfinite is True
+
+    resolved_path = tmp_path / "resolved.py"
+    cfg.dump(str(resolved_path))
+    dumped_source = resolved_path.read_text(encoding="utf-8")
+    assert "inf" not in dumped_source.replace("clip_grad", "").replace("finite", "")
+
+    reloaded = mmengine.Config.fromfile(str(resolved_path))
+    assert reloaded.optim_wrapper.clip_grad.max_norm == pytest.approx(1e9)
+
+
 def test_acdc_uses_the_original_condition_split_sequence_layout(tmp_path: Path) -> None:
     protocol = load_rescue_config(Path("configs/rescue/semantic_first.yaml"))
     (tmp_path / "rgb_anon/fog/val/sequence").mkdir(parents=True)

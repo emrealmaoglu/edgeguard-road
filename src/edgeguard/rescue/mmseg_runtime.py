@@ -666,7 +666,11 @@ def build_training_config(
         "optimizer": optimizer_cfg,
         "accumulative_counts": protocol.gradient_accumulation,
         "clip_grad": {
-            "max_norm": float("inf"),
+            # Effectively unclipped: error_if_nonfinite is the real safety net (raises on
+            # NaN/Inf gradients). A literal float("inf") here would dump-then-reload as the
+            # bare token `inf` via mmengine.Config.dump()/fromfile()'s eval()-based .py
+            # round-trip, which is not a valid Python literal and crashes on reload.
+            "max_norm": 1e9,
             "norm_type": 2.0,
             "error_if_nonfinite": True,
         },
