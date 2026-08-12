@@ -256,8 +256,8 @@ try:
             # cannot rely on that venv. It only needs a few small pure-Python packages on
             # top of the host system Python3 that already runs this notebook's own driver
             # code (Drive mount, files.download) — install them here if missing, and set
-            # PYTHONPATH so the pinned, un-installed `edgeguard` package (source only, no
-            # `pip install -e` per this notebook's own contract) can be imported directly.
+            # PYTHONPATH so the un-installed `edgeguard` package (source checkout only,
+            # never editable-installed by this notebook) can be imported directly.
             run_visible(
                 [
                     "/usr/bin/python3",
