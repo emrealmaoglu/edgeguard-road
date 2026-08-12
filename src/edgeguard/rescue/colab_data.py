@@ -710,7 +710,7 @@ def create_dataset_bundle(
         "source_bytes": source_bytes,
         "file_count": file_count,
         "sha256": bundle_sha256,
-        "plan_sha256": sha256_payload(plan),
+        "plan_sha256": sha256_payload(plan["datasets"][dataset_id]),
         "required_paths": plan["datasets"][dataset_id]["required_paths"],
         "source_profile": source_profile,
         "scientific_eligible": scientific_eligible,
@@ -899,8 +899,9 @@ def _canonical_bundle_receipt(
         if expected_receipt_hash != sha256_payload(receipt):
             raise ValueError(f"{dataset_id} bundle receipt hash mismatch")
         receipt["receipt_sha256"] = expected_receipt_hash
-        if receipt.get("dataset_id") != dataset_id or receipt.get("plan_sha256") != sha256_payload(
-            plan
+        if (
+            receipt.get("dataset_id") != dataset_id
+            or receipt.get("required_paths") != plan["datasets"][dataset_id]["required_paths"]
         ):
             raise ValueError(f"{dataset_id} bundle identity mismatch")
         if bundle.stat().st_size != int(receipt["byte_size"]):

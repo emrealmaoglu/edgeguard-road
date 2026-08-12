@@ -318,6 +318,44 @@ def test_bundle_receipt_tampering_is_rejected(tmp_path: Path) -> None:
         stage_dataset_bundles(plan, drive, tmp_path / "content", ("cityscapes",))
 
 
+def test_staging_survives_an_unrelated_dataset_config_edit(tmp_path: Path) -> None:
+    plan, drive = _fixture_plan(tmp_path)
+    prepared = drive / "EdgeGuard/datasets/cityscapes"
+    for relative in plan["datasets"]["cityscapes"]["required_paths"]:
+        directory = prepared / relative
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "fixture.bin").write_bytes(str(relative).encode())
+    create_dataset_bundle(plan, drive, "cityscapes")
+    # An edit to a completely different dataset's config (mirroring the real
+    # WildDash2/RailSem19 role commit that broke this) must not invalidate the
+    # already-built, still-correct cityscapes bundle.
+    plan["datasets"]["bdd100k"]["packages"].append(
+        {"filename": "unrelated_new_package.zip", "purpose": "unrelated edit"}
+    )
+    staged = stage_dataset_bundles(plan, drive, tmp_path / "content", ("cityscapes",))
+    assert staged["datasets"] == [
+        {
+            "dataset_id": "cityscapes",
+            "status": "staged_verified",
+            "bundle_profile": "canonical_v1:official",
+        }
+    ]
+
+
+def test_staging_rejects_when_the_datasets_own_required_paths_change(tmp_path: Path) -> None:
+    plan, drive = _fixture_plan(tmp_path)
+    prepared = drive / "EdgeGuard/datasets/cityscapes"
+    for relative in plan["datasets"]["cityscapes"]["required_paths"]:
+        (prepared / relative).mkdir(parents=True, exist_ok=True)
+    create_dataset_bundle(plan, drive, "cityscapes")
+    plan["datasets"]["cityscapes"]["required_paths"] = [
+        *plan["datasets"]["cityscapes"]["required_paths"],
+        "leftImg8bit/test",
+    ]
+    with pytest.raises(ValueError, match="bundle identity mismatch"):
+        stage_dataset_bundles(plan, drive, tmp_path / "content", ("cityscapes",))
+
+
 def test_stage_rejects_duplicate_dataset_ids(tmp_path: Path) -> None:
     plan, drive = _fixture_plan(tmp_path)
     with pytest.raises(ValueError, match="non-empty and unique"):
