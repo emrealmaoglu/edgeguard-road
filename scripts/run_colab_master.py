@@ -585,6 +585,10 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
     for manifest in manifests:
         command.extend(("--data-manifest", str(manifest)))
     policy_payload = json.loads(policy.read_text(encoding="utf-8"))
+    screening_models = policy_payload.get("screening_models")
+    if isinstance(screening_models, list) and screening_models:
+        for model in screening_models:
+            command.extend(("--screening-model", str(model)))
     final_models = policy_payload.get("final_models")
     if not isinstance(final_models, list) or not final_models:
         raise ValueError("owner authorization policy is missing a non-empty final_models list")

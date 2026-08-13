@@ -8,19 +8,22 @@ accepted-release controls in the notebook. The committed owner policy binds the 
 Cityscapes/IDD audit candidates, model order, train-select selection rule, and the
 post-acceptance official-source evaluation gate.
 
-**2026-08-13 final-stage model-scope decision.** Screening ran on all five candidates
-(real, measured). Real per-iteration throughput showed `fast_scnn` (~5.3 s/iter) and
-`bisenetv2` (~6.5-7 s/iter) are 15-25x slower than `segformer_b0`/`pidnet_s`/
-`ddrnet_23_slim`; a full 40,000-step final run on all five would cost roughly 155
-GPU-hours, incompatible with a 4-day presentation deadline. Under CLAUDE.md's 2026-08-12
-broad scientific-decision delegation, `final_models` in
-`configs/campaign/semantic_cs_idd_v3_authorization.json` was narrowed to `segformer_b0`,
-`pidnet_s`, `ddrnet_23_slim` (~24 GPU-hours total). `fast_scnn` (screening mIoU 20.10) and
-`bisenetv2` (screening incomplete, smoke-only mIoU 6.57) keep their real screening
-evidence in the report with an explicit exclusion note — never silently dropped. See
-`docs/AI_USAGE_LOG.md` for the full evidence and decision record. The five-model
-**screening** stage itself is unaffected; only `final`/`selection`/`ablation`/`accept`
-onward now operate on the narrowed set.
+**2026-08-13 model-scope decisions.** Real per-iteration throughput showed `fast_scnn`
+(~5.3 s/iter) and `bisenetv2` (~6.5-7 s/iter) are 15-25x slower than `segformer_b0`/
+`pidnet_s`/`ddrnet_23_slim`; a full 40,000-step final run on all five would cost roughly
+155 GPU-hours, incompatible with a 4-day presentation deadline. Under CLAUDE.md's
+2026-08-12 broad scientific-decision delegation, `final_models` in
+`configs/campaign/semantic_cs_idd_v3_authorization.json` is narrowed to `segformer_b0`,
+`pidnet_s`, `ddrnet_23_slim` (~24 GPU-hours total). Separately, `bisenetv2`'s own
+screening run was interrupted live mid-session (owner-directed stop, since resuming it
+would cost ~8 more hours for a result that cannot change `final_models` either way);
+`screening_models` in the same policy file is narrowed to the four models that actually
+completed the full 6,000-step screening ceiling
+(`segformer_b0`/`fast_scnn`/`pidnet_s`/`ddrnet_23_slim`), so a fresh Colab session does
+not automatically try to resume and finish `bisenetv2`'s screening. `fast_scnn`
+(screening mIoU 20.10) and `bisenetv2` (interrupted, smoke-only mIoU 6.57) keep their
+real evidence in the report with an explicit exclusion note — never silently dropped.
+See `docs/AI_USAGE_LOG.md` for the full evidence and decision record.
 
 The campaign ID is `semantic-cs-idd-v3`. The master runner performs:
 
@@ -40,7 +43,9 @@ or quarantine identity stops before training.
 - Core smoke: 50 steps with a deliberate interruption at optimizer step 25 and verified
   resume from the same checkpoint identity.
 - Core pilot: 2,000 optimizer steps.
-- Five-model screening: 6,000 optimizer steps.
+- Screening (segformer_b0, fast_scnn, pidnet_s, ddrnet_23_slim as of 2026-08-13; see the
+  model-scope decision above): 6,000 optimizer steps. `bisenetv2`'s screening is
+  intentionally abandoned at its interrupted checkpoint.
 - Top-two HPO: 12 trials per model, 1,500/3,000-step pruning, 6,000-step ceiling.
 - Final (segformer_b0, pidnet_s, ddrnet_23_slim as of 2026-08-13; see the model-scope
   decision above): 40,000 optimizer steps. HPO winners use their selected parameters;

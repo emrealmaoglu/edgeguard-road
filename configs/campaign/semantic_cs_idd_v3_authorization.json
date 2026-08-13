@@ -21,6 +21,19 @@
       "expected_quarantined_samples": 9
     }
   },
+  "screening_models": [
+    "segformer_b0",
+    "fast_scnn",
+    "pidnet_s",
+    "ddrnet_23_slim"
+  ],
+  "screening_models_scope_decision": {
+    "decided_by": "claude-code",
+    "authority": "CLAUDE.md 2026-08-12 broad scientific-decision delegation",
+    "date": "2026-08-13",
+    "reason": "bisenetv2's screening run was interrupted by the owner mid-session (directed to stop it live, since it was ~6.5-7s/iter and would need ~8 more hours to reach the 6000-step ceiling, and it is already excluded from final_models regardless of its screening outcome). Resuming it would cost real deadline time for a result that cannot change the final-stage model set. Its partial real evidence (smoke-stage mIoU 6.57 at 50 iters; interrupted screening checkpoint at iter ~1500/6000) remains in the evidence record and is reported honestly as incomplete -- see docs/AI_USAGE_LOG.md for the full record. segformer_b0/fast_scnn/pidnet_s/ddrnet_23_slim already completed full 6000-step screening before this decision and are unaffected.",
+    "excluded_models": ["bisenetv2"]
+  },
   "final_models": [
     "segformer_b0",
     "pidnet_s",

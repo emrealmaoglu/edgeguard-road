@@ -99,6 +99,7 @@ class PipelineInputs:
     config_path: Path
     data_manifests: tuple[Path, ...]
     candidate_table: Path | None = None
+    screening_models: tuple[str, ...] = ALL_MODELS
     final_models: tuple[str, ...] = ALL_MODELS
     ablation_model: str | None = None
     rare_classes_file: Path | None = None
@@ -122,15 +123,19 @@ class PipelineInputs:
             raise ValueError("Colab v3 requires Cityscapes and IDD20K frozen manifests")
         if len(set(self.data_manifests)) != len(self.data_manifests):
             raise ValueError("data manifest paths must be distinct")
-        unknown = set(self.final_models) - set(ALL_MODELS)
-        if unknown:
-            raise ValueError(f"unsupported final models: {sorted(unknown)}")
-        if not self.final_models:
-            raise ValueError("final_models must not be empty")
-        if len(set(self.final_models)) != len(self.final_models):
-            raise ValueError("final_models must not contain duplicates")
-        if tuple(model for model in ALL_MODELS if model in self.final_models) != self.final_models:
-            raise ValueError("final_models must preserve the frozen five-model relative order")
+        for label, models in (
+            ("screening_models", self.screening_models),
+            ("final_models", self.final_models),
+        ):
+            unknown = set(models) - set(ALL_MODELS)
+            if unknown:
+                raise ValueError(f"unsupported {label}: {sorted(unknown)}")
+            if not models:
+                raise ValueError(f"{label} must not be empty")
+            if len(set(models)) != len(models):
+                raise ValueError(f"{label} must not contain duplicates")
+            if tuple(model for model in ALL_MODELS if model in models) != models:
+                raise ValueError(f"{label} must preserve the frozen five-model relative order")
         if self.ablation_model is not None:
             raise ValueError("Colab v3 derives the ablation model from train_select evidence")
         if (
@@ -522,6 +527,8 @@ class ColabPipeline:
         root.mkdir(parents=True, exist_ok=True)
         runtime = json.loads(self.inputs.runtime_receipt.read_text(encoding="utf-8"))
         phase_models = list(models_for_phase(phase))
+        if phase == "screening":
+            phase_models = list(self.inputs.screening_models)
         if phase in {"final", "selection", "accept", "validation-data", "package"}:
             phase_models = list(self.inputs.final_models)
         if phase == "ablation":
@@ -931,7 +938,7 @@ class ColabPipeline:
         results: list[dict[str, Any]] = []
         evaluation_root = self.inputs.work_root / "evaluation/screening"
         export_root = self.inputs.work_root / "exports/screening"
-        for model in ALL_MODELS:
+        for model in self.inputs.screening_models:
             run_dir = self._run_directory("screening", model)
             checkpoint = self._checkpoint("screening", model)
             resolved = run_dir / "resolved.py"
@@ -1154,6 +1161,8 @@ class ColabPipeline:
                 command.extend(("--rare-classes-file", str(self.inputs.rare_classes_file)))
             return [self._run_command(phase, "hpo-top-two", command)]
         models = models_for_phase(phase)
+        if phase == "screening":
+            models = self.inputs.screening_models
         if phase == "final":
             models = self.inputs.final_models
         results: list[dict[str, Any]] = []

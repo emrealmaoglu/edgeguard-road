@@ -55,7 +55,12 @@ def _write_staged_dataset_manifest(root: Path, *, dataset_id: str) -> Path:
     return manifest_path
 
 
-def _pipeline(tmp_path: Path, *, final_models: tuple[str, ...] = ALL_MODELS) -> ColabPipeline:
+def _pipeline(
+    tmp_path: Path,
+    *,
+    screening_models: tuple[str, ...] = ALL_MODELS,
+    final_models: tuple[str, ...] = ALL_MODELS,
+) -> ColabPipeline:
     tmp_path.mkdir(parents=True, exist_ok=True)
     commit = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
@@ -100,6 +105,7 @@ def _pipeline(tmp_path: Path, *, final_models: tuple[str, ...] = ALL_MODELS) -> 
             recovery_root=tmp_path / "drive-recovery",
             config_path=config,
             data_manifests=manifests,
+            screening_models=screening_models,
             final_models=final_models,
         )
     )
@@ -142,6 +148,23 @@ def test_pipeline_rejects_empty_final_model_set(tmp_path: Path) -> None:
 def test_pipeline_rejects_duplicate_final_models(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must not contain duplicates"):
         _pipeline(tmp_path / "dup", final_models=(CORE_MODELS[0], CORE_MODELS[0]))
+
+
+def test_pipeline_accepts_an_evidence_selected_screening_model_subset(tmp_path: Path) -> None:
+    subset = tuple(model for model in ALL_MODELS if model != "bisenetv2")
+    pipeline = _pipeline(tmp_path / "screening-subset", screening_models=subset)
+    assert pipeline.inputs.screening_models == subset
+    assert pipeline.inputs.final_models == ALL_MODELS
+
+
+def test_pipeline_rejects_reordered_screening_model_set(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="frozen five-model relative order"):
+        _pipeline(tmp_path / "screening-reordered", screening_models=tuple(reversed(ALL_MODELS)))
+
+
+def test_pipeline_rejects_empty_screening_model_set(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        _pipeline(tmp_path / "screening-empty", screening_models=())
 
 
 def _accepted_release(tmp_path: Path, pipeline: ColabPipeline) -> Path:

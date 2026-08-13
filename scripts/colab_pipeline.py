@@ -28,6 +28,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-manifest", type=Path, action="append", required=True)
     parser.add_argument("--candidate-table", type=Path)
     parser.add_argument(
+        "--screening-model",
+        action="append",
+        choices=ALL_MODELS,
+        help=(
+            "model included in the screening stage (repeatable); defaults to all five "
+            "in frozen order. Restricting this set is a scientific-scope decision -- see "
+            "docs/AI_USAGE_LOG.md for the evidence behind any non-default value."
+        ),
+    )
+    parser.add_argument(
         "--final-model",
         action="append",
         choices=ALL_MODELS,
@@ -77,6 +87,11 @@ def main() -> int:
         else work_root / "reports/screening/candidate_table.json"
     )
     accepted_release = work_root / "accepted_release.json"
+    screening_models = (
+        tuple(model for model in ALL_MODELS if model in args.screening_model)
+        if args.screening_model
+        else ALL_MODELS
+    )
     final_models = (
         tuple(model for model in ALL_MODELS if model in args.final_model)
         if args.final_model
@@ -97,6 +112,7 @@ def main() -> int:
             config_path=args.config.resolve(),
             data_manifests=tuple(path.resolve() for path in args.data_manifest),
             candidate_table=candidate_table,
+            screening_models=screening_models,
             final_models=final_models,
             rare_classes_file=(
                 args.rare_classes_file.resolve() if args.rare_classes_file else None
