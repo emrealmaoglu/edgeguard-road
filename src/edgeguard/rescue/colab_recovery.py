@@ -183,13 +183,25 @@ def peek_recovery_metadata(store_root: Path, *, artifact_id: str) -> dict[str, A
     or tampered pointer/receipt still raises, since that is a store-integrity
     problem, not "nothing to resume".
     """
+    receipt = peek_recovery_receipt(store_root, artifact_id=artifact_id)
+    return None if receipt is None else receipt.get("metadata", {})
+
+
+def peek_recovery_receipt(store_root: Path, *, artifact_id: str) -> dict[str, Any] | None:
+    """Return the current full receipt (project_commit, metadata, generation, ...)
+    without copying the object bytes.
+
+    Returns None only when no pointer exists yet for this artifact_id. A corrupted
+    or tampered pointer/receipt still raises, since that is a store-integrity
+    problem, not "nothing to resume".
+    """
     pointer_path = store_root / "pointers" / f"{_label(artifact_id, 'artifact_id')}.json"
     if not pointer_path.is_file():
         return None
     receipt_paths = _pointer_candidates(store_root, artifact_id)
     if not receipt_paths:
         return None
-    return _receipt_payload(receipt_paths[0]).get("metadata", {})
+    return _receipt_payload(receipt_paths[0])
 
 
 def restore_recovery_file(

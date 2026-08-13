@@ -25,11 +25,28 @@ not automatically try to resume and finish `bisenetv2`'s screening. `fast_scnn`
 real evidence in the report with an explicit exclusion note — never silently dropped.
 See `docs/AI_USAGE_LOG.md` for the full evidence and decision record.
 
+**2026-08-13 automatic recovery-identity migration.** A commit that only changes
+orchestration code (e.g. the `screening_models`/`final_models` decision above) still
+changes `project_commit`, which is baked into every training run's immutable identity
+hash — so, without this step, resuming on a new commit would make every real,
+already-completed checkpoint look "stale" and get silently retrained from scratch. The
+master runner now runs `scripts/migrate_recovery_identity.py` automatically, right
+after data staging and before the production pipeline starts, for every model in
+`screening_models`: it recomputes each model's identity under the commit actually
+recorded on its existing Drive receipt and verifies that matches the real recorded
+hash, recomputes it again under the current commit and verifies `project_commit` is
+the *only* field that differs, and only then republishes the same real checkpoint
+bytes under the new identity. It refuses outright (never retrains, never fabricates)
+if either check fails, or does nothing if there is nothing to migrate — so this is
+always safe to run, unattended, on every session. **No manual step is needed**; this
+happens automatically inside **Runtime → Run all**.
+
 The campaign ID is `semantic-cs-idd-v3`. The master runner performs:
 
 ```text
-preflight → restore → data → canary → smoke → pilot → screening → HPO → final →
-selection → ablations → acceptance → evaluation → export → thesis → package
+preflight → restore → data → recovery-identity-migration → canary → smoke → pilot →
+screening → HPO → final → selection → ablations → acceptance → evaluation → export →
+thesis → package
 ```
 
 Cityscapes 2,975 accepted training samples and IDD20K 14,018 accepted plus nine quarantined

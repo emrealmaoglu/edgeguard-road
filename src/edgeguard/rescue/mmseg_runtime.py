@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import shutil
 import sys
 import time
 import types
@@ -22,7 +23,10 @@ from edgeguard.evaluation.semantic import SemanticConfusionMatrix
 from edgeguard.rescue.colab_recovery import (
     latest_checkpoint,
     peek_recovery_metadata,
+    peek_recovery_receipt,
+    publish_recovery_file,
     restore_recovery_file,
+    temporary_directory,
     utc_now,
 )
 from edgeguard.rescue.config import ModelConfig, RescueConfig, model_by_name
@@ -241,6 +245,132 @@ def compute_run_identity(
             sha256_file(audit_report) if loss == "median_frequency" and audit_report else None
         ),
     }
+
+
+def migrate_recovery_identity(
+    *,
+    recovery_root: Path,
+    campaign_id: str,
+    new_project_commit: str,
+    protocol: RescueConfig,
+    mmseg_root: Path,
+    manifests: Sequence[Path],
+    datasets: Sequence[str],
+    model_name: str,
+    stage_name: str,
+    loss: str,
+    max_steps: int,
+    precision: str,
+    execute: bool = True,
+) -> dict[str, Any]:
+    """Re-publish one model's real Drive checkpoint under `new_project_commit`, but
+    only after verifying that project_commit is the only thing that changed since it
+    was published.
+
+    A commit that only touches orchestration code (which models a phase loops over,
+    for example) still changes `project_commit`, and `project_commit` is one of the
+    fields baked into a run's immutable `identity_sha256` -- so the resume check would
+    otherwise treat every real, already-completed checkpoint as belonging to "a
+    different immutable run" and retrain it from scratch. This recomputes the identity
+    under the commit actually recorded on the existing Drive receipt and asserts it
+    matches the real recorded `identity_sha256` (proof the reconstruction is faithful),
+    then recomputes it under `new_project_commit` and asserts `project_commit` is the
+    ONLY field that differs (proof nothing training-relevant changed), before
+    republishing the same checkpoint bytes. Refuses outright -- never retrains, never
+    fabricates a checkpoint's provenance -- if either check fails, or if there is
+    nothing to migrate (no existing pointer, or it already matches the new commit).
+    """
+    artifact_id = f"{stage_name}-{model_name}-{loss}".replace("_", "-")
+    receipt = peek_recovery_receipt(recovery_root, artifact_id=artifact_id)
+    if receipt is None:
+        return {"model": model_name, "artifact_id": artifact_id, "status": "no_existing_pointer"}
+    old_project_commit = str(receipt.get("project_commit", ""))
+    if old_project_commit == new_project_commit:
+        return {"model": model_name, "artifact_id": artifact_id, "status": "already_current"}
+    recorded_identity_sha256 = receipt.get("metadata", {}).get("identity_sha256")
+
+    def _identity(commit: str) -> dict[str, Any]:
+        return compute_run_identity(
+            protocol,
+            model_name=model_name,
+            stage_name=stage_name,
+            mmseg_root=mmseg_root,
+            loss=loss,
+            audit_report=None,
+            split_manifest=None,
+            manifests=manifests,
+            datasets=datasets,
+            learning_rate=None,
+            weight_decay=None,
+            scheduler="poly",
+            warmup_ratio=0.03,
+            initialization="random",
+            pretrained_manifest=None,
+            precision=precision,
+            max_steps=max_steps,
+            scheduler_steps=max_steps,
+            intentional_interrupt_optimizer_step=None,
+            project_commit=commit,
+        )
+
+    old_identity = _identity(old_project_commit)
+    old_identity_sha256 = sha256_payload(old_identity)
+    if old_identity_sha256 != recorded_identity_sha256:
+        return {
+            "model": model_name,
+            "artifact_id": artifact_id,
+            "status": "verification_failed",
+            "old_project_commit": old_project_commit,
+            "recorded_identity_sha256": recorded_identity_sha256,
+            "recomputed_old_identity_sha256": old_identity_sha256,
+            "reason": (
+                "recomputed old-commit identity does not match the real recorded one -- "
+                "something besides project_commit differs; refusing to migrate"
+            ),
+        }
+    new_identity = _identity(new_project_commit)
+    new_identity_sha256 = sha256_payload(new_identity)
+    diff_keys = sorted(key for key in old_identity if old_identity[key] != new_identity[key])
+    if diff_keys != ["project_commit"]:
+        return {
+            "model": model_name,
+            "artifact_id": artifact_id,
+            "status": "unexpected_diff",
+            "old_project_commit": old_project_commit,
+            "diff_keys": diff_keys,
+            "reason": "more than project_commit differs between commits; refusing to migrate",
+        }
+    result: dict[str, Any] = {
+        "model": model_name,
+        "artifact_id": artifact_id,
+        "status": "verified_dry_run",
+        "old_project_commit": old_project_commit,
+        "old_identity_sha256": old_identity_sha256,
+        "new_identity_sha256": new_identity_sha256,
+    }
+    if not execute:
+        return result
+    tmp = temporary_directory(recovery_root.parent)
+    try:
+        destination = tmp / f"{artifact_id}.pth"
+        restore_recovery_file(recovery_root, artifact_id=artifact_id, destination=destination)
+        published = publish_recovery_file(
+            destination,
+            recovery_root,
+            artifact_id=artifact_id,
+            campaign_id=campaign_id,
+            project_commit=new_project_commit,
+            metadata={
+                "identity_sha256": new_identity_sha256,
+                "migrated_from_project_commit": old_project_commit,
+                "migrated_from_identity_sha256": old_identity_sha256,
+            },
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    result["status"] = "migrated"
+    result["receipt_generation"] = published["generation"]
+    return result
 
 
 def _strip_pretrained(value: Any) -> None:

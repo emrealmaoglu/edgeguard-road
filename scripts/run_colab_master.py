@@ -538,6 +538,43 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         capture_output=True,
     )
     prepared_payload = _last_json(prepared.stdout)
+    manifests = prepared_payload.get("training_manifests")
+    if not isinstance(manifests, list) or len(manifests) != 2:
+        raise ValueError("data preparation did not return both frozen training manifests")
+    policy_payload = json.loads(policy.read_text(encoding="utf-8"))
+    screening_models = policy_payload.get("screening_models")
+
+    stage("recovery-identity-migration")
+    migration_command = [
+        str(runtime_python),
+        str(project_root / "scripts/migrate_recovery_identity.py"),
+        "--recovery-root",
+        str(recovery_root),
+        "--campaign-id",
+        "semantic-cs-idd-v3",
+        "--new-project-commit",
+        args.project_commit,
+        "--config",
+        str(project_root / "configs/rescue/semantic_first.yaml"),
+        "--mmseg-root",
+        str(runtime["mmseg_root"]),
+        "--execute",
+    ]
+    for manifest in manifests:
+        migration_command.extend(("--data-manifest", str(manifest)))
+    if isinstance(screening_models, list) and screening_models:
+        for model in screening_models:
+            migration_command.extend(("--model", str(model)))
+    migration_result = _run(
+        migration_command,
+        project_root=project_root,
+        child_log=child_log,
+        environment=environment,
+        capture_output=True,
+    )
+    _atomic_json(
+        content_root / "edgeguard-recovery-migration.json", _last_json(migration_result.stdout)
+    )
 
     stage("production-pipeline")
     command = [
@@ -579,13 +616,8 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         "--data-root",
         f"idd20k={data_root / 'idd20k'}",
     ]
-    manifests = prepared_payload.get("training_manifests")
-    if not isinstance(manifests, list) or len(manifests) != 2:
-        raise ValueError("data preparation did not return both frozen training manifests")
     for manifest in manifests:
         command.extend(("--data-manifest", str(manifest)))
-    policy_payload = json.loads(policy.read_text(encoding="utf-8"))
-    screening_models = policy_payload.get("screening_models")
     if isinstance(screening_models, list) and screening_models:
         for model in screening_models:
             command.extend(("--screening-model", str(model)))
