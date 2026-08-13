@@ -63,8 +63,13 @@ def select_hpo_models(
     return selected[0], selected[1]
 
 
-def hpo_search_space(protocol: RescueConfig) -> dict[str, Any]:
-    """Expose the frozen search space for preregistration and tests."""
+def hpo_search_space(protocol: RescueConfig, *, initialization: str = "random") -> dict[str, Any]:
+    """Expose the frozen search space for preregistration and tests.
+
+    `initialization` is not searched over -- it is recorded here so the study's
+    preregistered fixed-parameter block states which initialisation the trials actually
+    used, rather than asserting a default that may not be true.
+    """
     return {
         "learning_rate": list(protocol.hpo.learning_rate),
         "weight_decay": list(protocol.hpo.weight_decay),
@@ -73,7 +78,7 @@ def hpo_search_space(protocol: RescueConfig) -> dict[str, Any]:
         "fixed": {
             "resolution": list(protocol.crop_size),
             "loss": "ce",
-            "initialization": "random",
+            "initialization": initialization,
             "domain_sampling": "uniform",
         },
     }
@@ -127,8 +132,9 @@ def run_hpo_study(
     workers: int | None = None,
     precision: str = "auto",
     acceptance_test: bool = False,
+    pretrained_manifest: Path | None = None,
 ) -> dict[str, Any]:
-    """Run/resume one 12-trial TPE study with 1.5k/3k successive-halving rungs."""
+    """Run/resume one TPE study with 1.5k/3k successive-halving rungs."""
     try:
         optuna = __import__("optuna")
     except ModuleNotFoundError as error:
@@ -172,7 +178,12 @@ def run_hpo_study(
         ),
         load_if_exists=True,
     )
-    study.set_user_attr("search_space", hpo_search_space(protocol))
+    study.set_user_attr(
+        "search_space",
+        hpo_search_space(
+            protocol, initialization=("pretrained" if pretrained_manifest else "random")
+        ),
+    )
     study.set_user_attr("dataset_manifest_sha256s", [sha256_file(path) for path in manifests])
     for stale in [trial for trial in study.trials if trial.state.name == "RUNNING"]:
         if stale.params:
@@ -260,6 +271,8 @@ def run_hpo_study(
                 device_batch=device_batch,
                 workers=workers,
                 precision=precision,
+                initialization=("pretrained" if pretrained_manifest else "random"),
+                pretrained_manifest=pretrained_manifest,
             )
             run_dir = output_root / "hpo" / model / run_name
             checkpoint = latest_checkpoint(run_dir)

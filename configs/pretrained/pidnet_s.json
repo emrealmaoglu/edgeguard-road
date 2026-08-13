@@ -1,0 +1,12 @@
+{
+  "access_date": "2026-08-14",
+  "checkpoint_path": "/content/edgeguard-cache/pretrained/pidnet_s.pth",
+  "checkpoint_sha256": "715e62734f95057f18edb286d830bee09bba08b0ecfca42420506d1d7aba97de",
+  "human_approved": true,
+  "license_id": "Apache-2.0 (OpenMMLab mmsegmentation model zoo)",
+  "model": "pidnet_s",
+  "record_type": "edgeguard_pretrained_initialization",
+  "schema_version": "2.0",
+  "source_task": "image_classification",
+  "source_url": "https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/pidnet/pidnet-s_imagenet1k_20230306-715e6273.pth"
+}

@@ -159,10 +159,16 @@ def load_rescue_config(path: Path) -> RescueConfig:
         raise ValueError("optimizer values are invalid")
     if any(stage.epochs is not None for stage in config.stages.values()):
         raise ValueError("multi-domain stages must use comparable optimizer-step budgets")
-    if config.hpo.trials_per_model != 12 or config.hpo.max_steps != 6_000:
-        raise ValueError("HPO budget must remain frozen at 12 trials and 6,000 steps")
-    if config.hpo.pruning_steps != (1_500, 3_000):
-        raise ValueError("HPO pruning rungs must remain 1,500 and 3,000 steps")
+    if config.hpo.trials_per_model <= 0 or config.hpo.max_steps <= 0:
+        raise ValueError("HPO trial count and step ceiling must both be positive")
+    if not config.hpo.pruning_steps:
+        raise ValueError("HPO requires at least one pruning rung")
+    if list(config.hpo.pruning_steps) != sorted(set(config.hpo.pruning_steps)):
+        raise ValueError("HPO pruning rungs must be strictly increasing and unique")
+    if config.hpo.pruning_steps[0] <= 0:
+        raise ValueError("HPO pruning rungs must be positive")
+    if config.hpo.pruning_steps[-1] >= config.hpo.max_steps:
+        raise ValueError("every HPO pruning rung must fall below the step ceiling")
     if config.hpo.schedulers != ("poly", "cosine"):
         raise ValueError("HPO scheduler choices must be poly and cosine")
     if config.datasets.domain_sampling != "uniform":

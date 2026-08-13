@@ -13,5 +13,8 @@ def test_delivery_notebooks_execute_all_code_cells_in_local_mode(tmp_path: Path)
         tmp_path / name / "content",
     )
     assert result["status"] == "passed"
-    assert result["code_cell_count"] == 5
+    # Setup/bootstrap/inventory/helpers, one cell per campaign phase, and the summary.
+    # Phases run as separate cells so a dropped Colab session resumes from the cell it
+    # died in rather than replaying the whole campaign.
+    assert result["code_cell_count"] == 14
     assert all(row["status"] == "passed" for row in result["cells"])

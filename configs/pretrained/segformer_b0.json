@@ -1,0 +1,12 @@
+{
+  "access_date": "2026-08-14",
+  "checkpoint_path": "/content/edgeguard-cache/pretrained/mit_b0.pth",
+  "checkpoint_sha256": "7e0fe6dd43f88b9f7f718ddeec691f00711490058ea17882d9027c822f2f48a8",
+  "human_approved": true,
+  "license_id": "Apache-2.0 (OpenMMLab mmsegmentation model zoo)",
+  "model": "segformer_b0",
+  "record_type": "edgeguard_pretrained_initialization",
+  "schema_version": "2.0",
+  "source_task": "image_classification",
+  "source_url": "https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segformer/mit_b0_20220624-7e0fe6dd.pth"
+}

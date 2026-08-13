@@ -33,6 +33,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--rare-classes-file", type=Path)
     parser.add_argument("--initialization", choices=("random", "pretrained"), default="random")
     parser.add_argument("--pretrained-manifest", type=Path)
+    parser.add_argument(
+        "--pretrained-manifest-root",
+        type=Path,
+        help=(
+            "directory of committed per-model initialisation manifests; the HPO stage "
+            "selects its own two models, so it resolves <root>/<model>.json itself"
+        ),
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--device-batch", type=int)
     parser.add_argument("--workers", type=int)
@@ -51,6 +59,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--intentional-interrupt-step", type=int)
     parser.add_argument("--acceptance-test", action="store_true")
     return parser
+
+
+def _hpo_pretrained_manifest(root: Path | None, model: str) -> Path | None:
+    """Resolve one model's initialisation manifest, or None when it has none.
+
+    Absence is legitimate: only models whose upstream MMSeg config declares an
+    `init_cfg` of type `Pretrained` have a classification checkpoint to transfer.
+    """
+    if root is None:
+        return None
+    manifest = (root / f"{model}.json").resolve()
+    return manifest if manifest.is_file() else None
 
 
 def main() -> int:
@@ -80,6 +100,7 @@ def main() -> int:
                 workers=args.workers,
                 precision=args.precision,
                 acceptance_test=args.acceptance_test,
+                pretrained_manifest=_hpo_pretrained_manifest(args.pretrained_manifest_root, model),
             )
             for model in select_hpo_models(
                 args.candidate_table.resolve(), protocol.datasets.training

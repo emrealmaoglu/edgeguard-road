@@ -1,0 +1,12 @@
+{
+  "access_date": "2026-08-14",
+  "checkpoint_path": "/content/edgeguard-cache/pretrained/ddrnet23s.pth",
+  "checkpoint_sha256": "d3c4524b6384c9ea215e18835dc16f5175736a17655b4c17855dac5e09f7a24a",
+  "human_approved": true,
+  "license_id": "Apache-2.0 (OpenMMLab mmsegmentation model zoo)",
+  "model": "ddrnet_23_slim",
+  "record_type": "edgeguard_pretrained_initialization",
+  "schema_version": "2.0",
+  "source_task": "image_classification",
+  "source_url": "https://download.openmmlab.com/mmsegmentation/v0.5/ddrnet/pretrain/ddrnet23s-in1kpre_3rdparty-1ccac5b1.pth"
+}

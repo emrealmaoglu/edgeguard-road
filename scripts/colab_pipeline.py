@@ -47,6 +47,7 @@ def _parser() -> argparse.ArgumentParser:
             "docs/AI_USAGE_LOG.md for the evidence behind any non-default value."
         ),
     )
+    parser.add_argument("--pretrained-manifest-root", type=Path)
     parser.add_argument("--rare-classes-file", type=Path)
     parser.add_argument("--class-weights-file", type=Path)
     parser.add_argument("--authorization-policy", type=Path, required=True)
@@ -132,6 +133,9 @@ def main() -> int:
             campaign_id=args.campaign_id,
             execution_mode=args.execution_mode,
             state_store_root=(args.state_store_root.resolve() if args.state_store_root else None),
+            pretrained_manifest_root=(
+                args.pretrained_manifest_root.resolve() if args.pretrained_manifest_root else None
+            ),
         )
     )
     result = pipeline.plan(args.target) if args.mode == "plan" else pipeline.run(args.target)

@@ -544,6 +544,20 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
     policy_payload = json.loads(policy.read_text(encoding="utf-8"))
     screening_models = policy_payload.get("screening_models")
 
+    stage("pretrained-backbones")
+    pretrained_root = project_root / "configs/pretrained"
+    _run(
+        [
+            str(runtime_python),
+            str(project_root / "scripts/fetch_pretrained_backbones.py"),
+            "--manifest-root",
+            str(pretrained_root),
+        ],
+        project_root=project_root,
+        child_log=child_log,
+        environment=environment,
+    )
+
     stage("recovery-identity-migration")
     migration_command = [
         str(runtime_python),
@@ -582,7 +596,7 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         str(project_root / "scripts/colab_pipeline.py"),
         "run",
         "--target",
-        "all",
+        args.target,
         "--execution-mode",
         args.execution_mode,
         "--campaign-id",
@@ -599,6 +613,8 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         str(work_root),
         "--recovery-root",
         str(recovery_root),
+        "--pretrained-manifest-root",
+        str(pretrained_root),
         "--state-store-root",
         str(recovery_root),
         "--config",
@@ -674,6 +690,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--content-root", type=Path, default=Path("/content"))
     parser.add_argument(
         "--execution-mode", choices=("production", "acceptance"), default="production"
+    )
+    parser.add_argument(
+        "--target",
+        default="all",
+        help=(
+            "production-pipeline target phase; the pipeline runs that phase's full "
+            "prerequisite closure and skips every phase already verified in the Drive "
+            "state store, so per-phase notebook cells resume instead of repeating work"
+        ),
     )
     parser.add_argument("--result", type=Path, required=True)
     return parser

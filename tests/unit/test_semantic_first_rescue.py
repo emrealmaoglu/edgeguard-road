@@ -64,9 +64,12 @@ def test_rescue_config_is_frozen_to_five_step_based_models() -> None:
     ]
     assert config.effective_batch == 4
     assert config.stages["smoke"].max_steps == 50
-    assert config.stages["pilot"].max_steps == 2_000
-    assert config.stages["screening"].max_steps == 6_000
-    assert config.hpo.trials_per_model == 12
+    assert config.stages["pilot"].max_steps == 600
+    assert config.stages["screening"].max_steps == 2_500
+    assert config.hpo.trials_per_model == 3
+    # Every pruning rung must sit strictly below the ceiling, or a trial would be
+    # "pruned" at a budget it can never reach and the study would never terminate.
+    assert config.hpo.pruning_steps[-1] < config.hpo.max_steps
     assert model_by_name(config, "pidnet_s").upstream_config.endswith("cityscapes.py")
     with pytest.raises(ValueError, match="unsupported model"):
         model_by_name(config, "unknown_model")

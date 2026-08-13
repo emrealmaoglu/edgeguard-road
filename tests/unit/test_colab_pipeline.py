@@ -14,6 +14,7 @@ from PIL import Image
 
 import edgeguard.rescue.colab_pipeline as colab_pipeline_module
 from edgeguard.rescue.colab_pipeline import (
+    ABLATION_MAX_STEPS,
     ALL_MODELS,
     CORE_MODELS,
     EXTENSION_MODELS,
@@ -60,6 +61,7 @@ def _pipeline(
     *,
     screening_models: tuple[str, ...] = ALL_MODELS,
     final_models: tuple[str, ...] = ALL_MODELS,
+    pretrained_manifest_root: Path | None = None,
 ) -> ColabPipeline:
     tmp_path.mkdir(parents=True, exist_ok=True)
     commit = subprocess.run(
@@ -107,6 +109,7 @@ def _pipeline(
             data_manifests=manifests,
             screening_models=screening_models,
             final_models=final_models,
+            pretrained_manifest_root=pretrained_manifest_root,
         )
     )
 
@@ -446,3 +449,45 @@ def test_acceptance_mode_never_writes_measured_or_accepted_status(
     assert result["status"] == "completed"
     manifest = json.loads((pipeline.state_root / "pilot/run_manifest.json").read_text())
     assert manifest["scientific_status"] == "not_run"
+
+
+def test_train_command_requests_pretrained_initialisation_only_where_a_manifest_exists(
+    tmp_path: Path,
+) -> None:
+    """Models with a committed manifest transfer ImageNet weights; the rest stay random.
+
+    `fast_scnn` and `bisenetv2` declare no `init_cfg` of type `Pretrained` upstream, so
+    there is nothing to transfer and asking for `--initialization pretrained` would make
+    `train_model` fail loudly rather than train. Absence of a manifest must therefore stay
+    a silent, legitimate fall back to random initialisation.
+    """
+    manifest_root = tmp_path / "pretrained"
+    manifest_root.mkdir(parents=True)
+    (manifest_root / "segformer_b0.json").write_text("{}", encoding="utf-8")
+    pipeline = _pipeline(tmp_path / "case", pretrained_manifest_root=manifest_root)
+
+    with_manifest = pipeline._train_command("screening", "segformer_b0")
+    assert "--initialization" in with_manifest
+    assert with_manifest[with_manifest.index("--initialization") + 1] == "pretrained"
+    manifest_index = with_manifest.index("--pretrained-manifest") + 1
+    assert with_manifest[manifest_index] == str(manifest_root / "segformer_b0.json")
+
+    without_manifest = pipeline._train_command("screening", "fast_scnn")
+    assert "--initialization" not in without_manifest
+    assert "--pretrained-manifest" not in without_manifest
+
+
+def test_train_command_omits_initialisation_when_no_manifest_root_is_configured(
+    tmp_path: Path,
+) -> None:
+    pipeline = _pipeline(tmp_path / "no-root")
+    command = pipeline._train_command("screening", "segformer_b0")
+    assert "--initialization" not in command
+
+
+def test_ablation_runs_on_its_own_shorter_step_budget(tmp_path: Path) -> None:
+    """Ablations are directional evidence, so they must not inherit the final budget."""
+    pipeline = _pipeline(tmp_path / "ablation")
+    command = pipeline._train_command("ablation", "segformer_b0", max_steps=ABLATION_MAX_STEPS)
+    assert command[command.index("--max-steps") + 1] == str(ABLATION_MAX_STEPS)
+    assert ABLATION_MAX_STEPS < 10_000

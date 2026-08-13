@@ -31,6 +31,11 @@ CORE_MODELS = ("segformer_b0", "fast_scnn", "pidnet_s")
 EXTENSION_MODELS = ("ddrnet_23_slim", "bisenetv2")
 ALL_MODELS = CORE_MODELS + EXTENSION_MODELS
 SCIENTIFIC_STATUSES = ("measured", "accepted", "failed", "not_run")
+# Ablations answer "does weighted loss / lower resolution move the needle for the selected
+# model", a directional question that does not need the full-length final budget. Running
+# both variants at the final stage's step count doubled the campaign's longest phase for
+# evidence that is read comparatively, not as a headline number.
+ABLATION_MAX_STEPS = 4_000
 PHASES = (
     "preflight",
     "restore",
@@ -113,6 +118,7 @@ class PipelineInputs:
     execution_mode: str = "production"
     state_store_root: Path | None = None
     recovery_self_test_model: str | None = CORE_MODELS[0]
+    pretrained_manifest_root: Path | None = None
 
     def validated(self) -> PipelineInputs:
         if len(self.project_commit) != 40 or any(
@@ -759,6 +765,19 @@ class ColabPipeline:
         ):
             raise ValueError("runtime receipt lacks the complete five-model FP32/AMP canary")
 
+    def _pretrained_manifest(self, model: str) -> Path | None:
+        """Return this model's committed ImageNet-initialisation manifest, if one exists.
+
+        Absence is a legitimate answer, not an error: `fast_scnn` and `bisenetv2` declare
+        no `init_cfg` of type `Pretrained` in their upstream MMSeg configs, so there is no
+        classification checkpoint to transfer and those models keep random initialisation.
+        """
+        root = self.inputs.pretrained_manifest_root
+        if root is None:
+            return None
+        manifest = root / f"{model}.json"
+        return manifest if manifest.is_file() else None
+
     def _train_command(
         self,
         phase: str,
@@ -768,6 +787,7 @@ class ColabPipeline:
         loss: str = "ce",
         run_name: str | None = None,
         crop_size: tuple[int, int] | None = None,
+        max_steps: int | None = None,
     ) -> list[str]:
         training_stage = (
             "smoke" if phase == "extension-smoke" else "final" if phase == "ablation" else phase
@@ -796,12 +816,19 @@ class ColabPipeline:
             command.extend(("--data-manifest", str(manifest)))
         if model is not None:
             command.extend(("--model", model))
+            pretrained = self._pretrained_manifest(model)
+            if pretrained is not None:
+                command.extend(
+                    ("--initialization", "pretrained", "--pretrained-manifest", str(pretrained))
+                )
         if device_batch is not None:
             command.extend(("--device-batch", str(device_batch)))
         if run_name is not None:
             command.extend(("--run-name", run_name))
         if crop_size is not None:
             command.extend(("--crop-height", str(crop_size[0]), "--crop-width", str(crop_size[1])))
+        if max_steps is not None:
+            command.extend(("--max-steps", str(max_steps)))
         if self.inputs.execution_mode == "acceptance":
             command.extend(("--max-steps", "2", "--workers", "0", "--precision", "fp32"))
             if phase == "hpo":
@@ -1157,6 +1184,13 @@ class ColabPipeline:
                 raise FileNotFoundError("HPO requires the frozen screening candidate table")
             command = self._train_command(phase, None)
             command.extend(("--candidate-table", str(self.inputs.candidate_table)))
+            if self.inputs.pretrained_manifest_root is not None:
+                command.extend(
+                    (
+                        "--pretrained-manifest-root",
+                        str(self.inputs.pretrained_manifest_root),
+                    )
+                )
             if self.inputs.rare_classes_file is not None:
                 command.extend(("--rare-classes-file", str(self.inputs.rare_classes_file)))
             return [self._run_command(phase, "hpo-top-two", command)]
@@ -1349,6 +1383,7 @@ class ColabPipeline:
                 loss=loss,
                 run_name=run_name,
                 crop_size=crop_size,
+                max_steps=ABLATION_MAX_STEPS,
             )
             if (run_dir / "run_identity.json").is_file() or self._recovery_pointer_exists(
                 "ablation", model, run_name
@@ -1367,6 +1402,7 @@ class ColabPipeline:
                     loss=loss,
                     run_name=run_name,
                     crop_size=crop_size,
+                    max_steps=ABLATION_MAX_STEPS,
                 )
                 retry = self._prepare_oom_retry("ablation", model, run_name, run_dir, retry)
                 results.append(self._run_command("ablation", f"train-{run_name}-oom-retry", retry))

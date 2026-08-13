@@ -299,35 +299,71 @@ except BaseException as error:
 """,
         ),
         _cell(
+            "markdown",
+            """
+## Aşama aşama çalıştırma
+
+Aşağıdaki her hücre kampanyanın **bir fazını** çalıştırır ve bittiğinde o faza ait
+logları/kanıtları bir zip olarak indirir. Hücreleri sırayla çalıştırın.
+
+Bir faz daha önce tamamlandıysa tekrar eğitilmez: faz tamamlanma kaydı Drive'daki state
+store'a yazılıyor ve doğrulanmış fazlar atlanıyor. Oturum koparsa yeni bir çalışma
+zamanında kaldığınız hücreden devam edebilirsiniz; öncesi otomatik olarak atlanır.
+
+İnen zip'leri projede `docs/colab-logs/` altına koyun — sonuç tabloları bunlardan üretiliyor.
+""",
+        ),
+        _cell(
             "code",
             """
-try:
+MASTER_ENVIRONMENT = os.environ.copy()
+for _key in (
+    "CONDA_PREFIX",
+    "PIP_PREFIX",
+    "PIP_REQUIRE_VIRTUALENV",
+    "PIP_TARGET",
+    "PYTHONHOME",
+    "PYTHONSTARTUP",
+    "PYTHONUSERBASE",
+    "VIRTUAL_ENV",
+):
+    MASTER_ENVIRONMENT.pop(_key, None)
+for _key in tuple(MASTER_ENVIRONMENT):
+    if _key.startswith("UV_"):
+        MASTER_ENVIRONMENT.pop(_key, None)
+MASTER_ENVIRONMENT["MPLBACKEND"] = "Agg"
+MASTER_ENVIRONMENT["PYTHONNOUSERSITE"] = "1"
+
+MASTER_RESULT = None
+BUNDLE_ROOT = CONTENT_ROOT / "edgeguard-phase-bundles"
+# Mirrors run_colab_master.py's own work_root; kept here so the log bundler can reach the
+# per-phase run directories without importing that script.
+PHASE_WORK_ROOT = CONTENT_ROOT / "edgeguard-work-v3"
+
+
+def eg_phase(target):
+    \"\"\"Run one campaign phase, including every prerequisite it still needs.
+
+    The pipeline resolves `target` to its full prerequisite closure and skips whatever the
+    Drive state store already records as verified, so re-running a finished cell is cheap
+    and a fresh runtime resumes instead of retraining.
+    \"\"\"
+    global MASTER_RESULT
     if LOCAL_TEST_MODE:
+        # Local mode only proves the notebook's own cells are executable. It touches no
+        # GPU, no Drive and no dataset, so it must never leave behind anything that could
+        # be mistaken for a measured result.
         MASTER_RESULT = {
             "record_type": "edgeguard_notebook_local_contract",
             "status": "passed",
             "campaign_id": CAMPAIGN_ID,
             "project_commit": EXPECTED_PROJECT_COMMIT,
+            "phase": target,
             "scientific_status": "not_run",
         }
-    else:
-        environment = os.environ.copy()
-        for key in (
-            "CONDA_PREFIX",
-            "PIP_PREFIX",
-            "PIP_REQUIRE_VIRTUALENV",
-            "PIP_TARGET",
-            "PYTHONHOME",
-            "PYTHONSTARTUP",
-            "PYTHONUSERBASE",
-            "VIRTUAL_ENV",
-        ):
-            environment.pop(key, None)
-        for key in tuple(environment):
-            if key.startswith("UV_"):
-                environment.pop(key, None)
-        environment["MPLBACKEND"] = "Agg"
-        environment["PYTHONNOUSERSITE"] = "1"
+        print(f"LOCAL_TEST_MODE: '{target}' fazı atlandı (gerçek GPU/veri yok).")
+        return MASTER_RESULT
+    try:
         run_visible(
             [
                 "/usr/bin/python3",
@@ -340,24 +376,189 @@ try:
                 str(DRIVE_ROOT),
                 "--content-root",
                 str(CONTENT_ROOT),
+                "--target",
+                target,
                 *EXECUTION_MODE_ARGS,
                 "--result",
                 str(RESULT_PATH),
             ],
             cwd=PROJECT_ROOT,
-            env=environment,
+            env=MASTER_ENVIRONMENT,
         )
-        MASTER_RESULT = json.loads(RESULT_PATH.read_text(encoding="utf-8"))
-except BaseException as error:
-    persist_failure("production-pipeline", error)
-    raise
+    except BaseException as error:
+        persist_failure(f"phase-{target}", error)
+        raise
+    MASTER_RESULT = json.loads(RESULT_PATH.read_text(encoding="utf-8"))
+    print(f"\\n=== '{target}' fazı tamamlandı ===")
+    return MASTER_RESULT
+
+
+def eg_bundle(label):
+    \"\"\"Zip this phase's logs/evidence and hand them to the browser as a download.
+
+    Never raises: a failed archive must not discard a phase's real training result.
+    \"\"\"
+    if LOCAL_TEST_MODE:
+        print(f"LOCAL_TEST_MODE: '{label}' log paketi atlandı.")
+        return None
+    try:
+        BUNDLE_ROOT.mkdir(parents=True, exist_ok=True)
+        staging = BUNDLE_ROOT / label
+        if staging.exists():
+            shutil.rmtree(staging)
+        staging.mkdir(parents=True)
+        sources = [
+            CONTENT_ROOT / "edgeguard-evidence",
+            CONTENT_ROOT / "edgeguard-logs",
+            CONTENT_ROOT / "edgeguard-master-child.log",
+            CONTENT_ROOT / "edgeguard-master-stage.json",
+            RESULT_PATH,
+            PHASE_WORK_ROOT / "runs" / label,
+            PHASE_WORK_ROOT / "reports",
+        ]
+        copied = 0
+        for source in sources:
+            if not source.exists():
+                continue
+            target = staging / source.name
+            if source.is_dir():
+                shutil.copytree(source, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(source, target)
+            copied += 1
+        archive = shutil.make_archive(str(BUNDLE_ROOT / f"edgeguard-{label}-logs"), "zip", staging)
+        size_mib = Path(archive).stat().st_size / 1024 ** 2
+        print(f"{label}: {copied} kaynak paketlendi, {size_mib:.1f} MiB -> {archive}")
+        from google.colab import files
+
+        files.download(archive)
+        return archive
+    except BaseException as error:
+        print(f"'{label}' log paketi oluşturulamadı (faz sonucu etkilenmedi):", repr(error))
+        return None
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### `smoke` — Duman testi (50 adım, kasıtlı kesinti + devam kanıtı)
 """,
         ),
         _cell(
             "code",
             """
-print(json.dumps(MASTER_RESULT, ensure_ascii=False, indent=2))
-if MASTER_RESULT.get("status") == "completed":
+eg_phase("smoke")
+eg_bundle("smoke")
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### `pilot` — Pilot (600 adım)
+""",
+        ),
+        _cell(
+            "code",
+            """
+eg_phase("pilot")
+eg_bundle("pilot")
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### `screening` — Tarama (2.500 adım) — **pretrained kontrol noktası: mIoU'lar eski %16-26 aralığının belirgin üstünde olmalı**
+""",
+        ),
+        _cell(
+            "code",
+            """
+eg_phase("screening")
+eg_bundle("screening")
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### `hpo` — Hiperparametre optimizasyonu (3 deneme × 2 model)
+""",
+        ),
+        _cell(
+            "code",
+            """
+eg_phase("hpo")
+eg_bundle("hpo")
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### `final` — Final eğitim (10.000 adım × 3 model) — en uzun faz
+""",
+        ),
+        _cell(
+            "code",
+            """
+eg_phase("final")
+eg_bundle("final")
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### `evaluate` — Seçim, ablation, kabul ve resmî kaynak değerlendirmesi
+""",
+        ),
+        _cell(
+            "code",
+            """
+eg_phase("evaluate")
+eg_bundle("evaluate")
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### `export` — ONNX ihracı
+""",
+        ),
+        _cell(
+            "code",
+            """
+eg_phase("export")
+eg_bundle("export")
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### `report` — Tez figürleri ve tabloları
+""",
+        ),
+        _cell(
+            "code",
+            """
+eg_phase("report")
+eg_bundle("report")
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### `package` — Teslimat paketleri
+""",
+        ),
+        _cell(
+            "code",
+            """
+eg_phase("package")
+eg_bundle("package")
+""",
+        ),
+        _cell(
+            "code",
+            """
+if MASTER_RESULT and MASTER_RESULT.get("status") == "completed":
     deliveries = MASTER_RESULT["drive_deliveries"]
     print("\\nTAMAMLANDI · önerilen model:", MASTER_RESULT["recommended_model"])
     for name, path in deliveries.items():
@@ -367,8 +568,10 @@ if MASTER_RESULT.get("status") == "completed":
         from google.colab import files
 
         files.download(jetson_path)
-else:
+elif LOCAL_TEST_MODE:
     print("Yerel notebook sözleşmesi geçti; gerçek bilimsel/GPU sonucu üretilmedi.")
+else:
+    print("Kampanya henüz tamamlanmadı; yukarıdaki hücreleri sırayla çalıştırın.")
 """,
         ),
     ]

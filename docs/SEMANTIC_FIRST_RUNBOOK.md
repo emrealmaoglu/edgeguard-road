@@ -1,10 +1,33 @@
 # Semantic-first production runbook
 
-## One-button Colab campaign
+## Phase-by-phase Colab campaign
 
-Open `notebooks/EdgeGuard_Master_Colab.ipynb`, select **L4 GPU** and **High-RAM**, and
-choose **Runtime → Run all**. There are no manual stage, finalist, review-receipt, or
-accepted-release controls in the notebook. The committed owner policy binds the exact
+Open `notebooks/EdgeGuard_Master_Colab.ipynb`, select an **L4/A100 GPU** and **High-RAM**,
+then run the cells in order. Each campaign phase is its own cell: it runs
+`run_colab_master.py --target <phase>` and then zips and downloads that phase's
+logs and evidence. Put those zips under `docs/colab-logs/` — they are the input to
+`scripts/analyze_training_results.py`.
+
+A finished phase is never retrained. `colab_pipeline.run()` records phase completion in the
+Drive state store and skips every verified phase, and dataset staging short-circuits with
+`already_staged` once the local copy verifies, so a dropped session resumes from the cell it
+died in rather than replaying the campaign. There are no manual stage, finalist,
+review-receipt, or accepted-release controls in the notebook.
+
+**2026-08-14 initialisation and budget change.** Training now starts from ImageNet-1k
+**classification** backbones instead of random weights. Until this change every model
+trained from scratch — `_strip_pretrained` nulls every `Pretrained` init_cfg and
+`colab_pipeline` never emitted `--initialization` — which is why screening mIoU stalled at
+16-26% with half the classes at 0.0. The three manifests in `configs/pretrained/` are
+committed with fixed `checkpoint_sha256`/`access_date`/`checkpoint_path` because
+`pretrained_manifest_sha256` is part of every run's immutable identity; the new
+`pretrained-backbones` stage only downloads and hash-verifies what they already declare.
+`fast_scnn` and `bisenetv2` declare no upstream `Pretrained` init_cfg, so they keep random
+initialisation. Segmentation checkpoints are structurally inadmissible here: the manifest
+verifier requires `source_task="image_classification"`, so weights that had seen Cityscapes
+cannot be used. Stage budgets were cut to fit a 3-day deadline (pilot 600, screening 2,500,
+HPO 3 trials x 1,200, final 10,000, ablation 4,000) — roughly 14 GPU-hours in total against
+the ~69 the previous protocol needed. See `docs/AI_USAGE_LOG.md` for the full record. The committed owner policy binds the exact
 Cityscapes/IDD audit candidates, model order, train-select selection rule, and the
 post-acceptance official-source evaluation gate.
 
