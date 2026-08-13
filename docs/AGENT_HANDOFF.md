@@ -811,6 +811,36 @@ few light pure-Python dependencies first. Confirm it prints a completed report a
 `Drive/EdgeGuard/reports/private_inputs_inventory/` (if partially written) has the
 diagnostic — it does not need to succeed for the real campaign to proceed.
 
+**2026-08-13 real attempt at commit `a5519f4` — data staged clean, migration refused (see
+`docs/AI_USAGE_LOG.md`'s last entry for the full diagnosis).** `stdlib-hermetic-bootstrap`,
+`five-model-runtime-canary`, `restore` (correctly skipped a differently-committed
+campaign-state tarball), and `data` (Cityscapes + all 33 IDD20K shards) all completed
+cleanly. The new automatic `recovery-identity-migration` stage then ran for the first time
+on real hardware and reported `status: verification_failed` for all four
+`screening_models` (segformer_b0, fast_scnn, pidnet_s, ddrnet_23_slim) against
+`old_project_commit: f2f2110…` — it correctly refused to republish rather than guess, so
+nothing was fabricated, but these four models' real 6000-step screening checkpoints
+cannot resume and will retrain from scratch when the pipeline next reaches `screening`
+(~11-12 GPU-hours estimated from this session's real pilot-stage per-iteration pace,
+dominated by `fast_scnn` at ~5.2s/iter). Root cause was investigated (protocol yaml,
+`colab_pipeline.py`'s `_train_command`, `train.py`'s CLI defaults, `resolve_auto_precision`,
+and the mmsegmentation lock pin were all statically ruled out) but not confirmed —
+remaining suspect is the dataset-manifest content, unverifiable without live Colab access.
+Decision: accept the retrain cost rather than interrupt the live, deadline-critical run to
+test hypotheses. **The screening mIoU evidence from the earlier `a50b635…` run above is
+still real and still valid** (segformer_b0 16.48%, fast_scnn 20.53%, pidnet_s 26.54%,
+ddrnet_23_slim 25.21%, bisenetv2 17.41%) — only the checkpoint *bytes* can't resume, the
+measured numbers were never lost. Session then disconnected mid-`pilot` (fast_scnn, ~iter
+1700/2000); the next session needs Run all from a fresh runtime. **HPO, `final` (40000
+steps), `selection`, `ablation`, `accept`, `evaluate`, `export`, `thesis`/`report`, and
+`package` have never yet been exercised on real Colab hardware at all** — everything
+proven so far stops at `screening`. The user is considering switching from L4 to A100 for
+the next attempt; confirmed via code audit that this needs zero code changes
+(`_resource_gate` already accepts A100 by name, `device_batch`/`effective_batch` in
+`configs/rescue/semantic_first.yaml` are static and GPU-type-independent, and the pinned
+`torch-2.1.1+cu121` wheel is not architecture-specific) — this is a pure Colab-UI runtime
+selection, not a code or notebook change.
+
 Do not create `colab-v0.1.0-rc1` until two independent clean L4 sessions pass the exact
 lock/five-model FP32/AMP canary and the real 50-step interruption/resume proof. After the
 campaign completes, build TensorRT only on the target Jetson and attach actual 25W

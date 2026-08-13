@@ -323,9 +323,15 @@ def migrate_recovery_identity(
             "old_project_commit": old_project_commit,
             "recorded_identity_sha256": recorded_identity_sha256,
             "recomputed_old_identity_sha256": old_identity_sha256,
+            "recomputed_old_identity": old_identity,
             "reason": (
                 "recomputed old-commit identity does not match the real recorded one -- "
-                "something besides project_commit differs; refusing to migrate"
+                "something besides project_commit differs; refusing to migrate. The "
+                "recorded receipt only stores identity_sha256, not the original identity "
+                "dict, so this failure cannot say which field is wrong -- only that one is. "
+                "recomputed_old_identity is included so a future session can compare it "
+                "field-by-field against a known-good identity (e.g. one dumped from a "
+                "successful migration or a fresh train_model run) without re-deriving it."
             ),
         }
     new_identity = _identity(new_project_commit)

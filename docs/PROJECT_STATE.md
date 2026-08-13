@@ -469,6 +469,19 @@ each stage, and the screening-evidence step that crashed should then complete cl
 all five models. The real next milestone after that is HPO for the top-two screening
 models, then `final` (40000 steps) for all five.
 
+**2026-08-13 update:** at commit `a5519f4`, a real L4 session reached `data` cleanly (see
+`docs/AGENT_HANDOFF.md`'s 2026-08-13 note for the full account) but the new automatic
+`recovery-identity-migration` stage refused to migrate all four `screening_models`
+(`verification_failed`, root cause not confirmed) — those four models' screening will
+retrain from scratch (~11-12 GPU-hours) rather than resume from the real `f2f2110`-era
+6000-step checkpoints. This does not invalidate the screening mIoU evidence already
+recorded from the earlier `a50b635…` run (segformer_b0 16.48%, fast_scnn 20.53%, pidnet_s
+26.54%, ddrnet_23_slim 25.21%, bisenetv2 17.41%) — only the checkpoint bytes can't resume.
+**HPO, `final`, `selection`, `ablation`, `accept`, `evaluate`, `export`,
+`thesis`/`report`, and `package` remain entirely unverified on real Colab hardware** —
+nothing past `screening` has real evidence yet, so the next full run is genuinely new
+territory for roughly 8-10 hours of pipeline, not a repeat of previously-proven stages.
+
 ## Deliveries
 
 The package stage produces `EdgeGuard_Jetson_Release.zip`,
