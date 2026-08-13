@@ -5,7 +5,7 @@ Updated 2026-08-13 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`5135f69` (see `git log` for the full SHA). The only generated notebook is
+`6b30275` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -31,6 +31,18 @@ five models" check was relaxed to accept any frozen-order subset; see
 change list. `fast_scnn` and `bisenetv2` keep their real screening evidence in the
 report — excluded from further compute, never dropped from the record. Not yet confirmed
 on real L4 hardware.
+
+**2026-08-13 follow-up: the user had to force-stop the entire Colab runtime**, so
+there is currently no running session. Added a matching `screening_models` field
+(same mechanism as `final_models`) so a fresh session's `Runtime → Run all` does not
+automatically try to resume and finish `bisenetv2`'s abandoned screening run (~8 more
+GPU-hours for a result that cannot change `final_models`); the policy JSON's
+`screening_models` is now the four models that actually reached the real 6000-step
+ceiling. Also clarified: the private_inputs archive-inventory cell "not running" on a
+fresh session is expected, intentional content-addressed caching
+(`scripts/inventory_private_inputs.py`), not a defect — see
+`docs/AGENT_HANDOFF.md`'s 2026-08-13 note and `docs/AI_USAGE_LOG.md` for the full
+restart plan given to the user. Application commit `6b30275`.
 
 ## Data state
 
@@ -506,8 +518,16 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-As of application commit `5135f69…` (final-stage model-scope restriction), the current
-delivery passes 536 tests with thirty-two environment-gated skips without the pinned
+As of application commit `6b30275…` (screening-stage model-scope restriction), the
+current delivery passes 539 tests with thirty-two environment-gated skips without the
+pinned MMSeg stack present (up from 536/32 — 3 new `test_colab_pipeline.py` cases for
+`screening_models`, mirroring `final_models`). Mypy passes for all 119 configured
+source modules (unchanged count). This commit directly changes `ColabPipeline`'s
+`screening` orchestration, so the environment-gated CPU rehearsal suite staying
+skipped locally is again a real verification gap, not a pass-through — the next real
+Colab run is load-bearing for this commit too.
+At the prior commit `5135f69…` (final-stage model-scope restriction), the delivery
+passed 536 tests with thirty-two environment-gated skips without the pinned
 MMSeg stack present (up from 533/32 — replaced one over-strict `test_colab_pipeline.py`
 case asserting "final requires exactly five models" with four narrower cases covering
 the relaxed, frozen-order-subset `final_models` validation). Mypy passes for all 119
@@ -583,11 +603,14 @@ twice byte-identically at SHA-256
 `38df2ae…` (real-evidence training-log analysis tool — no notebook cell text
 changed either, this tool is deliberately a standalone script, not wired into the
 notebook), it was regenerated twice byte-identically at SHA-256
-`7237aee68f3cd53ea346abe2874c173f235e3e775774eee02671648f42a70290`. At the current
-commit `5135f69…` (final-stage model-scope restriction — no notebook cell text
-changed, `run_colab_master.py`/`scripts/colab_pipeline.py` are called by the notebook
-but not embedded in it), it was regenerated twice byte-identically at SHA-256
-`ba0f377549e1eb54354f1df6b0f98b0b916faf191b9ec1b9ce74da9da485d208`, and both
+`7237aee68f3cd53ea346abe2874c173f235e3e775774eee02671648f42a70290`. At commit
+`5135f69…` (final-stage model-scope restriction — no notebook cell text changed,
+`run_colab_master.py`/`scripts/colab_pipeline.py` are called by the notebook but not
+embedded in it), it was regenerated twice byte-identically at SHA-256
+`ba0f377549e1eb54354f1df6b0f98b0b916faf191b9ec1b9ce74da9da485d208`. At the current
+commit `6b30275…` (screening-stage model-scope restriction — again no notebook cell
+text changed), it was regenerated twice byte-identically at SHA-256
+`e277eb9ba5653bf407b0ab7e09985c384473d9128a5a168c576078a4176a5791`, and both
 `tests/integration/test_notebook.py` (including `test_delivery_notebooks.py`'s
 corrected assertion) and the local claim-safe execution harness
 (`scripts/dev/run_delivery_notebooks_local.py`) pass at this commit.

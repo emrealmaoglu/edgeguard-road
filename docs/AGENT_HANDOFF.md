@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `5135f69` (see `git log` for the full SHA)
+  `6b30275` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -288,6 +288,36 @@
   are excluded from further compute, never silently dropped. **Not yet confirmed on
   real L4 hardware** — the next real Colab run (after the user stops `bisenetv2` and
   resumes) is the actual end-to-end test of this change.
+- **2026-08-13 follow-up (commit `6b30275…`): the user had to force-stop the entire
+  Colab runtime**, not just interrupt the `bisenetv2` cell — there is currently no
+  running Colab session. Also discovered live: the private_inputs archive-inventory
+  cell (2026-08-12 feature) appears to "not run" on a fresh session because it is
+  content-addressed-cached (`inventory_identity(private_inputs_root)` — see
+  `scripts/inventory_private_inputs.py:54-69`) and `private_inputs/` hasn't changed
+  since the last real scan, so it correctly and intentionally reuses the prior report
+  and skips rescanning (prints a Turkish "değişmemiş, tarama atlandı" line and the
+  cached report) rather than being broken. Realized that a fresh Colab session's
+  automatic `Runtime → Run all` would, with only the `5135f69…` fix, still try to
+  **resume and finish `bisenetv2`'s screening run** (from its last checkpoint at
+  iter ~1500/6000, ~8 more hours at ~6.5-7s/iter) before advancing to HPO — wasted
+  time, since `bisenetv2` is already excluded from `final_models` regardless of its
+  screening outcome. Added a symmetric `screening_models` field to `PipelineInputs`
+  (same non-empty/duplicate-free/frozen-order validation as `final_models`), wired
+  through `_run_training_phase`, `_write_run_contracts`, and `_screening_evidence`;
+  added a matching `--screening-model` CLI flag; `run_colab_master.py` now also reads
+  an optional `screening_models` field from the policy JSON (absent-safe — omitting
+  it keeps all-five behavior, so this is backward compatible with any campaign that
+  doesn't set it). The policy JSON's `screening_models` is now `segformer_b0`,
+  `fast_scnn`, `pidnet_s`, `ddrnet_23_slim` (the four that actually reached the real
+  6000-step ceiling); `bisenetv2` keeps its real partial evidence (smoke-stage mIoU
+  6.57, interrupted screening checkpoint) in the record and is simply not resumed.
+  Application commit `6b30275`; Ruff/format/mypy passed (119 modules, unchanged);
+  full local suite 539 passed/32 skipped (up from 536/32 — 3 new
+  `test_colab_pipeline.py` cases covering `screening_models`). Notebook regenerated
+  twice byte-identically at SHA-256
+  `e277eb9ba5653bf407b0ab7e09985c384473d9128a5a168c576078a4176a5791`. **Full restart
+  plan for the next real Colab session is in `docs/AI_USAGE_LOG.md`'s 2026-08-13
+  entry for this commit.**
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -535,6 +565,19 @@
 
 ## Local gates
 
+- **As of commit `6b30275…` (screening-stage model-scope restriction, letting a
+  fresh Colab session skip resuming `bisenetv2`'s abandoned screening run):** Ruff
+  and format checks pass for the full repository. Mypy passes for all 119 configured
+  `src/edgeguard` modules (unchanged count). Full pytest passes: 539 passed, 32
+  environment-gated skipped without the pinned MMSeg stack (up from 536/32 — 3 new
+  `test_colab_pipeline.py` cases for `screening_models`, mirroring the existing
+  `final_models` coverage). Same as the prior entry, this changes `ColabPipeline`'s
+  `screening` orchestration directly, so the environment-gated CPU rehearsal suite
+  staying skipped locally is a real gap — the next real Colab run is load-bearing.
+  Master notebook generation is byte-identical across two runs at commit `6b30275…`,
+  SHA-256 `e277eb9ba5653bf407b0ab7e09985c384473d9128a5a168c576078a4176a5791`
+  (superseding the `5135f69…`/`ba0f377…` pin — no cell text changed, only
+  `EXPECTED_PROJECT_COMMIT`). `tests/integration/test_notebook.py` (2/2) passes.
 - **As of commit `5135f69…` (final-stage model-scope restriction):** Ruff and format
   checks pass for the full repository. Mypy passes for all 119 configured `src/edgeguard`
   modules (unchanged count — no new source module, existing ones edited). Full pytest
