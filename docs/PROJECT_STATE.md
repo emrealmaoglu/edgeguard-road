@@ -1,11 +1,11 @@
 # Project State
 
-Updated 2026-08-12 on `stabilize/colab-v2`.
+Updated 2026-08-13 on `stabilize/colab-v2`.
 
 ## Current delivery
 
 The Colab v3 application commit is
-`38df2ae` (see `git log` for the full SHA). The only generated notebook is
+`5135f69` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -13,17 +13,24 @@ The old two delivery notebooks and twelve numbered notebooks are deleted from th
 tree but recoverable through Git history. No old Drive campaign, prepared dataset, audit,
 or artifact is deleted.
 
-**2026-08-12 delegation and model-scope decision.** With a hard external deadline
-(presentation video due in 4 days, report in 8, end of a 6-week development window), the
-owner explicitly delegated scientific/HPO-scope decisions to Claude Code for the rest of
-this campaign (see `CLAUDE.md`'s 2026-08-12 entry; the sealed-test-opening gate and the
-non-fabrication contract are unaffected). Under that delegation, remaining HPO/final
-compute is prioritized for `segformer_b0` and `pidnet_s` based on real measured
-screening/pilot results (see `src/edgeguard/rescue/training_log_analysis.py` and
-`docs/AGENT_HANDOFF.md`'s 2026-08-12 note for the full evidence and reasoning); `fast_scnn`
-and `bisenetv2`'s measured per-iteration cost (~18x and ~24x slower than `segformer_b0`,
-respectively) would make a full `final` run infeasible within the remaining timeline, and
-`ddrnet_23_slim` has no real screening result yet.
+**2026-08-12 delegation; 2026-08-13 model-scope decision (supersedes the 2026-08-12
+pick) and `final`-stage restructure.** With a hard external deadline (presentation video
+due in 4 days, report in 8, end of a 6-week development window), the owner explicitly
+delegated scientific/HPO-scope decisions to Claude Code for the rest of this campaign
+(see `CLAUDE.md`'s 2026-08-12 entry; the sealed-test-opening gate and the non-fabrication
+contract are unaffected). With full real screening evidence for all five models now
+in hand (real, measured 6000-iter mIoU: `pidnet_s` 27.19, `ddrnet_23_slim` 24.50,
+`fast_scnn` 20.10, `segformer_b0` 16.50, `bisenetv2` incomplete/smoke-only 6.57) and
+real per-iteration throughput showing `fast_scnn`/`bisenetv2` are 15-25x slower than the
+other three, `final_models` in
+`configs/campaign/semantic_cs_idd_v3_authorization.json` is now `segformer_b0`,
+`pidnet_s`, `ddrnet_23_slim` (~24 GPU-hours for a full 40000-step final run, vs. ~155
+GPU-hours for all five). `colab_pipeline.py`'s previously hard-coded "final requires all
+five models" check was relaxed to accept any frozen-order subset; see
+`docs/AGENT_HANDOFF.md`'s 2026-08-13 note for the full evidence, reasoning, and code
+change list. `fast_scnn` and `bisenetv2` keep their real screening evidence in the
+report — excluded from further compute, never dropped from the record. Not yet confirmed
+on real L4 hardware.
 
 ## Data state
 
@@ -499,7 +506,19 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-As of application commit `38df2ae…`, the current delivery passes 533 tests with
+As of application commit `5135f69…` (final-stage model-scope restriction), the current
+delivery passes 536 tests with thirty-two environment-gated skips without the pinned
+MMSeg stack present (up from 533/32 — replaced one over-strict `test_colab_pipeline.py`
+case asserting "final requires exactly five models" with four narrower cases covering
+the relaxed, frozen-order-subset `final_models` validation). Mypy passes for all 119
+configured source modules (unchanged count — no new source module, `colab_pipeline.py`/
+`release_acceptance.py`/`scripts/colab_pipeline.py`/`scripts/run_colab_master.py` edited
+in place). This commit directly changes `ColabPipeline`'s `final`/`selection`/`accept`
+orchestration, so the environment-gated CPU rehearsal suite
+(`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) staying skipped locally is a
+real verification gap this round, not a "no relevant code touched" pass-through like
+most prior entries below — the next real Colab run is the load-bearing confirmation.
+At the prior commit (`38df2ae…`), the delivery passed 533 tests with
 thirty-two environment-gated skips without the pinned MMSeg stack present (up from
 523/32 — 10 new cases in `test_training_log_analysis.py`, using the user's own real
 pasted Colab log excerpt as the primary fixture rather than a synthetic one). Mypy
@@ -560,11 +579,15 @@ was regenerated twice byte-identically at SHA-256
 `1110e0ef65fa675cdf247fb967a860931c848ae62ea3a2e72e505cd4b617ba77`. At commit
 `f2f2110…` (live progress output — again no cell text changed), it was regenerated
 twice byte-identically at SHA-256
-`97198ac21eddf1ed1ffca4376c6ae4cebe0212a2d0fab95ffe4816cfceb5c427`. At the current
-commit `38df2ae…` (real-evidence training-log analysis tool — no notebook cell text
+`97198ac21eddf1ed1ffca4376c6ae4cebe0212a2d0fab95ffe4816cfceb5c427`. At commit
+`38df2ae…` (real-evidence training-log analysis tool — no notebook cell text
 changed either, this tool is deliberately a standalone script, not wired into the
 notebook), it was regenerated twice byte-identically at SHA-256
-`7237aee68f3cd53ea346abe2874c173f235e3e775774eee02671648f42a70290`, and both
+`7237aee68f3cd53ea346abe2874c173f235e3e775774eee02671648f42a70290`. At the current
+commit `5135f69…` (final-stage model-scope restriction — no notebook cell text
+changed, `run_colab_master.py`/`scripts/colab_pipeline.py` are called by the notebook
+but not embedded in it), it was regenerated twice byte-identically at SHA-256
+`ba0f377549e1eb54354f1df6b0f98b0b916faf191b9ec1b9ce74da9da485d208`, and both
 `tests/integration/test_notebook.py` (including `test_delivery_notebooks.py`'s
 corrected assertion) and the local claim-safe execution harness
 (`scripts/dev/run_delivery_notebooks_local.py`) pass at this commit.

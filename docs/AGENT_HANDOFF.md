@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `38df2ae` (see `git log` for the full SHA)
+  `5135f69` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -241,6 +241,53 @@
   per-iteration cost would make a full `final` run (40000 steps) infeasible within the
   remaining timeline, and `ddrnet_23_slim` has no real screening result yet and a
   low measured smoke-stage mIoU.
+- **2026-08-13 model-scope decision superseding the above, plus a `final`-stage
+  restructure (commit `5135f69…`):** the user asked live, mid-real-Colab-session,
+  whether to interrupt a running `bisenetv2` screening (~6.5–7s/iter, would take
+  ~10 hours to finish). Confirmed via two Explore agents that HPO's
+  `select_hpo_models()` (`hpo_runtime.py`) needs at least 2 valid candidates, not all
+  5 — so interrupting `bisenetv2` (it already had checkpoints at iter 500/1000/1500)
+  does not block the pipeline; directed the user to stop it. By then all five models
+  had real screening throughput/mIoU on record for the first time this session (up
+  from the pilot/partial numbers the 2026-08-12 decision above was based on):
+
+  | Model | Screening mIoU (6000 iter, measured) | ~sec/iter (measured) |
+  | --- | --- | --- |
+  | pidnet_s | 27.19 | ~1.0 |
+  | ddrnet_23_slim | 24.50 | ~0.87 |
+  | fast_scnn | 20.10 (elapsed ~31046s ≈ 8.6h for screening alone) | ~5.3 |
+  | segformer_b0 | 16.50 | ~0.29 |
+  | bisenetv2 | not completed (smoke-only 6.57 from an earlier stage) | ~6.5–7 |
+
+  This reverses the 2026-08-12 pick of `segformer_b0`+`pidnet_s`: with full screening
+  evidence, `pidnet_s` and `ddrnet_23_slim` are the real mIoU leaders, not
+  `segformer_b0` (still fastest, but now lowest mIoU of the four completed runs).
+  Separately, and more consequentially: `colab_pipeline.py`'s `final` phase was found
+  to hard-require **all five** models regardless of HPO's top-2 pick
+  (`PipelineInputs.validated()` rejected any `final_models != ALL_MODELS`, a
+  deliberate, documented design per `docs/SEMANTIC_FIRST_RUNBOOK.md`/`DECISIONS.md`,
+  not unexamined default cruft) — at real measured throughput, 40,000 final steps on
+  all five would cost ≈155 GPU-hours, incompatible with a 4-day deadline (fast_scnn
+  ≈59h, bisenetv2 ≈72h alone). Under the same 2026-08-12 delegation, restricted
+  `final_models` to `segformer_b0`, `pidnet_s`, `ddrnet_23_slim` (≈24 GPU-hours) —
+  chosen because their measured per-iteration cost keeps a full 40000-step final run
+  feasible; `segformer_b0` is kept despite its lower mIoU because it is cheap (~3.2h)
+  and broadens the final comparison at negligible cost. Implemented by relaxing
+  `validated()`'s exact-five check to "non-empty, duplicate-free, frozen-order subset
+  of `ALL_MODELS`" and switching four call sites (`_accepted_release`,
+  `_write_run_contracts`, `_selection_evidence`, the `select_recommended_model` call)
+  from a hardcoded `ALL_MODELS` to `self.inputs.final_models`; `_write_release_candidate`
+  already used `self.inputs.final_models` and needed no change. Added a repeatable
+  `--final-model` flag to `scripts/colab_pipeline.py`; `scripts/run_colab_master.py`
+  (the one-button notebook runner) now reads `final_models` straight out of the
+  committed owner-authorization policy JSON
+  (`configs/campaign/semantic_cs_idd_v3_authorization.json`, which was narrowed to the
+  three models with an inline `final_models_scope_decision` provenance note) instead
+  of hardcoding it a second time, keeping the policy file the single source of truth.
+  `fast_scnn` and `bisenetv2` keep their real screening evidence in the report; they
+  are excluded from further compute, never silently dropped. **Not yet confirmed on
+  real L4 hardware** — the next real Colab run (after the user stops `bisenetv2` and
+  resumes) is the actual end-to-end test of this change.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -488,6 +535,20 @@
 
 ## Local gates
 
+- **As of commit `5135f69…` (final-stage model-scope restriction):** Ruff and format
+  checks pass for the full repository. Mypy passes for all 119 configured `src/edgeguard`
+  modules (unchanged count — no new source module, existing ones edited). Full pytest
+  passes: 536 passed, 32 environment-gated skipped without the pinned MMSeg stack (up
+  from 533/32 — net +3: replaced one over-strict `test_colab_pipeline.py` case with four
+  narrower ones covering the relaxed `final_models` validation). The CPU rehearsal suite
+  (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) is environment-gated and
+  stayed skipped locally, same as every prior local run in this session — this change
+  touches `ColabPipeline`'s `final`/`selection`/`accept` orchestration directly, so real
+  L4 confirmation on the next Colab run is the load-bearing test, not just documentation.
+  Master notebook generation is byte-identical across two runs at commit `5135f69…`,
+  SHA-256 `ba0f377549e1eb54354f1df6b0f98b0b916faf191b9ec1b9ce74da9da485d208` (superseding
+  the `38df2ae…`/`7237aee…` pin — no cell text changed, only `EXPECTED_PROJECT_COMMIT`).
+  `tests/integration/test_notebook.py` (2/2) passes.
 - **As of commit `38df2ae…` (real-evidence training-log analysis tool):** Ruff and
   format checks pass for the full repository. Mypy passes for all 119 configured source
   modules (up from 118 — adds `training_log_analysis.py`). Full pytest passes: 533
