@@ -166,6 +166,83 @@ def resolve_model_optimizer_defaults(mmseg_root: Path, model: ModelConfig) -> di
     return resolved
 
 
+def compute_run_identity(
+    protocol: RescueConfig,
+    *,
+    model_name: str,
+    stage_name: str,
+    mmseg_root: Path,
+    loss: str,
+    audit_report: Path | None,
+    split_manifest: Path | None,
+    manifests: Sequence[Path],
+    datasets: Sequence[str],
+    learning_rate: float | None,
+    weight_decay: float | None,
+    scheduler: str,
+    warmup_ratio: float,
+    initialization: str,
+    pretrained_manifest: Path | None,
+    precision: str,
+    max_steps: int,
+    scheduler_steps: int,
+    intentional_interrupt_optimizer_step: int | None,
+    project_commit: str | None,
+) -> dict[str, Any]:
+    """Compute the immutable per-run identity dict `train_model` would use for this
+    exact configuration, without running any training.
+
+    A Drive-published checkpoint is only ever reused when a freshly computed
+    `identity_sha256` matches the one recorded at publish time (see
+    `EdgeGuardRecoveryHook`/`peek_recovery_metadata`); this is the single source of
+    truth both `train_model` and any recovery-migration tooling must share, so it is
+    factored out rather than duplicated. `protocol` must already reflect the resolved
+    `device_batch`/`workers`/`gradient_accumulation` a real run would use (only
+    `effective_batch`/`workers` feed into the identity). `precision` must already be
+    resolved (not `"auto"`).
+    """
+    scientific_protocol = asdict(protocol)
+    scientific_protocol["device_batch"] = None
+    scientific_protocol["gradient_accumulation"] = None
+    model = model_by_name(protocol, model_name)
+    upstream = mmseg_root / model.upstream_config
+    native_optimizer = resolve_model_optimizer_defaults(mmseg_root, model)
+    return {
+        "schema_version": "1.0",
+        "model": model_name,
+        "stage": stage_name,
+        "loss": loss,
+        "protocol_sha256": sha256_payload(scientific_protocol),
+        "split_manifest_sha256": sha256_file(split_manifest) if split_manifest else None,
+        "dataset_manifest_sha256s": [sha256_file(path) for path in manifests],
+        "datasets": list(datasets),
+        "optimizer_type": native_optimizer["type"],
+        "learning_rate": (
+            native_optimizer["learning_rate"] if learning_rate is None else learning_rate
+        ),
+        "weight_decay": (
+            native_optimizer["weight_decay"] if weight_decay is None else weight_decay
+        ),
+        "scheduler": scheduler,
+        "warmup_ratio": warmup_ratio,
+        "initialization": initialization,
+        "pretrained_manifest_sha256": (
+            sha256_file(pretrained_manifest) if pretrained_manifest else None
+        ),
+        "upstream_config_sha256": sha256_file(upstream),
+        "effective_batch": protocol.effective_batch,
+        "workers": protocol.workers,
+        "precision": precision,
+        "max_steps": max_steps,
+        "scheduler_steps": scheduler_steps,
+        "intentional_interrupt_optimizer_step": intentional_interrupt_optimizer_step,
+        "project_commit": project_commit,
+        "class_weights_sha256": (
+            sha256_file(audit_report) if loss == "median_frequency" and audit_report else None
+        ),
+    }
+
+
 def _strip_pretrained(value: Any) -> None:
     if isinstance(value, dict):
         if "pretrained" in value:
@@ -881,43 +958,28 @@ def train_model(
     if work_dir.exists() and any(work_dir.iterdir()) and not resume:
         raise FileExistsError(f"refusing non-empty run directory without --resume: {work_dir}")
     work_dir.mkdir(parents=True, exist_ok=True)
-    model = model_by_name(protocol, model_name)
-    upstream = mmseg_root / model.upstream_config
-    native_optimizer = resolve_model_optimizer_defaults(mmseg_root, model)
-    identity = {
-        "schema_version": "1.0",
-        "model": model_name,
-        "stage": stage_name,
-        "loss": loss,
-        "protocol_sha256": sha256_payload(scientific_protocol),
-        "split_manifest_sha256": sha256_file(split_manifest) if split_manifest else None,
-        "dataset_manifest_sha256s": [sha256_file(path) for path in manifests],
-        "datasets": datasets,
-        "optimizer_type": native_optimizer["type"],
-        "learning_rate": (
-            native_optimizer["learning_rate"] if learning_rate is None else learning_rate
-        ),
-        "weight_decay": (
-            native_optimizer["weight_decay"] if weight_decay is None else weight_decay
-        ),
-        "scheduler": scheduler,
-        "warmup_ratio": warmup_ratio,
-        "initialization": initialization,
-        "pretrained_manifest_sha256": (
-            sha256_file(pretrained_manifest) if pretrained_manifest else None
-        ),
-        "upstream_config_sha256": sha256_file(upstream),
-        "effective_batch": protocol.effective_batch,
-        "workers": protocol.workers,
-        "precision": precision,
-        "max_steps": resolved_max_steps,
-        "scheduler_steps": resolved_scheduler_steps,
-        "intentional_interrupt_optimizer_step": intentional_interrupt_optimizer_step,
-        "project_commit": project_commit,
-        "class_weights_sha256": (
-            sha256_file(audit_report) if loss == "median_frequency" and audit_report else None
-        ),
-    }
+    identity = compute_run_identity(
+        protocol,
+        model_name=model_name,
+        stage_name=stage_name,
+        mmseg_root=mmseg_root,
+        loss=loss,
+        audit_report=audit_report,
+        split_manifest=split_manifest,
+        manifests=manifests,
+        datasets=datasets,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        scheduler=scheduler,
+        warmup_ratio=warmup_ratio,
+        initialization=initialization,
+        pretrained_manifest=pretrained_manifest,
+        precision=precision,
+        max_steps=resolved_max_steps,
+        scheduler_steps=resolved_scheduler_steps,
+        intentional_interrupt_optimizer_step=intentional_interrupt_optimizer_step,
+        project_commit=project_commit,
+    )
     identity_path = work_dir / "run_identity.json"
     identity_sha256 = sha256_payload(identity)
     recovery_artifact_id = f"{stage_name}-{model_name}-{suffix}".replace("_", "-")
