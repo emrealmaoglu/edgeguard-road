@@ -387,6 +387,8 @@ def eg_phase(target):
         )
     except BaseException as error:
         persist_failure(f"phase-{target}", error)
+        # Logs matter most when a phase fails, so package them before propagating.
+        eg_bundle(f"{target}-FAILED")
         raise
     MASTER_RESULT = json.loads(RESULT_PATH.read_text(encoding="utf-8"))
     print(f"\\n=== '{target}' fazı tamamlandı ===")

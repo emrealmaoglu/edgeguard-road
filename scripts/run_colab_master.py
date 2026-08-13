@@ -649,8 +649,28 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         environment=environment,
     )
 
+    accepted_release = work_root / "accepted_release.json"
+    if not accepted_release.is_file():
+        # Deliveries only exist once the campaign has run far enough to accept a release.
+        # A per-phase target (`--target smoke`, say) legitimately stops short of that, so
+        # report the phase that actually completed instead of failing on a missing file.
+        partial = {
+            "schema_version": "1.0",
+            "record_type": "edgeguard_colab_master_result",
+            "status": "phase_completed",
+            "campaign_id": "semantic-cs-idd-v3",
+            "target": args.target,
+            "project_commit": args.project_commit,
+            "resources": resources,
+            "restored_campaign_state": restored,
+            "data": prepared_payload,
+        }
+        _atomic_json(args.result.resolve(), partial)
+        stage("phase-completed", target=args.target)
+        return partial
+
     stage("publish-deliveries")
-    accepted = json.loads((work_root / "accepted_release.json").read_text(encoding="utf-8"))
+    accepted = json.loads(accepted_release.read_text(encoding="utf-8"))
     release_id = str(accepted["release_id"])
     local_delivery = work_root / "deliveries" / release_id
     drive_delivery = campaign_root / "releases" / release_id
