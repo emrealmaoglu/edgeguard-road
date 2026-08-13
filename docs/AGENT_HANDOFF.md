@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `90b6bea` (see `git log` for the full SHA)
+  `a5519f4` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -347,6 +347,33 @@
   `24aed1497ad4759663b4498b0e940ac38458a513c56115fd35af05492c6e6ffe`. **Not yet run for
   real on Colab** — the user still needs to invoke the migration script (exact command in
   `docs/AI_USAGE_LOG.md`'s entry for this commit) before resuming the production pipeline.
+- **2026-08-13 third follow-up (commit `a5519f4…`): made the migration fully automatic,
+  no manual command.** The user's Colab runtime disconnected before they could act on
+  the manual instructions above — there is no reliable way to hand-time "watch for
+  screening, interrupt, run this command" across an unpredictable disconnect/reconnect
+  cycle. Made `migrate_recovery_identity()` (now in `mmseg_runtime.py`, next to
+  `compute_run_identity`) self-contained: given just `recovery_root` and the current
+  `project_commit`, it reads the OLD `project_commit` directly off the existing Drive
+  receipt (new `peek_recovery_receipt` in `colab_recovery.py`) instead of requiring the
+  caller to know or pass it. `scripts/run_colab_master.py` — which only imports the
+  standard library (`test_host_entrypoints_import_only_the_standard_library` enforces
+  this) — now runs `scripts/migrate_recovery_identity.py` as its own subprocess stage
+  (`"recovery-identity-migration"`), right after data staging (once the frozen
+  manifests exist) and before the production pipeline starts, for every model in
+  `screening_models`. Unattended, on every session, and safe by construction: it only
+  ever republishes a checkpoint whose training-equivalence it just verified, and does
+  nothing (no error, no retrain trigger) if there's nothing to migrate.
+  `scripts/migrate_recovery_identity.py --model` is now optional (defaults to all five
+  models), matching how the master runner calls it when a policy doesn't set
+  `screening_models`. Application commit `a5519f4`; Ruff/format/mypy passed (119
+  modules, unchanged); full local suite 547 passed/32 skipped (up from 542/32 — 5 new
+  `test_migrate_recovery_identity.py` cases: no-existing-pointer, already-current,
+  verified-dry-run, execute-republishes-same-bytes, and refuses-on-tampered-identity).
+  `test_colab_master_bootstrap.py`'s full 17-test suite, including the stdlib-only
+  import check, stayed green. Notebook regenerated twice byte-identically at SHA-256
+  `e8597fdd473c4a74f5c4ce671c03f3687f83ff12d5e590c7b5e88dea5e9627b1`. **No manual step
+  needed anymore** — the user can just open a fresh Colab session and Runtime → Run
+  all; not yet confirmed on real Colab hardware.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -594,6 +621,20 @@
 
 ## Local gates
 
+- **As of commit `a5519f4…` (automatic recovery-identity migration, no manual step):**
+  Ruff and format checks pass for the full repository. Mypy passes for all 119
+  configured `src/edgeguard` modules (unchanged count — `migrate_recovery_identity` and
+  `peek_recovery_receipt` are new functions inside existing modules). Full pytest
+  passes: 547 passed, 32 environment-gated skipped without the pinned MMSeg stack (up
+  from 542/32 — 5 new `test_migrate_recovery_identity.py` cases, all running locally
+  without the pinned stack for the same reason `test_compute_run_identity.py` does).
+  `tests/unit/test_colab_master_bootstrap.py`'s full 17 tests pass, including
+  `test_host_entrypoints_import_only_the_standard_library` — confirms
+  `run_colab_master.py` still shells out to the migration script rather than importing
+  `edgeguard.rescue` directly. Master notebook generation is byte-identical across two
+  runs at commit `a5519f4…`, SHA-256
+  `e8597fdd473c4a74f5c4ce671c03f3687f83ff12d5e590c7b5e88dea5e9627b1`. **Not yet run for
+  real on Colab** — the next real session is the load-bearing confirmation.
 - **As of commit `90b6bea…` (recovery-identity migration tool):** Ruff and format
   checks pass for the full repository. Mypy passes for all 119 configured
   `src/edgeguard` modules (unchanged count — `compute_run_identity` is a new function

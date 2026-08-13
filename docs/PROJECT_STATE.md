@@ -5,7 +5,7 @@ Updated 2026-08-13 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`90b6bea` (see `git log` for the full SHA). The only generated notebook is
+`a5519f4` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -58,7 +58,17 @@ the only differing field, then republishes the same real checkpoint bytes under 
 new commit's identity. Fail-closed — refuses to migrate on any mismatch, never
 retrains or fabricates. See `docs/AGENT_HANDOFF.md`'s second 2026-08-13 note and
 `docs/AI_USAGE_LOG.md` for the exact command the user needs to run before resuming.
-Application commit `90b6bea`.
+
+**2026-08-13 third follow-up: made the migration automatic.** The user's runtime
+disconnected before the manual command above could be run — hand-timing "watch for
+screening, interrupt, run this" across an unpredictable disconnect is not reliable.
+`migrate_recovery_identity()` (`mmseg_runtime.py`) now reads the old `project_commit`
+directly off the existing Drive receipt instead of requiring it as an argument, and
+`scripts/run_colab_master.py` runs it automatically as its own stage, right after data
+staging and before the production pipeline, for every `screening_models` entry — no
+manual command needed anymore, safe to run unattended every session (fail-closed: it
+only republishes what it just verified, and does nothing if there's nothing to
+migrate). Application commit `a5519f4`.
 
 ## Data state
 
@@ -534,16 +544,23 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-As of application commit `90b6bea…` (recovery-identity migration tool), the current
-delivery passes 542 tests with thirty-two environment-gated skips without the pinned
+As of application commit `a5519f4…` (automatic recovery-identity migration), the
+current delivery passes 547 tests with thirty-two environment-gated skips without the
+pinned MMSeg stack present (up from 542/32 — 5 new `test_migrate_recovery_identity.py`
+cases). Mypy passes for all 119 configured source modules (unchanged count).
+`tests/unit/test_colab_master_bootstrap.py`'s full 17-test suite, including the
+stdlib-only import check, stayed green — `run_colab_master.py` shells out to the
+migration script rather than importing `edgeguard.rescue`. This commit changes both
+`ColabPipeline`'s recovery path and the master runner's own stage sequence, so the
+next real Colab session is the load-bearing confirmation; no manual step is required
+of the user anymore.
+At the prior commit `90b6bea…` (recovery-identity migration tool, manual), the
+delivery passed 542 tests with thirty-two environment-gated skips without the pinned
 MMSeg stack present (up from 539/32 — 3 new `test_compute_run_identity.py` cases;
 these run locally, unusually for `mmseg_runtime.py`-touching tests, since
 `compute_run_identity` only needs `mmengine.Config.fromfile` on a fake fixture, not
-the full pinned stack). Mypy passes for all 119 configured source modules (unchanged
-count). This commit refactors `train_model`'s identity-computation path (pure
-extraction, no behavior change intended, verified by the new tests and by the
-pre-existing identity/recovery test suite staying green), so the next real Colab
-resume — after the user runs the migration script — is the load-bearing confirmation.
+the full pinned stack). Mypy passed for all 119 configured source modules (unchanged
+count).
 At the prior commit `6b30275…` (screening-stage model-scope restriction), the
 current delivery passes 539 tests with thirty-two environment-gated skips without the
 pinned MMSeg stack present (up from 536/32 — 3 new `test_colab_pipeline.py` cases for
@@ -636,11 +653,15 @@ embedded in it), it was regenerated twice byte-identically at SHA-256
 `ba0f377549e1eb54354f1df6b0f98b0b916faf191b9ec1b9ce74da9da485d208`. At commit
 `6b30275…` (screening-stage model-scope restriction — again no notebook cell text
 changed), it was regenerated twice byte-identically at SHA-256
-`e277eb9ba5653bf407b0ab7e09985c384473d9128a5a168c576078a4176a5791`. At the current
-commit `90b6bea…` (recovery-identity migration tool — again no notebook cell text
-changed, the new script is called on-demand by the user, not embedded), it was
+`e277eb9ba5653bf407b0ab7e09985c384473d9128a5a168c576078a4176a5791`. At commit
+`90b6bea…` (recovery-identity migration tool, manual — again no notebook cell text
+changed, the new script was called on-demand by the user, not embedded), it was
 regenerated twice byte-identically at SHA-256
-`24aed1497ad4759663b4498b0e940ac38458a513c56115fd35af05492c6e6ffe`, and both
+`24aed1497ad4759663b4498b0e940ac38458a513c56115fd35af05492c6e6ffe`. At the current
+commit `a5519f4…` (automatic recovery-identity migration — again no notebook cell
+text changed; `run_colab_master.py` calls the migration script itself now, still not
+embedded in the notebook), it was regenerated twice byte-identically at SHA-256
+`e8597fdd473c4a74f5c4ce671c03f3687f83ff12d5e590c7b5e88dea5e9627b1`, and both
 `tests/integration/test_notebook.py` (including `test_delivery_notebooks.py`'s
 corrected assertion) and the local claim-safe execution harness
 (`scripts/dev/run_delivery_notebooks_local.py`) pass at this commit.
