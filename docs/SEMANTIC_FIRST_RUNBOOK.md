@@ -25,6 +25,17 @@ not automatically try to resume and finish `bisenetv2`'s screening. `fast_scnn`
 real evidence in the report with an explicit exclusion note — never silently dropped.
 See `docs/AI_USAGE_LOG.md` for the full evidence and decision record.
 
+**2026-08-13 `fast_scnn` also excluded from `screening_models`.** The automatic
+recovery-identity migration above could not migrate `fast_scnn`'s real, complete
+6000-step screening checkpoint (mIoU 20.10) to the current commit — see the migration
+finding in `docs/AI_USAGE_LOG.md`. Real pilot-stage throughput measured on both L4
+(~5.2 s/iter) and A100 (~5.3-5.6 s/iter — no speedup for this model at the frozen
+`device_batch: 4`, this workload appears CPU/dataloader-bound rather than
+GPU-compute-bound at this batch size) puts a fresh 6000-step run at ~9 GPU-hours.
+`fast_scnn` is already excluded from `final_models`, so rerunning its screening cannot
+change any downstream decision; its real evidence already exists and is preserved.
+`screening_models` is narrowed to `segformer_b0`/`pidnet_s`/`ddrnet_23_slim`.
+
 **2026-08-13 automatic recovery-identity migration.** A commit that only changes
 orchestration code (e.g. the `screening_models`/`final_models` decision above) still
 changes `project_commit`, which is baked into every training run's immutable identity

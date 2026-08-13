@@ -23,7 +23,6 @@
   },
   "screening_models": [
     "segformer_b0",
-    "fast_scnn",
     "pidnet_s",
     "ddrnet_23_slim"
   ],
@@ -33,6 +32,13 @@
     "date": "2026-08-13",
     "reason": "bisenetv2's screening run was interrupted by the owner mid-session (directed to stop it live, since it was ~6.5-7s/iter and would need ~8 more hours to reach the 6000-step ceiling, and it is already excluded from final_models regardless of its screening outcome). Resuming it would cost real deadline time for a result that cannot change the final-stage model set. Its partial real evidence (smoke-stage mIoU 6.57 at 50 iters; interrupted screening checkpoint at iter ~1500/6000) remains in the evidence record and is reported honestly as incomplete -- see docs/AI_USAGE_LOG.md for the full record. segformer_b0/fast_scnn/pidnet_s/ddrnet_23_slim already completed full 6000-step screening before this decision and are unaffected.",
     "excluded_models": ["bisenetv2"]
+  },
+  "screening_models_scope_decision_2026_08_13b": {
+    "decided_by": "claude-code",
+    "authority": "CLAUDE.md 2026-08-12 broad scientific-decision delegation",
+    "date": "2026-08-13",
+    "reason": "The automatic recovery-identity-migration tool (see docs/AI_USAGE_LOG.md) refused to migrate fast_scnn's real, complete 6000-step screening checkpoint (mIoU 20.10, recorded under project_commit f2f211000baf7a9f9139d777c8529fa6639c78de) to the current commit -- resuming it is now blocked, so it would retrain from scratch. Real pilot-stage throughput measured on both L4 (~5.2s/iter) and A100 (~5.3-5.6s/iter, no speedup observed for this model at the frozen device_batch=4 -- the workload appears CPU/dataloader-bound rather than GPU-compute-bound at this batch size) puts a fresh 6000-step run at ~9 GPU-hours. fast_scnn is already excluded from final_models (see the decision below) and its real screening evidence already exists and is preserved in the report with an explicit note -- rerunning it cannot change any downstream decision. Applying the exact same reasoning already used for bisenetv2's exclusion above.",
+    "excluded_models": ["fast_scnn"]
   },
   "final_models": [
     "segformer_b0",
