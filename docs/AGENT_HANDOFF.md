@@ -2,7 +2,7 @@
 
 - **Branch:** `stabilize/colab-v2`
 - **Application commit pinned by notebook:**
-  `6b30275` (see `git log` for the full SHA)
+  `90b6bea` (see `git log` for the full SHA)
 - **Campaign:** `semantic-cs-idd-v3`
 - **Notebook:** `notebooks/EdgeGuard_Master_Colab.ipynb`
 - **Classification:** locally verified engineering delivery; real Colab GPU/training and
@@ -318,6 +318,35 @@
   `e277eb9ba5653bf407b0ab7e09985c384473d9128a5a168c576078a4176a5791`. **Full restart
   plan for the next real Colab session is in `docs/AI_USAGE_LOG.md`'s 2026-08-13
   entry for this commit.**
+- **2026-08-13 second follow-up (commit `90b6bea…`): the `6b30275` fix above was
+  itself invalidated by the exact problem it was trying to prevent.** When the user
+  actually resumed on the new commit, the real, previously-completed 6000-step
+  screening runs for `segformer_b0`/`fast_scnn`/`pidnet_s`/`ddrnet_23_slim` (from the
+  `f2f2110` session) were about to be retrained from iteration 0 — `run_colab_master.py`'s
+  restore step skips the Drive campaign-state tarball on any `project_commit` mismatch,
+  and separately `mmseg_runtime.py`'s per-run `identity` dict bakes in `project_commit`
+  directly, so `EdgeGuardRecoveryHook`'s resume check correctly (if expensively) treated
+  every real Drive checkpoint as belonging to "a different immutable run" once the commit
+  changed — even though `6b30275`'s only change was orchestration-level
+  (`screening_models`/`final_models` CLI flags), nothing about how any individual model is
+  actually trained. Confirmed by inspection: every other field in the `identity` dict
+  (protocol hash, dataset manifest hashes, optimizer config, step counts) is unaffected by
+  that change. Extracted the inline identity-dict construction out of `train_model` into a
+  standalone, GPU-free `compute_run_identity()` (pure refactor — `train_model` now just
+  calls it, one place this logic lives). Added `scripts/migrate_recovery_identity.py`: for
+  each of the four models, recomputes the identity under both the old and new commit,
+  verifies the recomputed old-commit identity matches what was actually recorded on Drive
+  at publish time (proof nothing besides `project_commit` changed) and that
+  `project_commit` is the only differing field between old/new, and only then republishes
+  the *same* checkpoint bytes under the new commit's identity via the existing
+  `publish_recovery_file`/`restore_recovery_file` API (fail-closed — refuses outright,
+  never retrains or fabricates, on any mismatch). Application commit `90b6bea`;
+  Ruff/format/mypy passed (119 modules, unchanged); full local suite 542 passed/32 skipped
+  (up from 539/32 — 3 new `test_compute_run_identity.py` cases). Notebook regenerated
+  twice byte-identically at SHA-256
+  `24aed1497ad4759663b4498b0e940ac38458a513c56115fd35af05492c6e6ffe`. **Not yet run for
+  real on Colab** — the user still needs to invoke the migration script (exact command in
+  `docs/AI_USAGE_LOG.md`'s entry for this commit) before resuming the production pipeline.
 - **Note on "claim-safe local cell execution":** this check (see
   `scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's
   cells import and execute their own syntax correctly under
@@ -565,6 +594,22 @@
 
 ## Local gates
 
+- **As of commit `90b6bea…` (recovery-identity migration tool):** Ruff and format
+  checks pass for the full repository. Mypy passes for all 119 configured
+  `src/edgeguard` modules (unchanged count — `compute_run_identity` is a new function
+  inside the existing `mmseg_runtime.py` module, not a new module).
+  `scripts/migrate_recovery_identity.py` is new and mypy-clean. Full pytest passes: 542
+  passed, 32 environment-gated skipped without the pinned MMSeg stack (up from 539/32 —
+  3 new `test_compute_run_identity.py` cases; these run locally, unlike most
+  `mmseg_runtime.py`-touching tests, because `compute_run_identity` only needs
+  `mmengine.Config.fromfile` on a fake upstream-config fixture, not the full pinned
+  torch/mmseg stack). Master notebook generation is byte-identical across two runs at
+  commit `90b6bea…`, SHA-256
+  `24aed1497ad4759663b4498b0e940ac38458a513c56115fd35af05492c6e6ffe` (no cell text
+  changed, only `EXPECTED_PROJECT_COMMIT`). `tests/integration/test_notebook.py` (2/2)
+  passes. **Not yet run for real on Colab** — this refactors `train_model`'s identity
+  path, so a real Colab resume (after running the migration script) is the load-bearing
+  confirmation, not yet obtained.
 - **As of commit `6b30275…` (screening-stage model-scope restriction, letting a
   fresh Colab session skip resuming `bisenetv2`'s abandoned screening run):** Ruff
   and format checks pass for the full repository. Mypy passes for all 119 configured

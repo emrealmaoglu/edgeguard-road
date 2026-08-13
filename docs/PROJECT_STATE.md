@@ -5,7 +5,7 @@ Updated 2026-08-13 on `stabilize/colab-v2`.
 ## Current delivery
 
 The Colab v3 application commit is
-`6b30275` (see `git log` for the full SHA). The only generated notebook is
+`90b6bea` (see `git log` for the full SHA). The only generated notebook is
 `notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
 campaign ID is `semantic-cs-idd-v3`.
 
@@ -42,7 +42,23 @@ ceiling. Also clarified: the private_inputs archive-inventory cell "not running"
 fresh session is expected, intentional content-addressed caching
 (`scripts/inventory_private_inputs.py`), not a defect — see
 `docs/AGENT_HANDOFF.md`'s 2026-08-13 note and `docs/AI_USAGE_LOG.md` for the full
-restart plan given to the user. Application commit `6b30275`.
+restart plan given to the user.
+
+**2026-08-13 second follow-up: the fix above was itself invalidated by the exact
+problem it targeted.** `project_commit` is baked into every training run's immutable
+`identity_sha256` (see `mmseg_runtime.py`'s per-run identity dict), so the `6b30275`
+commit itself made the real, already-completed screening runs from the `f2f2110`
+session look stale and about to be retrained from scratch (~20+ wasted GPU-hours) —
+even though `6b30275` only changed orchestration-level CLI flags, nothing about how
+any model is actually trained. Added `scripts/migrate_recovery_identity.py`
+(commit `90b6bea`): recomputes each model's identity under the old and new commit,
+verifies the recomputed old-commit identity matches what was actually recorded on
+Drive (proof nothing besides `project_commit` differs) and that `project_commit` is
+the only differing field, then republishes the same real checkpoint bytes under the
+new commit's identity. Fail-closed — refuses to migrate on any mismatch, never
+retrains or fabricates. See `docs/AGENT_HANDOFF.md`'s second 2026-08-13 note and
+`docs/AI_USAGE_LOG.md` for the exact command the user needs to run before resuming.
+Application commit `90b6bea`.
 
 ## Data state
 
@@ -518,7 +534,17 @@ their own syntax correctly — the real training call is stubbed behind a hardco
 (`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
 against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
 orientation) bug above before any Colab GPU time was spent on it.
-As of application commit `6b30275…` (screening-stage model-scope restriction), the
+As of application commit `90b6bea…` (recovery-identity migration tool), the current
+delivery passes 542 tests with thirty-two environment-gated skips without the pinned
+MMSeg stack present (up from 539/32 — 3 new `test_compute_run_identity.py` cases;
+these run locally, unusually for `mmseg_runtime.py`-touching tests, since
+`compute_run_identity` only needs `mmengine.Config.fromfile` on a fake fixture, not
+the full pinned stack). Mypy passes for all 119 configured source modules (unchanged
+count). This commit refactors `train_model`'s identity-computation path (pure
+extraction, no behavior change intended, verified by the new tests and by the
+pre-existing identity/recovery test suite staying green), so the next real Colab
+resume — after the user runs the migration script — is the load-bearing confirmation.
+At the prior commit `6b30275…` (screening-stage model-scope restriction), the
 current delivery passes 539 tests with thirty-two environment-gated skips without the
 pinned MMSeg stack present (up from 536/32 — 3 new `test_colab_pipeline.py` cases for
 `screening_models`, mirroring `final_models`). Mypy passes for all 119 configured
@@ -607,10 +633,14 @@ notebook), it was regenerated twice byte-identically at SHA-256
 `5135f69…` (final-stage model-scope restriction — no notebook cell text changed,
 `run_colab_master.py`/`scripts/colab_pipeline.py` are called by the notebook but not
 embedded in it), it was regenerated twice byte-identically at SHA-256
-`ba0f377549e1eb54354f1df6b0f98b0b916faf191b9ec1b9ce74da9da485d208`. At the current
-commit `6b30275…` (screening-stage model-scope restriction — again no notebook cell
-text changed), it was regenerated twice byte-identically at SHA-256
-`e277eb9ba5653bf407b0ab7e09985c384473d9128a5a168c576078a4176a5791`, and both
+`ba0f377549e1eb54354f1df6b0f98b0b916faf191b9ec1b9ce74da9da485d208`. At commit
+`6b30275…` (screening-stage model-scope restriction — again no notebook cell text
+changed), it was regenerated twice byte-identically at SHA-256
+`e277eb9ba5653bf407b0ab7e09985c384473d9128a5a168c576078a4176a5791`. At the current
+commit `90b6bea…` (recovery-identity migration tool — again no notebook cell text
+changed, the new script is called on-demand by the user, not embedded), it was
+regenerated twice byte-identically at SHA-256
+`24aed1497ad4759663b4498b0e940ac38458a513c56115fd35af05492c6e6ffe`, and both
 `tests/integration/test_notebook.py` (including `test_delivery_notebooks.py`'s
 corrected assertion) and the local claim-safe execution harness
 (`scripts/dev/run_delivery_notebooks_local.py`) pass at this commit.
