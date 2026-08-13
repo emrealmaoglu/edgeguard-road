@@ -160,7 +160,8 @@ headless OpenCV 4.10.0.84, and the pinned MMSegmentation v1.2.2 commit.
   Drive files directly.
 - The exact approved training-manifest hashes and counts are fail-closed.
 - Model selection uses only `train_select`; official source validation is opened after
-  the five-model release is accepted and cannot alter the recommendation.
+  the final-model-set release is accepted (segformer_b0/pidnet_s/ddrnet_23_slim as of
+  2026-08-13, see `docs/SEMANTIC_FIRST_RUNBOOK.md`) and cannot alter the recommendation.
 - A smoke/canary/acceptance fixture is not a thesis result.
 - TensorRT is built on the real Jetson. Device benchmarks remain `not_run` until measured.
 - Do not tag the notebook Colab-ready until two clean L4 canaries and the intentional

@@ -5,8 +5,22 @@
 Open `notebooks/EdgeGuard_Master_Colab.ipynb`, select **L4 GPU** and **High-RAM**, and
 choose **Runtime → Run all**. There are no manual stage, finalist, review-receipt, or
 accepted-release controls in the notebook. The committed owner policy binds the exact
-Cityscapes/IDD audit candidates, five-model order, train-select selection rule, and the
+Cityscapes/IDD audit candidates, model order, train-select selection rule, and the
 post-acceptance official-source evaluation gate.
+
+**2026-08-13 final-stage model-scope decision.** Screening ran on all five candidates
+(real, measured). Real per-iteration throughput showed `fast_scnn` (~5.3 s/iter) and
+`bisenetv2` (~6.5-7 s/iter) are 15-25x slower than `segformer_b0`/`pidnet_s`/
+`ddrnet_23_slim`; a full 40,000-step final run on all five would cost roughly 155
+GPU-hours, incompatible with a 4-day presentation deadline. Under CLAUDE.md's 2026-08-12
+broad scientific-decision delegation, `final_models` in
+`configs/campaign/semantic_cs_idd_v3_authorization.json` was narrowed to `segformer_b0`,
+`pidnet_s`, `ddrnet_23_slim` (~24 GPU-hours total). `fast_scnn` (screening mIoU 20.10) and
+`bisenetv2` (screening incomplete, smoke-only mIoU 6.57) keep their real screening
+evidence in the report with an explicit exclusion note — never silently dropped. See
+`docs/AI_USAGE_LOG.md` for the full evidence and decision record. The five-model
+**screening** stage itself is unaffected; only `final`/`selection`/`ablation`/`accept`
+onward now operate on the narrowed set.
 
 The campaign ID is `semantic-cs-idd-v3`. The master runner performs:
 
@@ -28,8 +42,9 @@ or quarantine identity stops before training.
 - Core pilot: 2,000 optimizer steps.
 - Five-model screening: 6,000 optimizer steps.
 - Top-two HPO: 12 trials per model, 1,500/3,000-step pruning, 6,000-step ceiling.
-- Five-model final: 40,000 optimizer steps. HPO winners use their selected parameters;
-  the remaining models use the frozen common protocol.
+- Final (segformer_b0, pidnet_s, ddrnet_23_slim as of 2026-08-13; see the model-scope
+  decision above): 40,000 optimizer steps. HPO winners use their selected parameters;
+  the remaining final-set models use the frozen common protocol.
 - Recommendation order: Cityscapes–IDD train-select macro mIoU, rare-class mIoU, ONNX
   bytes, then fixed model name.
 - Recommended-model ablations: weighted CE and 256×512. The deployment model remains
@@ -44,13 +59,14 @@ optimizer, scheduler, AMP scaler, RNG/sampler identity and immutable input hashe
 
 The completed release directory in Drive contains:
 
-- `EdgeGuard_Jetson_Release.zip`: five checkpoints/configs/ONNX graphs, golden vectors,
+- `EdgeGuard_Jetson_Release.zip`: one checkpoint/config/ONNX graph per accepted final
+  model (see the model-scope decision above), golden vectors,
   preprocessing, ontology, ONNX validation, recommendation, and Jetson build/benchmark
   tools. No TensorRT engine is included.
 - `EdgeGuard_Thesis_Bundle.zip`: source CSV/JSON, LaTeX tables, 300-DPI PNG and PDF/SVG
   figures, model/class/ablation/calibration/domain comparisons, measured gallery, and a
   hash-bound `thesis_index.md`.
-- `EdgeGuard_Streamlit_Demo.zip`: accepted five-model demo, comparison data, calibration,
+- `EdgeGuard_Streamlit_Demo.zip`: accepted final-model-set demo, comparison data, calibration,
   overlays and honest Jetson `not_run` status.
 - `release_index.json`: SHA-256 and byte size for every ZIP.
 

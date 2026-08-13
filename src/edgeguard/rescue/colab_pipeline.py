@@ -125,8 +125,12 @@ class PipelineInputs:
         unknown = set(self.final_models) - set(ALL_MODELS)
         if unknown:
             raise ValueError(f"unsupported final models: {sorted(unknown)}")
-        if self.final_models != ALL_MODELS:
-            raise ValueError("Colab v3 final training requires all five models in frozen order")
+        if not self.final_models:
+            raise ValueError("final_models must not be empty")
+        if len(set(self.final_models)) != len(self.final_models):
+            raise ValueError("final_models must not contain duplicates")
+        if tuple(model for model in ALL_MODELS if model in self.final_models) != self.final_models:
+            raise ValueError("final_models must preserve the frozen five-model relative order")
         if self.ablation_model is not None:
             raise ValueError("Colab v3 derives the ablation model from train_select evidence")
         if (
@@ -246,8 +250,10 @@ class ColabPipeline:
                 raise ValueError("accepted release contains a non-accepted artifact")
             _release_artifact(release_path, artifact, f"artifact[{index}]")
         raw_models = release.get("models")
-        if not isinstance(raw_models, list) or len(raw_models) != len(ALL_MODELS):
-            raise ValueError("accepted release must contain exactly five final model sources")
+        if not isinstance(raw_models, list) or len(raw_models) != len(self.inputs.final_models):
+            raise ValueError(
+                "accepted release must contain exactly the campaign's final model sources"
+            )
         models: list[AcceptedModelSource] = []
         seen: set[str] = set()
         for index, record in enumerate(raw_models):
@@ -270,9 +276,9 @@ class ColabPipeline:
                     ),
                 )
             )
-        if tuple(item.model for item in models) != ALL_MODELS:
+        if tuple(item.model for item in models) != self.inputs.final_models:
             raise ValueError(
-                "accepted release model order differs from the frozen five-model order"
+                "accepted release model order differs from the campaign's final model order"
             )
         return release, tuple(models)
 
@@ -517,7 +523,7 @@ class ColabPipeline:
         runtime = json.loads(self.inputs.runtime_receipt.read_text(encoding="utf-8"))
         phase_models = list(models_for_phase(phase))
         if phase in {"final", "selection", "accept", "validation-data", "package"}:
-            phase_models = list(ALL_MODELS)
+            phase_models = list(self.inputs.final_models)
         if phase == "ablation":
             phase_models = [self._recommended_model()]
         release_verification = root / "accepted_release_verification.json"
@@ -1029,7 +1035,7 @@ class ColabPipeline:
         results: list[dict[str, Any]] = []
         evaluation_root = self.inputs.work_root / "evaluation/selection"
         export_root = self.inputs.work_root / "exports/selection"
-        for model in ALL_MODELS:
+        for model in self.inputs.final_models:
             run_dir = self._run_directory("final", model)
             checkpoint = self._checkpoint("final", model)
             resolved = run_dir / "resolved.py"
@@ -1134,7 +1140,7 @@ class ColabPipeline:
         candidates = payload.get("candidates")
         if not isinstance(candidates, list):
             raise ValueError("final selection candidate table is invalid")
-        selection = select_recommended_model(candidates, expected_models=ALL_MODELS)
+        selection = select_recommended_model(candidates, expected_models=self.inputs.final_models)
         atomic_json(report / "recommended_model.json", selection)
         return results
 
@@ -1391,7 +1397,7 @@ class ColabPipeline:
         return results
 
     def _write_release_candidate(self) -> Path:
-        """Write the deterministic five-model handoff for policy acceptance."""
+        """Write the deterministic final-model-set handoff for policy acceptance."""
         models: list[dict[str, Any]] = []
         artifacts: list[dict[str, Any]] = []
 

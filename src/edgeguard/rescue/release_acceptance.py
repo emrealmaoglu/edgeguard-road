@@ -97,7 +97,7 @@ def accept_release_candidate_by_policy(
     selection_path: Path,
     output_path: Path,
 ) -> dict[str, Any]:
-    """Promote an exact five-model candidate under owner-preauthorized rules."""
+    """Promote an exact policy-authorized-model-set candidate under owner-preauthorized rules."""
     if output_path.exists():
         existing = json.loads(output_path.read_text(encoding="utf-8"))
         if existing.get("accepted_candidate_sha256") == sha256_file(candidate_path):

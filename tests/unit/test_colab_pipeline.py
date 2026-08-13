@@ -123,11 +123,25 @@ def test_target_closure_and_five_model_gate_are_frozen() -> None:
     assert models_for_phase("screening") == ALL_MODELS
 
 
-def test_pipeline_rejects_any_partial_or_reordered_final_model_set(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="all five models"):
-        _pipeline(tmp_path / "partial", final_models=CORE_MODELS)
-    with pytest.raises(ValueError, match="all five models"):
+def test_pipeline_accepts_an_evidence_selected_final_model_subset(tmp_path: Path) -> None:
+    subset = (CORE_MODELS[0], CORE_MODELS[2], EXTENSION_MODELS[0])
+    pipeline = _pipeline(tmp_path / "subset", final_models=subset)
+    assert pipeline.inputs.final_models == subset
+
+
+def test_pipeline_rejects_reordered_final_model_set(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="frozen five-model relative order"):
         _pipeline(tmp_path / "reordered", final_models=tuple(reversed(ALL_MODELS)))
+
+
+def test_pipeline_rejects_empty_final_model_set(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        _pipeline(tmp_path / "empty", final_models=())
+
+
+def test_pipeline_rejects_duplicate_final_models(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        _pipeline(tmp_path / "dup", final_models=(CORE_MODELS[0], CORE_MODELS[0]))
 
 
 def _accepted_release(tmp_path: Path, pipeline: ColabPipeline) -> Path:

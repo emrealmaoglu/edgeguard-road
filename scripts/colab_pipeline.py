@@ -27,6 +27,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--data-manifest", type=Path, action="append", required=True)
     parser.add_argument("--candidate-table", type=Path)
+    parser.add_argument(
+        "--final-model",
+        action="append",
+        choices=ALL_MODELS,
+        help=(
+            "model included in the final stage (repeatable); defaults to all five in "
+            "frozen order. Restricting this set is a scientific-scope decision -- see "
+            "docs/AI_USAGE_LOG.md for the evidence behind any non-default value."
+        ),
+    )
     parser.add_argument("--rare-classes-file", type=Path)
     parser.add_argument("--class-weights-file", type=Path)
     parser.add_argument("--authorization-policy", type=Path, required=True)
@@ -67,6 +77,11 @@ def main() -> int:
         else work_root / "reports/screening/candidate_table.json"
     )
     accepted_release = work_root / "accepted_release.json"
+    final_models = (
+        tuple(model for model in ALL_MODELS if model in args.final_model)
+        if args.final_model
+        else ALL_MODELS
+    )
     evaluation_manifests = tuple(path.resolve() for path in args.evaluation_manifest) or (
         work_root / "manifests/official-validation/cityscapes.frozen.json",
         work_root / "manifests/official-validation/idd20k.frozen.json",
@@ -82,7 +97,7 @@ def main() -> int:
             config_path=args.config.resolve(),
             data_manifests=tuple(path.resolve() for path in args.data_manifest),
             candidate_table=candidate_table,
-            final_models=ALL_MODELS,
+            final_models=final_models,
             rare_classes_file=(
                 args.rare_classes_file.resolve() if args.rare_classes_file else None
             ),

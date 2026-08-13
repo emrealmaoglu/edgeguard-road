@@ -584,6 +584,12 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("data preparation did not return both frozen training manifests")
     for manifest in manifests:
         command.extend(("--data-manifest", str(manifest)))
+    policy_payload = json.loads(policy.read_text(encoding="utf-8"))
+    final_models = policy_payload.get("final_models")
+    if not isinstance(final_models, list) or not final_models:
+        raise ValueError("owner authorization policy is missing a non-empty final_models list")
+    for model in final_models:
+        command.extend(("--final-model", str(model)))
     _run(
         command,
         project_root=project_root,

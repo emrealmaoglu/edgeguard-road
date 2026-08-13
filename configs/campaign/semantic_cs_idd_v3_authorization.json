@@ -23,11 +23,16 @@
   },
   "final_models": [
     "segformer_b0",
-    "fast_scnn",
     "pidnet_s",
-    "ddrnet_23_slim",
-    "bisenetv2"
+    "ddrnet_23_slim"
   ],
+  "final_models_scope_decision": {
+    "decided_by": "claude-code",
+    "authority": "CLAUDE.md 2026-08-12 broad scientific-decision delegation",
+    "date": "2026-08-13",
+    "reason": "Real measured per-iteration screening throughput (semantic-cs-idd-v3, project_commit f2f211000baf7a9f9139d777c8529fa6639c78de) showed fast_scnn (~5.3s/iter) and bisenetv2 (~6.5-7s/iter) are 15-25x slower than segformer_b0/pidnet_s/ddrnet_23_slim; a full 40000-step final run on all five would cost ~155 GPU-hours, incompatible with the 4-day presentation deadline. fast_scnn and bisenetv2 real screening results (mIoU 20.10 and partial smoke-only 6.57 respectively) remain reported in the training-log analysis; see docs/AI_USAGE_LOG.md for the full evidence and decision record.",
+    "excluded_models": ["fast_scnn", "bisenetv2"]
+  },
   "selection_role": "train_select",
   "selection_domains": [
     "cityscapes",
