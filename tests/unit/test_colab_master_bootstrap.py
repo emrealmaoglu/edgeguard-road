@@ -281,3 +281,61 @@ def test_completed_runtime_evidence_is_not_quarantined(tmp_path: Path) -> None:
     (evidence / "runtime_receipt.json").write_text('{"status":"completed"}\n', encoding="utf-8")
     assert run_colab_master._quarantine_failed_runtime_evidence(evidence) is None
     assert evidence.is_dir()
+
+
+def test_bootstrap_survives_a_stalled_wheel_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fresh Colab VM pulls the 2.4 GB CUDA PyTorch wheel from download.pytorch.org
+    before any GPU work starts. On 2026-08-14 that download stalled and uv aborted it at
+    its 30 s default -- "Failed to extract archive ... network timeout (current value:
+    30s)" -- which failed the whole screening phase during bootstrap. The lock files are
+    hash-pinned, so re-running the download converges to the same bytes; the retry is
+    therefore safe, and the timeout has to allow for a multi-gigabyte transfer.
+    """
+    monkeypatch.setattr(bootstrap_colab_runtime, "RETRY_BACKOFF_SECONDS", 0)
+    environment = bootstrap_colab_runtime._bootstrap_environment(tmp_path / "cache")
+    assert int(environment["UV_HTTP_TIMEOUT"]) >= 600
+
+    marker = tmp_path / "attempts"
+    flaky = [
+        sys.executable,
+        "-c",
+        (
+            "import pathlib,sys;"
+            f"m=pathlib.Path({str(marker)!r});"
+            "n=int(m.read_text()) if m.exists() else 0;"
+            "m.write_text(str(n+1));"
+            "sys.exit(1 if n < 2 else 0)"
+        ),
+    ]
+    log = tmp_path / "bootstrap.log"
+    bootstrap_colab_runtime._run(
+        flaky, cwd=tmp_path, environment=dict(os.environ), log=log, attempts=3
+    )
+    assert marker.read_text() == "3"
+    assert "BOOTSTRAP RETRY 1/2" in log.read_text(encoding="utf-8")
+
+    # A command that never succeeds still fails, and says how many attempts it took.
+    marker.write_text("0")
+    always = [sys.executable, "-c", "raise SystemExit(1)"]
+    with pytest.raises(RuntimeError, match="after 2 attempt"):
+        bootstrap_colab_runtime._run(
+            always, cwd=tmp_path, environment=dict(os.environ), log=log, attempts=2
+        )
+
+
+def test_only_repeatable_downloads_are_retried() -> None:
+    """`git clone` has its own repair-or-refuse path for a partial checkout and must not
+    be blindly repeated, and the local `uv venv`/editable installs cannot fail from a
+    stalled transfer. Retries belong to the four hash-reconciled network commands only.
+    """
+    source = (ROOT / "scripts/bootstrap_colab_runtime.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    retried = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_run":
+            if any(keyword.arg == "attempts" for keyword in node.keywords):
+                retried += 1
+    assert retried == 4
+    assert 'attempts=3,\n    )\n    _run(\n        ["git",' not in source

@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +19,7 @@ UV_VERSION = "0.8.8"
 PYTHON_VERSION = "3.11.13"
 MMSEG_REPOSITORY = "https://github.com/open-mmlab/mmsegmentation.git"
 MMSEG_COMMIT = "c685fe6767c4cadf6b051983ca6208f1b9d1ccb8"
+RETRY_BACKOFF_SECONDS = 10
 MAIN_LOCK = "requirements/colab-py311-cu121.lock"
 OPENMMLAB_LOCK = "requirements/colab-openmmlab.lock"
 _HOST_ENVIRONMENT_KEYS = (
@@ -61,32 +63,56 @@ def _tail(path: Path, limit: int = 16000) -> str:
         return source.read().decode("utf-8", errors="replace")
 
 
-def _run(command: list[str], *, cwd: Path, environment: dict[str, str], log: Path) -> None:
-    """Stream one command to Colab and retain the complete bootstrap log."""
+def _run(
+    command: list[str],
+    *,
+    cwd: Path,
+    environment: dict[str, str],
+    log: Path,
+    attempts: int = 1,
+) -> None:
+    """Stream one command to Colab and retain the complete bootstrap log.
+
+    Pass `attempts` above 1 only for commands that are safe to repeat verbatim -- the uv
+    and pip downloads, which reconcile against a hash-pinned lock file and so converge to
+    the same result however many times they run. A fresh Colab VM has to pull the 2.4 GB
+    CUDA PyTorch wheel over a link whose speed we do not control, and a single stall there
+    otherwise ends the whole campaign phase before any GPU work starts.
+    """
     print("BOOTSTRAP COMMAND:", " ".join(command), flush=True)
     log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a", encoding="utf-8") as sink:
-        sink.write("\nCOMMAND: " + " ".join(command) + "\n")
-        sink.flush()
-        process = subprocess.Popen(
-            command,
-            cwd=cwd,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        assert process.stdout is not None
-        for line in process.stdout:
-            print(line, end="", flush=True)
-            sink.write(line)
-        return_code = process.wait()
-        sink.write(f"RETURN_CODE: {return_code}\n")
-    if return_code:
-        raise RuntimeError(
-            f"bootstrap command failed with exit code {return_code}: {command}\n{_tail(log)}"
-        )
+    for attempt in range(1, attempts + 1):
+        with log.open("a", encoding="utf-8") as sink:
+            sink.write("\nCOMMAND: " + " ".join(command) + "\n")
+            sink.flush()
+            process = subprocess.Popen(
+                command,
+                cwd=cwd,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                print(line, end="", flush=True)
+                sink.write(line)
+            return_code = process.wait()
+            sink.write(f"RETURN_CODE: {return_code}\n")
+        if not return_code:
+            return
+        if attempt < attempts:
+            delay = RETRY_BACKOFF_SECONDS * attempt
+            message = f"BOOTSTRAP RETRY {attempt}/{attempts - 1} in {delay}s: {' '.join(command)}"
+            print(message, flush=True)
+            with log.open("a", encoding="utf-8") as sink:
+                sink.write(message + "\n")
+            time.sleep(delay)
+    raise RuntimeError(
+        f"bootstrap command failed with exit code {return_code} after {attempts} "
+        f"attempt(s): {command}\n{_tail(log)}"
+    )
 
 
 def _require_bounded_target(path: Path, *, content_root: Path, name: str) -> Path:
@@ -196,6 +222,7 @@ def _private_uv(
         cwd=project_root,
         environment=environment,
         log=log,
+        attempts=3,
     )
     executable = _find_private_uv(prefix)
     if executable is None:
@@ -282,6 +309,12 @@ def _bootstrap_environment(cache_root: Path) -> dict[str, str]:
             "UV_CACHE_DIR": str(cache_root / "uv"),
             "UV_PYTHON_INSTALL_DIR": str(cache_root / "python"),
             "UV_PYTHON_PREFERENCE": "only-managed",
+            # uv defaults to a 30 s HTTP timeout. The CUDA PyTorch wheel in the main lock
+            # is ~2.4 GB, which needs ~13 minutes at 3 MB/s, so on a slow fresh Colab VM
+            # the default aborts mid-download and fails the phase before any GPU work
+            # starts -- observed on 2026-08-14 as "Failed to extract archive ... network
+            # timeout (current value: 30s)".
+            "UV_HTTP_TIMEOUT": "900",
         }
     )
     return environment
@@ -316,6 +349,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, object]:
         cwd=project_root,
         environment=environment,
         log=log,
+        attempts=3,
     )
     if not interpreter.is_file():
         if runtime_root.exists():
@@ -345,6 +379,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, object]:
         cwd=project_root,
         environment=environment,
         log=log,
+        attempts=3,
     )
     _run(
         [
@@ -361,6 +396,7 @@ def bootstrap(args: argparse.Namespace) -> dict[str, object]:
         cwd=project_root,
         environment=environment,
         log=log,
+        attempts=3,
     )
     checkout = checkout_root / "mmsegmentation"
     checkout_root.mkdir(parents=True, exist_ok=True)
