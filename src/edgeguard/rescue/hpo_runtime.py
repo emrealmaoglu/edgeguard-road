@@ -59,7 +59,21 @@ def select_hpo_models(
             selected.append(winner[2])
         remaining = [item for item in remaining if item[2] != winner[2]]
     if len(selected) < 2:
-        raise ValueError("HPO requires two interpretable screening candidates")
+        # The candidate table records why each trained model was dropped; without it this
+        # message sends the reader back through hours of screening logs looking for a
+        # crash that never happened.
+        rejected = payload.get("rejected")
+        detail = ""
+        if isinstance(rejected, list) and rejected:
+            detail = "; rejected: " + ", ".join(
+                f"{entry.get('model')} ({entry.get('reason')})"
+                for entry in rejected
+                if isinstance(entry, dict)
+            )
+        raise ValueError(
+            f"HPO requires two interpretable screening candidates, found {len(selected)} "
+            f"among {len(candidates)} table entries{detail}"
+        )
     return selected[0], selected[1]
 
 

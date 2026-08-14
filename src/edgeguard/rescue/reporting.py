@@ -101,17 +101,41 @@ def build_evidence_report(
         }
     if source_rows and ("cityscapes" not in frozen_domains or len(frozen_domains) < 2):
         raise ValueError("candidate reporting requires at least two frozen source domains")
+    # Every `continue` below silently removes a fully trained model from the campaign, and
+    # the removal only ever surfaced hours later as "HPO requires two interpretable
+    # screening candidates". Record the reason next to the table so the failure is
+    # readable at the point it is caused.
+    rejected: list[dict[str, Any]] = []
     for model, rows in sorted(source_rows.items()):
         if model not in exports:
+            rejected.append({"model": model, "reason": "no ONNX validation record"})
             continue
         export = exports[model]
         domain_values = {str(row["dataset"]): row["mIoU"] for row in rows}
         if set(domain_values) != frozen_domains:
+            rejected.append(
+                {
+                    "model": model,
+                    "reason": "evaluated domains do not match the frozen source domains",
+                    "evaluated_domains": sorted(domain_values),
+                    "frozen_domains": sorted(frozen_domains),
+                }
+            )
             continue
         onnx_validated = bool(
             export.get("shape_equal") and export.get("allclose_atol_1e_4_rtol_1e_4")
         )
         if not onnx_validated:
+            rejected.append(
+                {
+                    "model": model,
+                    "reason": "PyTorch/ONNX outputs disagree beyond atol=1e-4, rtol=1e-4",
+                    "shape_equal": export.get("shape_equal"),
+                    "max_absolute_difference": export.get("max_absolute_difference"),
+                    "mean_absolute_difference": export.get("mean_absolute_difference"),
+                    "parity_device": export.get("parity_device"),
+                }
+            )
             continue
         macro_miou = sum(float(row["mIoU"]) for row in rows) / len(rows)
         rare_values = [
@@ -209,9 +233,10 @@ def build_evidence_report(
         writer.writeheader()
         writer.writerows(shift_rows)
     candidate_payload = {
-        "schema_version": "2.0",
+        "schema_version": "2.1",
         "source_domains": sorted(frozen_domains),
         "candidates": candidates,
+        "rejected": sorted(rejected, key=lambda entry: str(entry["model"])),
     }
     (output_dir / "candidate_table.json").write_text(
         canonical_json(candidate_payload) + "\n", encoding="utf-8"

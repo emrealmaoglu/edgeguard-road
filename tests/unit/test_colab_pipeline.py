@@ -524,3 +524,33 @@ def test_warmup_scope_preserves_the_frozen_model_order(tmp_path: Path) -> None:
     )
     warmup = pipeline._models_for_phase("pilot")
     assert list(warmup) == [model for model in ALL_MODELS if model in set(warmup)]
+
+
+def test_stale_evidence_is_moved_aside_rather_than_reused_or_deleted(tmp_path: Path) -> None:
+    """The screening reuse guards ask "was this record built from this checkpoint", which a
+    record built by *broken* code still answers correctly. When the evaluation runner was
+    fixed to actually load the checkpoint, every cached `evaluation.json` still matched its
+    checkpoint hash, so the corrected run would have republished the same
+    untrained-weights numbers instead of recomputing them. Superseding renames the
+    directory and leaves a note, so the run gets a clean path and the discarded record
+    stays auditable.
+    """
+    evidence = tmp_path / "evaluation" / "screening" / "pidnet_s" / "cityscapes"
+    evidence.mkdir(parents=True)
+    (evidence / "evaluation.json").write_text('{"metrics": {"mIoU": 0.019}}', encoding="utf-8")
+
+    moved = colab_pipeline_module.supersede_stale_evidence(evidence, "measured random weights")
+    assert moved is not None
+    assert not evidence.exists()
+    assert json.loads((moved / "evaluation.json").read_text())["metrics"]["mIoU"] == 0.019
+    note = json.loads((moved / "superseded.json").read_text())
+    assert note["reason"] == "measured random weights"
+    assert note["original_path"] == "cityscapes"
+
+    evidence.mkdir(parents=True)
+    (evidence / "evaluation.json").write_text("{}", encoding="utf-8")
+    again = colab_pipeline_module.supersede_stale_evidence(evidence, "second pass")
+    assert again is not None and again != moved
+    assert moved.is_dir()
+
+    assert colab_pipeline_module.supersede_stale_evidence(tmp_path / "absent", "none") is None

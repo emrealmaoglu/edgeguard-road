@@ -67,11 +67,15 @@ def export_and_verify(args: argparse.Namespace) -> dict[str, Any]:
                 decoded = decoded[indices[name]]
             return decoded
 
-    wrapper = NativeLogits(model).eval()
+    # ONNX Runtime evaluates this graph in FP32 on the CPU. Tracing and measuring the
+    # PyTorch reference on CUDA compared TF32 matmuls (10-bit mantissa, enabled for
+    # training throughput) against FP32, which put every screened model's worst logit
+    # delta at 2.3e-3..7.3e-3 and failed the 1e-4 parity gate on arithmetic precision
+    # rather than on export fidelity -- silently emptying the screening candidate table.
+    # Export and compare on the CPU so the gate measures what it claims to measure.
+    wrapper = NativeLogits(model).eval().to("cpu")
     torch.manual_seed(20260728)
-    tensor = torch.randn(
-        (1, 3, args.input_height, args.input_width), dtype=torch.float32, device=args.device
-    )
+    tensor = torch.randn((1, 3, args.input_height, args.input_width), dtype=torch.float32)
     with torch.no_grad():
         expected = wrapper(tensor).detach().cpu().numpy()
     if expected.ndim != 4 or expected.shape[1] != 19:
@@ -111,6 +115,8 @@ def export_and_verify(args: argparse.Namespace) -> dict[str, Any]:
         "input_name": "normalized_rgb",
         "input_shape": list(tensor.shape),
         "input_contract": "RGB float32 normalized by ImageNet mean/std outside graph",
+        "model_load_device": str(args.device),
+        "parity_device": "cpu",
         "output_name": "native_logits",
         "output_shape": list(actual.shape),
         "class_count": int(actual.shape[1]),

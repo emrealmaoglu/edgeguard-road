@@ -19,6 +19,7 @@ from edgeguard.rescue.dataset import (
     validate_split_manifest,
     write_train_fit_statistics,
 )
+from edgeguard.rescue.hpo_runtime import select_hpo_models
 from edgeguard.rescue.inference import discover_demo_models, preprocess_image
 from edgeguard.rescue.mmseg_runtime import (
     _acdc_dataset,
@@ -670,3 +671,103 @@ def test_synthetic_stress_fallback_preserves_labels_and_claim_boundary(tmp_path:
     assert result["external_ood_evidence"] is False
     assert result["scientific_label"] == "synthetic robustness stress test"
     assert (output / mask_path.relative_to(root)).read_bytes() == mask_path.read_bytes()
+
+
+def test_evaluation_weight_loading_rejects_a_model_that_kept_random_initialization(
+    tmp_path: Path,
+) -> None:
+    """`evaluate_model()` builds its runner with `Runner.from_cfg()` and then drives
+    `runner.model` directly so it can keep raw logits for calibration. mmengine only
+    consumes `cfg.load_from` inside `Runner.train()`/`val()`/`test()`, none of which that
+    path calls, so for the whole 2026-08-14 screening campaign every evaluation record
+    measured PyTorch's default random initialisation: `pidnet_s` scored 35.48 mIoU in its
+    own in-training validation loop and 1.93 mIoU in the evaluation record built from the
+    identical `iter_2500.pth`. `load_evaluation_weights()` performs the load and then
+    proves every float tensor landed, because mmengine's loader is non-strict and a silent
+    key mismatch would reproduce exactly the same untrained-network measurement.
+    """
+    torch = pytest.importorskip("torch", reason="weight loading is a torch integration")
+    pytest.importorskip("mmengine", reason="checkpoint loading is an mmengine integration")
+    from edgeguard.rescue.mmseg_runtime import load_evaluation_weights
+
+    torch.manual_seed(20260814)
+    trained = torch.nn.Sequential(torch.nn.Conv2d(3, 4, 3), torch.nn.BatchNorm2d(4))
+    with torch.no_grad():
+        for parameter in trained.parameters():
+            parameter.add_(1.5)
+    checkpoint = tmp_path / "iter_2500.pth"
+    torch.save({"meta": {"iter": 2500}, "state_dict": trained.state_dict()}, checkpoint)
+
+    torch.manual_seed(1)
+    fresh = torch.nn.Sequential(torch.nn.Conv2d(3, 4, 3), torch.nn.BatchNorm2d(4))
+    weight = fresh[0].weight
+    assert not torch.equal(weight, trained[0].weight)
+
+    verified = load_evaluation_weights(fresh, checkpoint)
+    assert verified > 0
+    for name, tensor in trained.state_dict().items():
+        if tensor.is_floating_point():
+            assert torch.equal(fresh.state_dict()[name], tensor), name
+
+    mismatched = tmp_path / "other-architecture.pth"
+    torch.save({"state_dict": {"backbone.stem.weight": torch.ones(2, 2)}}, mismatched)
+    with pytest.raises(RuntimeError, match="did not land in the model"):
+        load_evaluation_weights(fresh, mismatched)
+
+
+def test_candidate_table_records_why_a_trained_model_was_dropped(tmp_path: Path) -> None:
+    """A model whose ONNX export disagrees with PyTorch is removed from the candidate
+    table, and until now that removal left no trace: the campaign ran screening to
+    completion and then died inside HPO with "requires two interpretable screening
+    candidates" and nothing pointing at the export gate. The table now carries the reason,
+    and `select_hpo_models()` repeats it in the failure.
+    """
+    evaluations = tmp_path / "evaluations"
+    exports = tmp_path / "exports"
+    evaluations.mkdir()
+    exports.mkdir()
+    for model, parity in (("pidnet_s", False), ("segformer_b0", False)):
+        model_root = evaluations / model
+        model_root.mkdir()
+        for dataset in ("cityscapes", "idd20k"):
+            dataset_root = model_root / dataset
+            dataset_root.mkdir()
+            (dataset_root / "evaluation.json").write_text(
+                json.dumps(
+                    {
+                        "model": model,
+                        "dataset": dataset,
+                        "role": "train_select",
+                        "condition": None,
+                        "metrics": {"mIoU": 0.35},
+                        "rare_class_mIoU": 0.2,
+                        "reliability": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        (exports / f"{model}.validation.json").write_text(
+            json.dumps(
+                {
+                    "shape_equal": True,
+                    "allclose_atol_1e_4_rtol_1e_4": parity,
+                    "max_absolute_difference": 0.0053,
+                    "mean_absolute_difference": 0.0008,
+                    "parity_device": "cuda",
+                    "onnx_bytes": 1000,
+                    "onnxruntime_cpu": {"median_latency_ms": 73.0},
+                }
+            ),
+            encoding="utf-8",
+        )
+    output = tmp_path / "report"
+    result = build_evidence_report(evaluations, exports, output)
+    assert result["candidate_count"] == 0
+
+    table = output / "candidate_table.json"
+    payload = json.loads(table.read_text(encoding="utf-8"))
+    assert [entry["model"] for entry in payload["rejected"]] == ["pidnet_s", "segformer_b0"]
+    assert payload["rejected"][0]["max_absolute_difference"] == 0.0053
+
+    with pytest.raises(ValueError, match=r"pidnet_s \(PyTorch/ONNX outputs disagree"):
+        select_hpo_models(table, expected_domains=("cityscapes", "idd20k"))

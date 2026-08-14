@@ -1000,7 +1000,16 @@ class ColabPipeline:
                         raise ValueError(
                             "existing screening evaluation belongs to another checkpoint"
                         )
-                    continue
+                    # Only records that carry the weight-verification receipt are provably
+                    # evaluations *of the checkpoint*; earlier ones measured the runner's
+                    # random initialisation and must not be reused.
+                    if recorded.get("verified_weight_tensor_count"):
+                        continue
+                    supersede_stale_evidence(
+                        output,
+                        "evaluation carries no verified_weight_tensor_count receipt, so it "
+                        "predates the fix that loads the checkpoint into the runner",
+                    )
                 if output.exists() and any(output.iterdir()):
                     raise ValueError(f"incomplete screening evaluation requires review: {output}")
                 command = [
@@ -1028,13 +1037,24 @@ class ColabPipeline:
             export_dir = export_root / model
             onnx = export_dir / f"{model}.onnx"
             validation = onnx.with_suffix(".validation.json")
-            if validation.is_file() and onnx.is_file():
+            reusable_export = validation.is_file() and onnx.is_file()
+            if reusable_export:
                 recorded = json.loads(validation.read_text(encoding="utf-8"))
                 if recorded.get("checkpoint_sha256") != sha256_file(checkpoint) or recorded.get(
                     "onnx_sha256"
                 ) != sha256_file(onnx):
                     raise ValueError("existing screening ONNX belongs to another checkpoint")
-            else:
+                # Records without `parity_device` measured the PyTorch reference on CUDA,
+                # where TF32 matmuls fail a 1e-4 comparison against ONNX Runtime's FP32
+                # for reasons that have nothing to do with export fidelity.
+                if not recorded.get("parity_device"):
+                    supersede_stale_evidence(
+                        export_dir,
+                        "ONNX validation records no parity_device, so it compared TF32 "
+                        "CUDA output against ONNX Runtime FP32",
+                    )
+                    reusable_export = False
+            if not reusable_export:
                 if export_dir.exists() and any(export_dir.iterdir()):
                     raise ValueError(f"incomplete screening export requires review: {export_dir}")
                 results.append(
@@ -1051,7 +1071,7 @@ class ColabPipeline:
                             "--output",
                             str(onnx),
                             "--device",
-                            "cuda",
+                            "cpu",
                             "--warmup",
                             "5",
                             "--iterations",
@@ -1061,6 +1081,17 @@ class ColabPipeline:
                 )
         report = self.inputs.work_root / "reports/screening"
         candidate_table = report / "candidate_table.json"
+        if candidate_table.is_file():
+            # A table without the `rejected` roster was built before the reasons a trained
+            # model can be dropped were recorded, and was very likely built from evidence
+            # the guards above just superseded.
+            recorded_table = json.loads(candidate_table.read_text(encoding="utf-8"))
+            if "rejected" not in recorded_table:
+                supersede_stale_evidence(
+                    report,
+                    "candidate table records no rejection roster, so it predates the "
+                    "evaluation and ONNX parity fixes",
+                )
         if not candidate_table.is_file():
             if report.exists() and any(report.iterdir()):
                 raise ValueError(f"incomplete screening report requires review: {report}")
@@ -1103,7 +1134,13 @@ class ColabPipeline:
                         or recorded.get("role") != "train_select"
                     ):
                         raise ValueError("existing final selection evidence identity mismatch")
-                    continue
+                    if recorded.get("verified_weight_tensor_count"):
+                        continue
+                    supersede_stale_evidence(
+                        output,
+                        "evaluation carries no verified_weight_tensor_count receipt, so it "
+                        "predates the fix that loads the checkpoint into the runner",
+                    )
                 if output.exists() and any(output.iterdir()):
                     raise ValueError(f"incomplete final selection evaluation: {output}")
                 command = [
@@ -1131,13 +1168,21 @@ class ColabPipeline:
             export_dir = export_root / model
             onnx = export_dir / f"{model}.onnx"
             validation = onnx.with_suffix(".validation.json")
-            if validation.is_file() and onnx.is_file():
+            reusable_export = validation.is_file() and onnx.is_file()
+            if reusable_export:
                 recorded = json.loads(validation.read_text(encoding="utf-8"))
                 if recorded.get("checkpoint_sha256") != sha256_file(checkpoint) or recorded.get(
                     "onnx_sha256"
                 ) != sha256_file(onnx):
                     raise ValueError("existing final selection ONNX identity mismatch")
-            else:
+                if not recorded.get("parity_device"):
+                    supersede_stale_evidence(
+                        export_dir,
+                        "ONNX validation records no parity_device, so it compared TF32 "
+                        "CUDA output against ONNX Runtime FP32",
+                    )
+                    reusable_export = False
+            if not reusable_export:
                 if export_dir.exists() and any(export_dir.iterdir()):
                     raise ValueError(f"incomplete final selection export: {export_dir}")
                 results.append(
@@ -1154,7 +1199,7 @@ class ColabPipeline:
                             "--output",
                             str(onnx),
                             "--device",
-                            "cuda",
+                            "cpu",
                             "--warmup",
                             "5",
                             "--iterations",
@@ -2030,6 +2075,37 @@ class ColabPipeline:
             "completed": completed,
             "skipped_verified": skipped,
         }
+
+
+def supersede_stale_evidence(directory: Path, reason: str) -> Path | None:
+    """Move evidence produced by a superseded code path aside so it can be rebuilt.
+
+    The screening reuse guards key on `checkpoint_sha256`, which answers "was this record
+    built from this checkpoint" but not "was it built by code that worked". When the
+    evaluation runner was fixed to actually load the checkpoint, every cached
+    `evaluation.json` still matched its checkpoint hash and would have been reused
+    verbatim, so the corrected run would have re-published the same untrained-weights
+    numbers. Nothing is deleted -- the directory is renamed and a note left beside it, so
+    the discarded record stays auditable.
+    """
+    if not directory.exists():
+        return None
+    superseded = directory.with_name(f"{directory.name}.superseded")
+    index = 1
+    while superseded.exists():
+        index += 1
+        superseded = directory.with_name(f"{directory.name}.superseded-{index}")
+    shutil.move(str(directory), str(superseded))
+    atomic_json(
+        superseded / "superseded.json",
+        {
+            "schema_version": "1.0",
+            "record_type": "edgeguard_superseded_evidence",
+            "original_path": directory.name,
+            "reason": reason,
+        },
+    )
+    return superseded
 
 
 def sys_executable() -> str:

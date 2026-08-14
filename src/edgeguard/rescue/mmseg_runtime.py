@@ -1305,6 +1305,63 @@ def _evaluation_dataset(
     )
 
 
+def load_evaluation_weights(model: Any, checkpoint: Path) -> int:
+    """Load trained weights into an evaluation model and prove they actually landed.
+
+    `Runner.from_cfg()` only *builds* the network. mmengine consumes `cfg.load_from`
+    inside `Runner.train()`/`val()`/`test()` (`runner.py:1765/1798/1821`), and this
+    evaluation calls none of them -- it drives `runner.model` directly so it can keep the
+    raw logits for calibration. Without this explicit load the model carries PyTorch's
+    default random initialisation, so the metrics describe an untrained network: the
+    2026-08-14 screening run reported 35.48 mIoU from its own validation loop and 1.93
+    mIoU from the evaluation record built off the very same `iter_2500.pth`.
+
+    Returns the number of checkpoint tensors verified byte-for-byte against the model, and
+    raises if any of them failed to land -- a silent `strict=False` no-op would otherwise
+    reproduce exactly the failure this function exists to prevent.
+    """
+    torch = __import__("torch")
+    checkpoints = __import__("mmengine.runner", fromlist=["CheckpointLoader", "load_checkpoint"])
+    checkpoints.load_checkpoint(model, str(checkpoint), map_location="cpu")
+    # Re-read through mmengine's own loader rather than `torch.load`, whose `weights_only`
+    # default flipped in torch 2.6 and would otherwise behave differently here than in the
+    # load above.
+    payload = checkpoints.CheckpointLoader.load_checkpoint(str(checkpoint), map_location="cpu")
+    state = payload.get("state_dict", payload) if isinstance(payload, dict) else payload
+    if not isinstance(state, dict) or not state:
+        raise RuntimeError(f"evaluation checkpoint carries no state dict: {checkpoint}")
+    held = model.state_dict()
+    absent: list[str] = []
+    differing: list[str] = []
+    verified = 0
+    for raw_name, tensor in state.items():
+        if not isinstance(tensor, torch.Tensor) or not tensor.is_floating_point():
+            continue
+        # mmengine's loader strips a leading "module." (distributed wrapper) prefix.
+        name = (
+            str(raw_name)[len("module.") :]
+            if str(raw_name).startswith("module.")
+            else str(raw_name)
+        )
+        current = held.get(name)
+        if current is None or tuple(current.shape) != tuple(tensor.shape):
+            absent.append(name)
+        elif torch.equal(current.detach().cpu(), tensor.cpu()):
+            verified += 1
+        else:
+            differing.append(name)
+    if absent or differing:
+        raise RuntimeError(
+            f"evaluation checkpoint did not land in the model: {len(absent)} tensors have no "
+            f"matching parameter and {len(differing)} kept a different value "
+            f"(absent={absent[:3]}, differing={differing[:3]}). Metrics measured from this "
+            "model would describe untrained weights, not the checkpoint."
+        )
+    if verified == 0:
+        raise RuntimeError(f"evaluation checkpoint holds no float tensors to verify: {checkpoint}")
+    return verified
+
+
 def _collect_reporting_evidence(
     runner: Any, *, max_pixels: int, temperature: float = 1.0
 ) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any], list[dict[str, Any]]]:
@@ -1426,6 +1483,7 @@ def evaluate_model(
     cfg.test_evaluator = {"type": "IoUMetric", "iou_metrics": ["mIoU"]}
     cfg.test_cfg = {"type": "TestLoop"}
     runner = mmengine.runner.Runner.from_cfg(cfg)
+    verified_weight_tensors = load_evaluation_weights(runner.model, checkpoint)
     needs_logits = (
         fit_calibrator or temperature_file is not None or calibration_evidence_output is not None
     )
@@ -1525,6 +1583,7 @@ def evaluate_model(
         "condition": condition,
         "model": cfg.get("edgeguard_metadata", {}).get("model"),
         "checkpoint_sha256": sha256_file(checkpoint),
+        "verified_weight_tensor_count": verified_weight_tensors,
         "metrics": metrics,
         "classwise_metrics": classwise,
         "rare_class_mIoU": rare_class_miou,
