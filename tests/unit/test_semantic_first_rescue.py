@@ -624,6 +624,10 @@ def test_reporting_uses_only_present_evidence(tmp_path: Path) -> None:
                 {
                     "shape_equal": True,
                     "allclose_atol_1e_4_rtol_1e_4": True,
+                    "prediction_equivalent": True,
+                    "argmax_agreement_ratio": 1.0,
+                    "disagreeing_pixel_count": 0,
+                    "mean_absolute_difference": 1.0e-6,
                     "onnx_bytes": 1000,
                     "onnxruntime_cpu": {"median_latency_ms": latency},
                 }
@@ -726,7 +730,7 @@ def test_candidate_table_records_why_a_trained_model_was_dropped(tmp_path: Path)
     exports = tmp_path / "exports"
     evaluations.mkdir()
     exports.mkdir()
-    for model, parity in (("pidnet_s", False), ("segformer_b0", False)):
+    for model, equivalent in (("pidnet_s", False), ("segformer_b0", False)):
         model_root = evaluations / model
         model_root.mkdir()
         for dataset in ("cityscapes", "idd20k"):
@@ -750,10 +754,13 @@ def test_candidate_table_records_why_a_trained_model_was_dropped(tmp_path: Path)
             json.dumps(
                 {
                     "shape_equal": True,
-                    "allclose_atol_1e_4_rtol_1e_4": parity,
+                    "allclose_atol_1e_4_rtol_1e_4": equivalent,
+                    "prediction_equivalent": equivalent,
+                    "argmax_agreement_ratio": 0.97,
+                    "disagreeing_pixel_count": 61,
                     "max_absolute_difference": 0.0053,
                     "mean_absolute_difference": 0.0008,
-                    "parity_device": "cuda",
+                    "parity_device": "cpu",
                     "onnx_bytes": 1000,
                     "onnxruntime_cpu": {"median_latency_ms": 73.0},
                 }
@@ -769,7 +776,7 @@ def test_candidate_table_records_why_a_trained_model_was_dropped(tmp_path: Path)
     assert [entry["model"] for entry in payload["rejected"]] == ["pidnet_s", "segformer_b0"]
     assert payload["rejected"][0]["max_absolute_difference"] == 0.0053
 
-    with pytest.raises(ValueError, match=r"pidnet_s \(PyTorch/ONNX outputs disagree"):
+    with pytest.raises(ValueError, match=r"pidnet_s \(ONNX export does not reproduce"):
         select_hpo_models(table, expected_domains=("cityscapes", "idd20k"))
 
 
@@ -824,3 +831,95 @@ def test_skipping_frame_uncertainty_leaves_the_confusion_matrix_identical() -> N
     # `None` means "not collected"; an empty list would claim "collected, and there were
     # none", which is a different and false statement.
     assert skipped is None
+
+
+def test_export_gate_measures_the_class_map_not_a_float_tolerance() -> None:
+    """The deployment gate exists to catch a broken export -- wrong graph, wrong weights,
+    wrong preprocessing -- before a model reaches HPO, selection or a release. It used to
+    be `np.allclose(atol=1e-4, rtol=1e-4)` on raw logits, which is a proxy, and measuring
+    the real exports on CPU on 2026-08-14 showed it is the wrong one: PIDNet-S produced a
+    3.231e-03 worst-case logit delta against a 3.531e-05 mean, all of it at interpolation
+    boundaries from its `align_corners=True` head, while assigning an identical class to
+    every one of its 2,048 output pixels. That proxy would have silently dropped the
+    campaign's strongest model (35.48 screening mIoU) out of the candidate table. The gate
+    now asks what the Jetson runtime actually consumes -- the per-pixel argmax -- and
+    keeps a mean-absolute ceiling so a systematically wrong graph still cannot pass.
+    """
+    from edgeguard.export.equivalence import semantic_onnx_export_accepted
+
+    measured_pidnet = {
+        "shape_equal": True,
+        "allclose_atol_1e_4_rtol_1e_4": False,
+        "prediction_equivalent": True,
+        "argmax_agreement_ratio": 1.0,
+        "disagreeing_pixel_count": 0,
+        "max_absolute_difference": 3.230571746826172e-03,
+        "mean_absolute_difference": 3.5311902172751565e-05,
+        "parity_device": "cpu",
+    }
+    assert semantic_onnx_export_accepted(measured_pidnet) is True
+
+    # A graph that disagrees about even one pixel's class is not deployable evidence.
+    assert (
+        semantic_onnx_export_accepted({**measured_pidnet, "prediction_equivalent": False}) is False
+    )
+    assert semantic_onnx_export_accepted({**measured_pidnet, "shape_equal": False}) is False
+    # A systematically wrong graph moves the whole tensor, not a few boundary pixels, so
+    # the mean ceiling still rejects it even if the argmax happened to survive.
+    assert (
+        semantic_onnx_export_accepted({**measured_pidnet, "mean_absolute_difference": 0.5}) is False
+    )
+    # A record from before the gate existed carries no verdict and must be rebuilt.
+    assert semantic_onnx_export_accepted({"shape_equal": True}) is False
+
+
+def test_a_class_map_equivalent_export_reaches_the_candidate_table(tmp_path: Path) -> None:
+    """End-to-end companion to the gate unit test: the measured PIDNet-S record must
+    produce a candidate rather than a rejection, because that is the failure mode that
+    would have cost the campaign its best model.
+    """
+    evaluations = tmp_path / "evaluations"
+    exports = tmp_path / "exports"
+    evaluations.mkdir()
+    exports.mkdir()
+    model_root = evaluations / "pidnet_s"
+    model_root.mkdir()
+    for dataset in ("cityscapes", "idd20k"):
+        dataset_root = model_root / dataset
+        dataset_root.mkdir()
+        (dataset_root / "evaluation.json").write_text(
+            json.dumps(
+                {
+                    "model": "pidnet_s",
+                    "dataset": dataset,
+                    "role": "train_select",
+                    "condition": None,
+                    "metrics": {"mIoU": 0.3548},
+                    "rare_class_mIoU": 0.11,
+                    "reliability": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+    (exports / "pidnet_s.validation.json").write_text(
+        json.dumps(
+            {
+                "shape_equal": True,
+                "allclose_atol_1e_4_rtol_1e_4": False,
+                "prediction_equivalent": True,
+                "argmax_agreement_ratio": 1.0,
+                "disagreeing_pixel_count": 0,
+                "max_absolute_difference": 3.230571746826172e-03,
+                "mean_absolute_difference": 3.5311902172751565e-05,
+                "parity_device": "cpu",
+                "onnx_bytes": 30568865,
+                "onnxruntime_cpu": {"median_latency_ms": 73.47},
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = build_evidence_report(evaluations, exports, tmp_path / "report")
+    assert result["candidate_count"] == 1
+    payload = json.loads((tmp_path / "report" / "candidate_table.json").read_text())
+    assert payload["rejected"] == []
+    assert payload["candidates"][0]["model"] == "pidnet_s"

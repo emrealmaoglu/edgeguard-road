@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from edgeguard.export.equivalence import semantic_onnx_export_accepted
 from edgeguard.rescue.selection import select_top_two
 from edgeguard.serialization import canonical_json
 
@@ -122,17 +123,19 @@ def build_evidence_report(
                 }
             )
             continue
-        onnx_validated = bool(
-            export.get("shape_equal") and export.get("allclose_atol_1e_4_rtol_1e_4")
-        )
+        onnx_validated = semantic_onnx_export_accepted(export)
         if not onnx_validated:
             rejected.append(
                 {
                     "model": model,
-                    "reason": "PyTorch/ONNX outputs disagree beyond atol=1e-4, rtol=1e-4",
+                    "reason": "ONNX export does not reproduce the PyTorch class map",
                     "shape_equal": export.get("shape_equal"),
+                    "prediction_equivalent": export.get("prediction_equivalent"),
+                    "argmax_agreement_ratio": export.get("argmax_agreement_ratio"),
+                    "disagreeing_pixel_count": export.get("disagreeing_pixel_count"),
                     "max_absolute_difference": export.get("max_absolute_difference"),
                     "mean_absolute_difference": export.get("mean_absolute_difference"),
+                    "allclose_atol_1e_4_rtol_1e_4": export.get("allclose_atol_1e_4_rtol_1e_4"),
                     "parity_device": export.get("parity_device"),
                 }
             )

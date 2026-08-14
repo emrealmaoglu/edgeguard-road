@@ -16,6 +16,7 @@ from edgeguard.deployment.jetson_bundle import (
     build_jetson_deployment_bundle,
     verify_jetson_deployment_bundle,
 )
+from edgeguard.export.equivalence import semantic_onnx_export_accepted
 from edgeguard.serialization import (
     canonical_json,
     sha256_file,
@@ -119,7 +120,7 @@ def build_colab_release_packages(
             or validation.get("checkpoint_sha256") != sha256_file(checkpoint)
             or validation.get("golden_input_sha256") != sha256_file(golden_input_path)
             or validation.get("golden_output_sha256") != sha256_file(golden_output_path)
-            or validation.get("allclose_atol_1e_4_rtol_1e_4") is not True
+            or not semantic_onnx_export_accepted(validation)
         ):
             raise ValueError(f"{model} export lacks hash-bound numerical acceptance")
         deployment = output_root / f".{model}.deployment.zip"

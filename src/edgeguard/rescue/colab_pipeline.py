@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
+from edgeguard.export.equivalence import semantic_onnx_export_accepted
 from edgeguard.rescue.colab_recovery import (
     atomic_json,
     create_state_archive,
@@ -1059,11 +1060,11 @@ class ColabPipeline:
                 # Records without `parity_device` measured the PyTorch reference on CUDA,
                 # where TF32 matmuls fail a 1e-4 comparison against ONNX Runtime's FP32
                 # for reasons that have nothing to do with export fidelity.
-                if not recorded.get("parity_device"):
+                if not recorded.get("prediction_equivalent"):
                     supersede_stale_evidence(
                         export_dir,
-                        "ONNX validation records no parity_device, so it compared TF32 "
-                        "CUDA output against ONNX Runtime FP32",
+                        "ONNX validation predates the CPU parity fix and the class-map "
+                        "equivalence gate, so it must be rebuilt",
                     )
                     reusable_export = False
             if not reusable_export:
@@ -1198,11 +1199,11 @@ class ColabPipeline:
                     "onnx_sha256"
                 ) != sha256_file(onnx):
                     raise ValueError("existing final selection ONNX identity mismatch")
-                if not recorded.get("parity_device"):
+                if not recorded.get("prediction_equivalent"):
                     supersede_stale_evidence(
                         export_dir,
-                        "ONNX validation records no parity_device, so it compared TF32 "
-                        "CUDA output against ONNX Runtime FP32",
+                        "ONNX validation predates the CPU parity fix and the class-map "
+                        "equivalence gate, so it must be rebuilt",
                     )
                     reusable_export = False
             if not reusable_export:
@@ -1874,7 +1875,7 @@ class ColabPipeline:
                 if (
                     payload.get("checkpoint_sha256") != sha256_file(source.checkpoint)
                     or payload.get("onnx_sha256") != sha256_file(output)
-                    or payload.get("allclose_atol_1e_4_rtol_1e_4") is not True
+                    or not semantic_onnx_export_accepted(payload)
                 ):
                     raise ValueError("existing accepted-release ONNX identity mismatch")
                 continue
@@ -1890,7 +1891,7 @@ class ColabPipeline:
             if (
                 selection_payload.get("checkpoint_sha256") != sha256_file(source.checkpoint)
                 or selection_payload.get("onnx_sha256") != sha256_file(selection_onnx)
-                or selection_payload.get("allclose_atol_1e_4_rtol_1e_4") is not True
+                or not semantic_onnx_export_accepted(selection_payload)
             ):
                 raise ValueError("selection ONNX cannot be reused for accepted export")
             output.parent.mkdir(parents=True)

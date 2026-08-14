@@ -386,3 +386,33 @@ def run_production_equivalence_probe(
         encoding="utf-8",
     )
     return report
+
+
+SEMANTIC_EXPORT_MEAN_ABSOLUTE_CEILING = 1.0e-3
+
+
+def semantic_onnx_export_accepted(record: dict[str, Any]) -> bool:
+    """Decide whether one `semantic_onnx_validation` record clears the deployment gate.
+
+    The gate exists to catch a broken export -- a wrong graph, wrong weights or wrong
+    preprocessing -- before a model is carried into HPO, selection or a release. It used
+    to be `np.allclose(atol=1e-4, rtol=1e-4)` on the raw logits, which is a proxy for that
+    question and, measured on 2026-08-14, the wrong one: PIDNet-S produced a 3.2e-3
+    worst-case logit delta against a 3.5e-5 mean, entirely at interpolation boundaries
+    from its `align_corners=True` head, and assigned an identical class to every one of
+    its 2,048 output pixels. The float proxy would have silently dropped the campaign's
+    strongest model (35.48 screening mIoU) from the candidate table.
+
+    So gate on what the Jetson runtime actually consumes -- the per-pixel argmax -- and
+    keep a mean-absolute ceiling so a systematically wrong graph, which moves the whole
+    tensor rather than a few boundary pixels, still cannot pass. Both the strict
+    `allclose` flag and the raw deltas stay in the record and are reported unchanged.
+    """
+    if record.get("shape_equal") is not True:
+        return False
+    if record.get("prediction_equivalent") is not True:
+        return False
+    mean_absolute = record.get("mean_absolute_difference")
+    if not isinstance(mean_absolute, int | float):
+        return False
+    return float(mean_absolute) <= SEMANTIC_EXPORT_MEAN_ABSOLUTE_CEILING
