@@ -510,6 +510,18 @@ def eg_bundle(label):
             else:
                 shutil.copy2(source, target)
             copied += 1
+        # ZIP's DOS-era date field cannot represent a timestamp before 1980-01-01, and
+        # `shutil.copy2` above preserves each source file's original mtime. A file
+        # restored from a Drive tar/zip with no timestamp metadata lands at the Unix
+        # epoch (1970), which is exactly this case: on 2026-08-14 a real failed run's
+        # bundle call raised "ZIP does not support timestamps before 1980" and produced
+        # no archive at all -- silently, since this function never re-raises -- at
+        # exactly the moment a failure diagnostic was most needed. Clamp forward rather
+        # than deleting timestamp information a human might still find useful.
+        dos_epoch = datetime(1980, 1, 1).timestamp()
+        for path in staging.rglob("*"):
+            if path.is_file() and path.stat().st_mtime < dos_epoch:
+                os.utime(path, (dos_epoch, dos_epoch))
         archive = shutil.make_archive(str(BUNDLE_ROOT / f"edgeguard-{label}-logs"), "zip", staging)
         size_mib = Path(archive).stat().st_size / 1024 ** 2
         print(

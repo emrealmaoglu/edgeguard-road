@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +97,38 @@ def hpo_search_space(protocol: RescueConfig, *, initialization: str = "random") 
             "domain_sampling": "uniform",
         },
     }
+
+
+def complete_trials_within_budget(
+    study: Any,
+    objective: Callable[[Any], float],
+    *,
+    target_trials: int,
+    attempt_budget: int,
+    on_attempt: Callable[[], None] | None = None,
+) -> list[Any]:
+    """Run `objective` until `target_trials` trials reach COMPLETE, or the budget runs out.
+
+    A trial that is pruned (deliberately, by `SuccessiveHalvingPruner`, or as a detected
+    duplicate of an earlier trial's params) is terminal but carries no usable `.value` --
+    ranking a study needs COMPLETE trials specifically. Stopping as soon as enough
+    *terminal* trials exist, which this used to do, means a run where the first
+    `target_trials` attempts all happen to get pruned stops before ever spending the rest
+    of its own `attempt_budget` looking for a trial that actually finishes. That is
+    exactly what a real screening-informed pidnet_s study did on 2026-08-14: two
+    consecutive attempts were pruned at the first rung, the terminal count reached
+    `target_trials` immediately, and the study gave up with zero COMPLETE trials despite
+    `attempt_budget` allowing further tries that were never spent.
+    """
+    attempts = 0
+    complete = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
+    while len(complete) < target_trials and attempts < attempt_budget:
+        study.optimize(objective, n_trials=1, catch=(RuntimeError, ValueError, OSError))
+        attempts += 1
+        complete = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
+        if on_attempt is not None:
+            on_attempt()
+    return complete
 
 
 def _metric(metrics: dict[str, Any], name: str) -> float:
@@ -342,24 +374,23 @@ def run_hpo_study(
                 raise optuna.TrialPruned(f"pruned at {rung} optimizer steps")
         return last_macro
 
-    attempt_budget = target_trials * 2
-    attempts = 0
-    terminal = [trial for trial in study.trials if trial.state.name in {"COMPLETE", "PRUNED"}]
-    while len(terminal) < target_trials and attempts < attempt_budget:
-        study.optimize(objective, n_trials=1, catch=(RuntimeError, ValueError, OSError))
-        attempts += 1
-        terminal = [trial for trial in study.trials if trial.state.name in {"COMPLETE", "PRUNED"}]
+    def checkpoint_progress() -> None:
         _snapshot(study, study_root / "trials.snapshot.json", model=model, manifests=manifests)
         backup_study()
-    if len(terminal) < target_trials:
-        raise RuntimeError(
-            f"HPO exhausted {attempt_budget} attempts before {target_trials} terminal trials"
-        )
-    _snapshot(study, study_root / "trials.snapshot.json", model=model, manifests=manifests)
-    backup_study()
-    complete = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
+
+    attempt_budget = target_trials * 2
+    complete = complete_trials_within_budget(
+        study,
+        objective,
+        target_trials=target_trials,
+        attempt_budget=attempt_budget,
+        on_attempt=checkpoint_progress,
+    )
     if not complete:
-        raise RuntimeError("HPO finished without a complete trial")
+        raise RuntimeError(
+            f"HPO exhausted {attempt_budget} attempts without a single complete trial "
+            "(every attempt was pruned or failed)"
+        )
     best_macro = max(float(trial.value) for trial in complete)
     tied = [trial for trial in complete if best_macro - float(trial.value) <= 0.002]
     best = sorted(

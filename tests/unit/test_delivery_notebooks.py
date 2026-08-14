@@ -83,3 +83,60 @@ def test_phase_notebooks_execute_their_code_cells_in_local_mode(
     # The shared prelude plus this phase's single run cell.
     assert result["code_cell_count"] == 6
     assert all(row["status"] == "passed" for row in result["cells"])
+
+
+def test_eg_bundle_source_clamps_pre_1980_mtimes_before_archiving() -> None:
+    """`eg_bundle` never raises (`try`/`except BaseException`), which is exactly why this
+    defect was invisible until now: on 2026-08-14 a real failed HPO phase printed "'hpo-FAILED'
+    log paketi oluşturulamadı: ValueError('ZIP does not support timestamps before 1980')"
+    and produced no archive at all -- silently, at exactly the moment a failure diagnostic
+    was most needed. `shutil.copy2` preserves each source file's mtime, and a file
+    restored from a Drive tar/zip with no timestamp metadata lands at the Unix epoch
+    (1970), which the DOS-era ZIP date field cannot represent. The generated notebook's
+    `eg_bundle` cell source must therefore clamp forward before calling
+    `shutil.make_archive`.
+    """
+    master = json.loads(Path("notebooks/EdgeGuard_Master_Colab.ipynb").read_text())
+    source = "".join(
+        "".join(cell["source"]) for cell in master["cells"] if cell["cell_type"] == "code"
+    )
+    assert "def eg_bundle(label):" in source
+    start = source.index("def eg_bundle(label):")
+    end = source.index("files.download(archive)", start)
+    bundle_source = source[start:end]
+    assert "os.utime(" in bundle_source
+    assert "1980" in bundle_source
+
+
+def test_pre_1980_mtimes_break_zip_archiving_and_the_clamp_fixes_it(tmp_path: Path) -> None:
+    """Reproduces the causal mechanism with the same stdlib calls `eg_bundle` uses --
+    independent proof that the defect is real and that clamping mtimes forward to the
+    DOS-zip epoch (1980-01-01) before archiving is a correct, sufficient fix. This does
+    not execute the notebook cell itself (its archiving path only runs outside
+    LOCAL_TEST_MODE); `test_eg_bundle_source_clamps_pre_1980_mtimes_before_archiving`
+    checks the generated cell source carries the fix.
+    """
+    import os
+    import shutil
+    from datetime import datetime
+
+    source_file = tmp_path / "source" / "run_identity.json"
+    source_file.parent.mkdir(parents=True)
+    source_file.write_text("{}", encoding="utf-8")
+    os.utime(source_file, (0, 0))  # the Unix epoch: 1970-01-01, before DOS zip's 1980 floor
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    copied = staging / source_file.name
+    shutil.copy2(source_file, copied)
+    assert copied.stat().st_mtime == 0
+
+    with pytest.raises(ValueError, match="1980"):
+        shutil.make_archive(str(tmp_path / "unfixed"), "zip", staging)
+
+    dos_epoch = datetime(1980, 1, 1).timestamp()
+    for path in staging.rglob("*"):
+        if path.is_file() and path.stat().st_mtime < dos_epoch:
+            os.utime(path, (dos_epoch, dos_epoch))
+    archive = shutil.make_archive(str(tmp_path / "fixed"), "zip", staging)
+    assert Path(archive).is_file()

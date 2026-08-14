@@ -109,7 +109,27 @@ def _imports() -> tuple[Any, Any, Any]:
     from edgeguard.rescue.mmseg_components import register_mmseg_components
 
     register_mmseg_components()
+    _force_cpu_device_if_requested(mmengine)
     return torch, mmengine, mmseg
+
+
+def _force_cpu_device_if_requested(mmengine: Any) -> bool:
+    """Honour `EDGEGUARD_FORCE_CPU=1` so the pipeline can be rehearsed off-GPU.
+
+    mmengine picks its device once at import time and `Runner` moves the model there
+    unconditionally, which on an Apple-silicon developer machine means MPS -- where
+    `adaptive_avg_pool2d` raises "input sizes must be divisible by output sizes" inside
+    several of these backbones. Colab never takes that branch (CUDA outranks MPS), so
+    rehearsing locally has to pin the device to CPU. `get_device()` reads this module
+    global on every call, so rebinding it before any `Runner` is built is sufficient.
+
+    Inert unless the variable is set, and set by nothing in the production path.
+    """
+    if os.environ.get("EDGEGUARD_FORCE_CPU") != "1":
+        return False
+    device_utils = __import__("mmengine.device.utils", fromlist=["DEVICE"])
+    device_utils.DEVICE = "cpu"  # type: ignore[attr-defined]
+    return True
 
 
 def _config_import() -> Any:

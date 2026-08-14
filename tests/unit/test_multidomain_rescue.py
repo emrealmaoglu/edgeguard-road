@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -10,7 +11,11 @@ from PIL import Image
 import edgeguard.rescue.multidomain as multidomain_module
 from edgeguard.rescue.config import load_rescue_config
 from edgeguard.rescue.external import _encode_submission_mask, record_external_server_result
-from edgeguard.rescue.hpo_runtime import hpo_search_space, select_hpo_models
+from edgeguard.rescue.hpo_runtime import (
+    complete_trials_within_budget,
+    hpo_search_space,
+    select_hpo_models,
+)
 from edgeguard.rescue.ledger import append_run_ledger
 from edgeguard.rescue.mmseg_runtime import _verified_pretrained_checkpoint
 from edgeguard.rescue.multidomain import (
@@ -620,3 +625,61 @@ def test_stage_data_verification_fails_closed_when_local_files_are_missing(
     (tmp_path / "img.png").unlink()
     with pytest.raises(FileNotFoundError, match="missing on local disk"):
         verify_manifest_data_is_staged(manifest_path)
+
+
+def test_hpo_loop_keeps_trying_after_early_prunes_reach_target_count() -> None:
+    """Real screening-informed pidnet_s HPO on 2026-08-14: two consecutive attempts got
+    pruned at the study's first rung, which made the terminal (COMPLETE + PRUNED) trial
+    count reach `target_trials` immediately -- so the loop stopped there, with zero
+    COMPLETE trials, despite `attempt_budget` allowing further attempts that were never
+    spent. `train.py` then raised "HPO finished without a complete trial" and the whole
+    phase failed without ever finding the one trial that would have completed on attempt
+    4. This exercises `complete_trials_within_budget` directly against a real Optuna
+    study and a scripted objective that reproduces exactly that shape: the first three
+    calls prune, and only the fourth completes.
+    """
+    optuna = pytest.importorskip("optuna", reason="HPO loop logic is an Optuna integration")
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=1))
+    calls = {"n": 0}
+
+    def objective(trial: Any) -> float:
+        calls["n"] += 1
+        trial.suggest_float("lr", 1e-5, 1e-3, log=True)
+        if calls["n"] <= 3:
+            raise optuna.TrialPruned("simulated early-rung prune")
+        return 0.3
+
+    progress: list[int] = []
+    complete = complete_trials_within_budget(
+        study,
+        objective,
+        target_trials=3,
+        attempt_budget=6,
+        on_attempt=lambda: progress.append(calls["n"]),
+    )
+
+    assert calls["n"] == 6
+    assert len(complete) == 3
+    assert progress == [1, 2, 3, 4, 5, 6]
+
+
+def test_hpo_loop_reports_zero_complete_when_every_attempt_is_pruned() -> None:
+    """The caller (`run_hpo_study`) only raises when the budget is exhausted with
+    literally no COMPLETE trial; this proves the loop itself reports that honestly rather
+    than claiming success on pruned-only results.
+    """
+    optuna = pytest.importorskip("optuna", reason="HPO loop logic is an Optuna integration")
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=1))
+
+    def always_pruned(trial: Any) -> float:
+        trial.suggest_float("lr", 1e-5, 1e-3, log=True)
+        raise optuna.TrialPruned("simulated")
+
+    complete = complete_trials_within_budget(
+        study, always_pruned, target_trials=3, attempt_budget=4
+    )
+    assert complete == []
