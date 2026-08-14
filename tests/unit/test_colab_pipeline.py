@@ -491,3 +491,36 @@ def test_ablation_runs_on_its_own_shorter_step_budget(tmp_path: Path) -> None:
     command = pipeline._train_command("ablation", "segformer_b0", max_steps=ABLATION_MAX_STEPS)
     assert command[command.index("--max-steps") + 1] == str(ABLATION_MAX_STEPS)
     assert ABLATION_MAX_STEPS < 10_000
+
+
+def test_warmup_phases_skip_models_excluded_from_every_downstream_decision(
+    tmp_path: Path,
+) -> None:
+    """A model in neither screening_models nor final_models must not be warmed up.
+
+    At the measured 5.2 s/iter, one such model (`fast_scnn`) spent ~52 minutes in pilot
+    producing evidence that could not change screening, HPO, final or selection.
+    """
+    scope = ("segformer_b0", "pidnet_s", "ddrnet_23_slim")
+    pipeline = _pipeline(
+        tmp_path / "scope", screening_models=scope, final_models=("segformer_b0", "pidnet_s")
+    )
+
+    assert pipeline._models_for_phase("pilot") == ("segformer_b0", "pidnet_s")
+    assert pipeline._models_for_phase("smoke") == ("segformer_b0", "pidnet_s")
+    # ddrnet_23_slim is in screening scope, so it keeps its own smoke; bisenetv2 is not.
+    assert pipeline._models_for_phase("extension-smoke") == ("ddrnet_23_slim",)
+    # The canary probes the runtime itself, not the campaign, so it stays exhaustive.
+    assert pipeline._models_for_phase("canary") == ALL_MODELS
+    assert pipeline._models_for_phase("screening") == scope
+    assert pipeline._models_for_phase("final") == ("segformer_b0", "pidnet_s")
+
+
+def test_warmup_scope_preserves_the_frozen_model_order(tmp_path: Path) -> None:
+    pipeline = _pipeline(
+        tmp_path / "order",
+        screening_models=("segformer_b0", "pidnet_s"),
+        final_models=("segformer_b0", "pidnet_s"),
+    )
+    warmup = pipeline._models_for_phase("pilot")
+    assert list(warmup) == [model for model in ALL_MODELS if model in set(warmup)]

@@ -395,6 +395,48 @@ def eg_phase(target):
     return MASTER_RESULT
 
 
+def eg_status():
+    \"\"\"Print which phases the Drive state store already records as verified.
+
+    After a dropped session this is the first thing to run: it says which cell to resume
+    from, instead of re-running everything to find out.
+    \"\"\"
+    order = [
+        "preflight", "restore", "stage-data", "canary", "smoke", "pilot",
+        "extension-smoke", "screening", "hpo", "final", "selection", "ablation",
+        "accept", "validation-data", "evaluate", "export", "report", "package",
+    ]
+    if LOCAL_TEST_MODE:
+        print("LOCAL_TEST_MODE: durum sorgusu atlandı.")
+        return None
+    # Mirrors ColabPipeline.state_root. This lives on the local work root, so in a fresh
+    # runtime it is empty until the campaign state tarball has been restored from Drive --
+    # which the first phase cell does as part of its own prerequisites.
+    state_root = PHASE_WORK_ROOT / "pipeline-v3"
+    if not state_root.is_dir():
+        print(
+            "Yerel durum kaydı yok. Taze bir oturumdasınız: ilk faz hücresini "
+            "çalıştırın; Drive'daki kampanya durumu geri yüklendikten sonra bitmiş "
+            "fazlar otomatik atlanacak. Sonra bu hücreyi tekrar çalıştırabilirsiniz."
+        )
+        return []
+    done = set()
+    for phase in order:
+        marker = state_root / phase / "completion.json"
+        if marker.is_file():
+            done.add(phase)
+    print("Kampanya durumu (Drive kaydına göre):\\n")
+    for phase in order:
+        mark = "OK  " if phase in done else "-   "
+        print(f"  {mark}{phase}")
+    remaining = [phase for phase in order if phase not in done]
+    if remaining:
+        print(f"\\nSıradaki faz: {remaining[0]}  ->  o fazın hücresinden devam edin.")
+    else:
+        print("\\nTüm fazlar tamamlanmış görünüyor.")
+    return sorted(done)
+
+
 def eg_bundle(label):
     \"\"\"Zip this phase's logs/evidence and hand them to the browser as a download.
 
@@ -418,19 +460,44 @@ def eg_bundle(label):
             PHASE_WORK_ROOT / "runs" / label,
             PHASE_WORK_ROOT / "reports",
         ]
+        # Text evidence only. Model weights live in Drive recovery already, and copying
+        # them here produced a 335 MiB archive that Colab's browser download could not
+        # finish -- which cost the logs entirely, since a bundle that never arrives is
+        # worth nothing.
+        keep_suffixes = {".log", ".json", ".md", ".csv", ".py", ".txt", ".yaml", ".yml"}
+        skipped_bytes = 0
+
+        def _ignore(directory, names):
+            ignored = []
+            for name in names:
+                candidate = Path(directory) / name
+                if candidate.is_dir():
+                    continue
+                if candidate.suffix.lower() not in keep_suffixes:
+                    nonlocal skipped_bytes
+                    try:
+                        skipped_bytes += candidate.stat().st_size
+                    except OSError:
+                        pass
+                    ignored.append(name)
+            return ignored
+
         copied = 0
         for source in sources:
             if not source.exists():
                 continue
             target = staging / source.name
             if source.is_dir():
-                shutil.copytree(source, target, dirs_exist_ok=True)
+                shutil.copytree(source, target, dirs_exist_ok=True, ignore=_ignore)
             else:
                 shutil.copy2(source, target)
             copied += 1
         archive = shutil.make_archive(str(BUNDLE_ROOT / f"edgeguard-{label}-logs"), "zip", staging)
         size_mib = Path(archive).stat().st_size / 1024 ** 2
-        print(f"{label}: {copied} kaynak paketlendi, {size_mib:.1f} MiB -> {archive}")
+        print(
+            f"{label}: {copied} kaynak paketlendi, {size_mib:.1f} MiB "
+            f"(ağırlık dosyaları hariç: {skipped_bytes / 1024 ** 2:.0f} MiB atlandı) -> {archive}"
+        )
         from google.colab import files
 
         files.download(archive)
@@ -438,6 +505,20 @@ def eg_bundle(label):
     except BaseException as error:
         print(f"'{label}' log paketi oluşturulamadı (faz sonucu etkilenmedi):", repr(error))
         return None
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### Durum — nerede kaldım?
+
+Oturum koptuysa önce bunu çalıştırın: hangi fazların bittiğini ve hangi hücreden devam edeceğinizi söyler.
+""",
+        ),
+        _cell(
+            "code",
+            """
+eg_status()
 """,
         ),
         _cell(

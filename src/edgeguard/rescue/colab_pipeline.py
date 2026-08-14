@@ -532,9 +532,7 @@ class ColabPipeline:
         root = self._phase_root(phase)
         root.mkdir(parents=True, exist_ok=True)
         runtime = json.loads(self.inputs.runtime_receipt.read_text(encoding="utf-8"))
-        phase_models = list(models_for_phase(phase))
-        if phase == "screening":
-            phase_models = list(self.inputs.screening_models)
+        phase_models = list(self._models_for_phase(phase))
         if phase in {"final", "selection", "accept", "validation-data", "package"}:
             phase_models = list(self.inputs.final_models)
         if phase == "ablation":
@@ -764,6 +762,26 @@ class ColabPipeline:
             or probe.get("fp16_finite_model_count") != len(ALL_MODELS)
         ):
             raise ValueError("runtime receipt lacks the complete five-model FP32/AMP canary")
+
+    def _models_for_phase(self, phase: str) -> tuple[str, ...]:
+        """Resolve one phase's model list against this campaign's actual scope.
+
+        The frozen `models_for_phase` gate answers "which models does this phase cover in
+        principle". It does not know that a model may have been excluded from both
+        `screening_models` and `final_models` -- and a model excluded from every
+        downstream decision must not be trained in the warm-up phases either. That is not
+        a cosmetic saving: at the measured 5.2 s/iter, `fast_scnn` alone burned ~52
+        minutes of pilot for evidence that could not change any later choice.
+        """
+        if phase == "screening":
+            return self.inputs.screening_models
+        if phase == "final":
+            return self.inputs.final_models
+        frozen = models_for_phase(phase)
+        if phase not in {"smoke", "pilot", "extension-smoke"}:
+            return frozen
+        in_scope = set(self.inputs.screening_models) | set(self.inputs.final_models)
+        return tuple(model for model in frozen if model in in_scope)
 
     def _pretrained_manifest(self, model: str) -> Path | None:
         """Return this model's committed ImageNet-initialisation manifest, if one exists.
@@ -1194,11 +1212,7 @@ class ColabPipeline:
             if self.inputs.rare_classes_file is not None:
                 command.extend(("--rare-classes-file", str(self.inputs.rare_classes_file)))
             return [self._run_command(phase, "hpo-top-two", command)]
-        models = models_for_phase(phase)
-        if phase == "screening":
-            models = self.inputs.screening_models
-        if phase == "final":
-            models = self.inputs.final_models
+        models = self._models_for_phase(phase)
         results: list[dict[str, Any]] = []
         for model in models:
             for loss in ("ce",):
