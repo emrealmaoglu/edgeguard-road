@@ -6,6 +6,8 @@ import json
 import re
 from pathlib import Path
 
+from scripts.dev.build_colab_notebooks import PHASE_SECTIONS
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NOTEBOOK = REPO_ROOT / "notebooks/EdgeGuard_Master_Colab.ipynb"
 
@@ -16,18 +18,30 @@ def _source(payload: dict[str, object]) -> str:
     return "\n".join("".join(cell.get("source", [])) for cell in cells if isinstance(cell, dict))
 
 
-def test_master_notebook_is_the_only_active_notebook_and_is_output_free() -> None:
+def test_every_checked_in_notebook_is_generated_output_free_and_commit_pinned() -> None:
+    """The repository carries the master notebook plus exactly one notebook per campaign
+    phase, and nothing else. The point of the rule is not the count: a hand-edited or
+    stale notebook is a second, unversioned copy of the orchestration that can drift from
+    the Python it is supposed to pin, so every file here must be one the builder emits,
+    output-free, and pinned to a full commit SHA.
+    """
     notebooks = sorted(
         path.relative_to(REPO_ROOT).as_posix() for path in REPO_ROOT.glob("notebooks/**/*.ipynb")
     )
-    assert notebooks == ["notebooks/EdgeGuard_Master_Colab.ipynb"]
-    payload = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
-    assert payload["nbformat"] == 4
-    assert payload["nbformat_minor"] >= 5
-    for index, cell in enumerate(payload["cells"]):
-        assert not cell.get("outputs")
-        if cell["cell_type"] == "code":
-            compile("".join(cell["source"]), f"master-cell-{index}", "exec")
+    expected = ["notebooks/EdgeGuard_Master_Colab.ipynb"] + [
+        f"notebooks/phases/EdgeGuard_{index:02d}_{target}.ipynb"
+        for index, (target, _) in enumerate(PHASE_SECTIONS, start=1)
+    ]
+    assert notebooks == sorted(expected)
+    for relative in notebooks:
+        payload = json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
+        assert payload["nbformat"] == 4
+        assert payload["nbformat_minor"] >= 5
+        assert re.search(r'EXPECTED_PROJECT_COMMIT = "[0-9a-f]{40}"', _source(payload)), relative
+        for index, cell in enumerate(payload["cells"]):
+            assert not cell.get("outputs"), relative
+            if cell["cell_type"] == "code":
+                compile("".join(cell["source"]), f"{relative}-cell-{index}", "exec")
 
 
 def test_master_notebook_is_thin_immutable_and_run_all_only() -> None:

@@ -14,6 +14,7 @@ from typing import Any
 
 ROOT = Path(__file__).parents[2]
 NOTEBOOK = ROOT / "notebooks/EdgeGuard_Master_Colab.ipynb"
+PHASE_NOTEBOOK_ROOT = ROOT / "notebooks/phases"
 
 
 def _source(text: str) -> list[str]:
@@ -31,11 +32,28 @@ def _cell(cell_type: str, text: str) -> dict[str, Any]:
     return cell
 
 
-def build_master_notebook(*, branch: str, project_commit: str) -> Path:
-    """Write one deterministic notebook pinned to an immutable application commit."""
+PHASE_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("smoke", "Duman testi (50 adım, kasıtlı kesinti + devam kanıtı)"),
+    ("pilot", "Pilot (600 adım)"),
+    (
+        "screening",
+        "Tarama (2.500 adım) — kontrol noktası: mIoU'lar ~0,35/0,35/0,20 civarı olmalı ve "
+        "`candidate_table.json` üç aday içermeli",
+    ),
+    ("hpo", "Hiperparametre optimizasyonu (3 deneme × 2 model)"),
+    ("final", "Final eğitim (10.000 adım × 3 model) — en uzun faz"),
+    ("evaluate", "Seçim, ablation, kabul ve resmî kaynak değerlendirmesi"),
+    ("export", "ONNX ihracı"),
+    ("report", "Tez figürleri ve tabloları"),
+    ("package", "Teslimat paketleri"),
+)
+
+
+def _prelude_cells(*, branch: str, project_commit: str) -> list[dict[str, Any]]:
+    """Return the setup every notebook repeats: mount, pinned checkout, helpers, status."""
     if re.fullmatch(r"[0-9a-f]{40}", project_commit) is None:
         raise ValueError("project_commit must be a full lowercase Git SHA")
-    cells = [
+    return [
         _cell(
             "markdown",
             """
@@ -521,123 +539,18 @@ Oturum koptuysa önce bunu çalıştırın: hangi fazların bittiğini ve hangi 
 eg_status()
 """,
         ),
-        _cell(
-            "markdown",
-            """
-### `smoke` — Duman testi (50 adım, kasıtlı kesinti + devam kanıtı)
-""",
-        ),
-        _cell(
-            "code",
-            """
-eg_phase("smoke")
-eg_bundle("smoke")
-""",
-        ),
-        _cell(
-            "markdown",
-            """
-### `pilot` — Pilot (600 adım)
-""",
-        ),
-        _cell(
-            "code",
-            """
-eg_phase("pilot")
-eg_bundle("pilot")
-""",
-        ),
-        _cell(
-            "markdown",
-            """
-### `screening` — Tarama (2.500 adım) — **pretrained kontrol noktası: mIoU'lar eski %16-26 aralığının belirgin üstünde olmalı**
-""",
-        ),
-        _cell(
-            "code",
-            """
-eg_phase("screening")
-eg_bundle("screening")
-""",
-        ),
-        _cell(
-            "markdown",
-            """
-### `hpo` — Hiperparametre optimizasyonu (3 deneme × 2 model)
-""",
-        ),
-        _cell(
-            "code",
-            """
-eg_phase("hpo")
-eg_bundle("hpo")
-""",
-        ),
-        _cell(
-            "markdown",
-            """
-### `final` — Final eğitim (10.000 adım × 3 model) — en uzun faz
-""",
-        ),
-        _cell(
-            "code",
-            """
-eg_phase("final")
-eg_bundle("final")
-""",
-        ),
-        _cell(
-            "markdown",
-            """
-### `evaluate` — Seçim, ablation, kabul ve resmî kaynak değerlendirmesi
-""",
-        ),
-        _cell(
-            "code",
-            """
-eg_phase("evaluate")
-eg_bundle("evaluate")
-""",
-        ),
-        _cell(
-            "markdown",
-            """
-### `export` — ONNX ihracı
-""",
-        ),
-        _cell(
-            "code",
-            """
-eg_phase("export")
-eg_bundle("export")
-""",
-        ),
-        _cell(
-            "markdown",
-            """
-### `report` — Tez figürleri ve tabloları
-""",
-        ),
-        _cell(
-            "code",
-            """
-eg_phase("report")
-eg_bundle("report")
-""",
-        ),
-        _cell(
-            "markdown",
-            """
-### `package` — Teslimat paketleri
-""",
-        ),
-        _cell(
-            "code",
-            """
-eg_phase("package")
-eg_bundle("package")
-""",
-        ),
+    ]
+
+
+def _phase_cells(target: str, title: str) -> list[dict[str, Any]]:
+    return [
+        _cell("markdown", f"\n### `{target}` — {title}\n"),
+        _cell("code", f'\neg_phase("{target}")\neg_bundle("{target}")\n'),
+    ]
+
+
+def _summary_cells() -> list[dict[str, Any]]:
+    return [
         _cell(
             "code",
             """
@@ -658,20 +571,76 @@ else:
 """,
         ),
     ]
+
+
+def _write_notebook(path: Path, cells: list[dict[str, Any]]) -> Path:
     payload = {
         "cells": cells,
         "metadata": {
             "accelerator": "GPU",
-            "colab": {"name": NOTEBOOK.name, "provenance": []},
+            "colab": {"name": path.name, "provenance": []},
             "kernelspec": {"display_name": "Python 3", "name": "python3"},
             "language_info": {"name": "python", "version": "3"},
         },
         "nbformat": 4,
         "nbformat_minor": 5,
     }
-    NOTEBOOK.parent.mkdir(parents=True, exist_ok=True)
-    NOTEBOOK.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    return NOTEBOOK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return path
+
+
+def build_master_notebook(*, branch: str, project_commit: str) -> Path:
+    """Write one deterministic notebook pinned to an immutable application commit."""
+    cells = _prelude_cells(branch=branch, project_commit=project_commit)
+    for target, title in PHASE_SECTIONS:
+        cells.extend(_phase_cells(target, title))
+    cells.extend(_summary_cells())
+    return _write_notebook(NOTEBOOK, cells)
+
+
+def build_phase_notebooks(*, branch: str, project_commit: str) -> list[Path]:
+    """Write one notebook per campaign phase, each independently runnable.
+
+    Colab gives every notebook its own VM, so each of these re-stages the ~8 GB local
+    dataset copy before its phase runs. That cost buys a clean slate per phase: a phase
+    cannot inherit a half-written directory or a wedged runtime from the phase before it,
+    and each produces exactly one log bundle to hand back.
+    """
+    written: list[Path] = []
+    for index, (target, title) in enumerate(PHASE_SECTIONS, start=1):
+        cells = _prelude_cells(branch=branch, project_commit=project_commit)
+        cells[0] = _cell(
+            "markdown",
+            f"""
+# EdgeGuard · {index:02d} — `{target}`
+
+Bu notebook **yalnızca `{target}` fazını** çalıştırır: {title}
+
+Colab'da **L4 GPU** + **Yüksek RAM** seçin, sonra **Çalışma zamanı → Tümünü çalıştır**.
+Bu fazın gerektirdiği önceki aşamalar Drive'daki doğrulanmış kayıtlardan atlanır; eksik
+olan varsa burada tamamlanır. Faz bitince `edgeguard-{target}-logs.zip` iner — onu
+paylaşın.
+
+Oturum koparsa aynı notebook'ta tekrar **Tümünü çalıştır** deyin; doğrulanmış iş atlanır.
+""",
+        )
+        cells.extend(_phase_cells(target, title))
+        cells.append(
+            _cell(
+                "markdown",
+                f"""
+### Bitti
+
+`edgeguard-{target}-logs.zip` indi mi? İçindekiler `docs/colab-logs/` altına konulacak
+kanıttır. Sonraki faz için bir sonraki numaralı notebook'u açın.
+""",
+            )
+        )
+        written.append(
+            _write_notebook(PHASE_NOTEBOOK_ROOT / f"EdgeGuard_{index:02d}_{target}.ipynb", cells)
+        )
+    return written
 
 
 def main() -> int:
@@ -689,6 +658,8 @@ def main() -> int:
         ).stdout.strip()
     )
     print(build_master_notebook(branch=args.branch, project_commit=commit))
+    for path in build_phase_notebooks(branch=args.branch, project_commit=commit):
+        print(path)
     return 0
 
 
