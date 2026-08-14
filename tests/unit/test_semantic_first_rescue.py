@@ -771,3 +771,56 @@ def test_candidate_table_records_why_a_trained_model_was_dropped(tmp_path: Path)
 
     with pytest.raises(ValueError, match=r"pidnet_s \(PyTorch/ONNX outputs disagree"):
         select_hpo_models(table, expected_domains=("cityscapes", "idd20k"))
+
+
+def test_skipping_frame_uncertainty_leaves_the_confusion_matrix_identical() -> None:
+    """`uncertainty_maps` casts each image's 19x512x1024 logit volume to float64 and makes
+    a dozen passes over it, which measured ~0.42 s/image on the real L4 screening run --
+    roughly 85% of evaluation wall clock -- to produce `frame_uncertainty.json`, a file no
+    reporting, selection, HPO or thesis-bundle code reads. Screening, HPO, selection and
+    ablation therefore skip it. Those passes decide which model wins, so the metrics they
+    compute must not move: the confusion matrix is built from `pred_sem_seg`/`gt_sem_seg`
+    and the logit tensor is consulted only for its shape.
+    """
+    torch = pytest.importorskip("torch", reason="evidence collection is a torch integration")
+    from edgeguard.rescue.mmseg_runtime import _collect_reporting_evidence
+
+    class _Field:
+        def __init__(self, data: Any) -> None:
+            self.data = data
+
+    class _Output:
+        def __init__(self, index: int) -> None:
+            torch.manual_seed(index)
+            logits = torch.randn(19, 6, 10)
+            self.seg_logits = _Field(logits)
+            self.gt_sem_seg = _Field(torch.randint(0, 19, (1, 6, 10)))
+            self.pred_sem_seg = _Field(logits.argmax(dim=0)[None])
+            self.metainfo = {"img_path": f"/data/frame_{index:03d}.png"}
+
+    class _Model:
+        def eval(self) -> Any:
+            return self
+
+        def test_step(self, batch: Any) -> Any:
+            return batch
+
+    class _Runner:
+        def __init__(self) -> None:
+            self.model = _Model()
+            self.test_dataloader = [[_Output(0), _Output(1)], [_Output(2)]]
+
+    _, _, with_frames, frames = _collect_reporting_evidence(
+        _Runner(), max_pixels=0, collect_frame_uncertainty=True
+    )
+    _, _, without_frames, skipped = _collect_reporting_evidence(
+        _Runner(), max_pixels=0, collect_frame_uncertainty=False
+    )
+
+    assert with_frames == without_frames
+    assert without_frames["mean_iou"] > 0.0
+    assert frames is not None and len(frames) == 3
+    assert frames[0]["sample_id"] == "frame_000"
+    # `None` means "not collected"; an empty list would claim "collected, and there were
+    # none", which is a different and false statement.
+    assert skipped is None

@@ -1363,14 +1363,26 @@ def load_evaluation_weights(model: Any, checkpoint: Path) -> int:
 
 
 def _collect_reporting_evidence(
-    runner: Any, *, max_pixels: int, temperature: float = 1.0
-) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any], list[dict[str, Any]]]:
+    runner: Any,
+    *,
+    max_pixels: int,
+    temperature: float = 1.0,
+    collect_frame_uncertainty: bool = True,
+) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any], list[dict[str, Any]] | None]:
     torch = __import__("torch")
     logits_parts: list[np.ndarray] = []
     target_parts: list[np.ndarray] = []
     collected = 0
     confusion = SemanticConfusionMatrix()
-    frame_summaries: list[dict[str, Any]] = []
+    frame_summaries: list[dict[str, Any]] | None = [] if collect_frame_uncertainty else None
+    # Pulling the full 19-channel logit volume to host memory and running
+    # `uncertainty_maps` over it in float64 costs roughly ten passes across ten million
+    # elements per image. Measured on the real L4 screening run that was ~0.42 s/image --
+    # about 85% of the evaluation wall clock -- and it produced `frame_uncertainty.json`,
+    # which no reporting, selection, HPO or thesis-bundle code reads. Skip the transfer
+    # entirely when neither the frame summaries nor a reliability sample is wanted; the
+    # shape still comes from the tensor, so the confusion matrix is computed identically.
+    needs_logit_array = collect_frame_uncertainty or max_pixels > 0
     runner.model.eval()
     for data_batch in runner.test_dataloader:
         with torch.no_grad():
@@ -1378,28 +1390,31 @@ def _collect_reporting_evidence(
         for output in outputs:
             if not hasattr(output, "seg_logits") or not hasattr(output, "gt_sem_seg"):
                 raise RuntimeError("MMSeg output must preserve seg_logits and gt_sem_seg")
-            logits = output.seg_logits.data.detach().cpu().numpy()
-            maps = uncertainty_maps(logits / temperature)
-            frame_summary: dict[str, Any] = dict(
-                frame_uncertainty_summary(
-                    maps["maximum_softmax_probability"],
-                    maps["normalized_entropy"],
-                    energy=maps["energy"],
+            logits = output.seg_logits.data.detach().cpu().numpy() if needs_logit_array else None
+            logits_shape = tuple(output.seg_logits.data.shape[1:])
+            if frame_summaries is not None:
+                assert logits is not None
+                maps = uncertainty_maps(logits / temperature)
+                frame_summary: dict[str, Any] = dict(
+                    frame_uncertainty_summary(
+                        maps["maximum_softmax_probability"],
+                        maps["normalized_entropy"],
+                        energy=maps["energy"],
+                    )
                 )
-            )
-            frame_summary["mean_maximum_logit"] = float(np.mean(maps["maximum_logit"]))
-            frame_summary["negative_mean_maximum_logit"] = -float(
-                frame_summary["mean_maximum_logit"]
-            )
-            metadata = getattr(output, "metainfo", {})
-            image_path = metadata.get("img_path") if isinstance(metadata, dict) else None
-            frame_summary["sample_id"] = Path(str(image_path)).stem if image_path else None
-            frame_summaries.append(frame_summary)
+                frame_summary["mean_maximum_logit"] = float(np.mean(maps["maximum_logit"]))
+                frame_summary["negative_mean_maximum_logit"] = -float(
+                    frame_summary["mean_maximum_logit"]
+                )
+                metadata = getattr(output, "metainfo", {})
+                image_path = metadata.get("img_path") if isinstance(metadata, dict) else None
+                frame_summary["sample_id"] = Path(str(image_path)).stem if image_path else None
+                frame_summaries.append(frame_summary)
             target = output.gt_sem_seg.data.detach().cpu().numpy().squeeze(0)
-            if logits.shape[1:] != target.shape:
+            if logits_shape != target.shape:
                 resized = torch.nn.functional.interpolate(
                     torch.from_numpy(target[None, None].astype(np.float32)),
-                    size=logits.shape[1:],
+                    size=logits_shape,
                     mode="nearest",
                 )
                 target = resized[0, 0].numpy().astype(np.int64)
@@ -1412,11 +1427,11 @@ def _collect_reporting_evidence(
                 )
                 prediction = resized_prediction[0, 0].numpy().astype(np.int64)
             confusion.update(prediction.astype(np.int64), target.astype(np.int64))
+            remaining = max_pixels - collected
+            if remaining <= 0 or logits is None:
+                continue
             flat_logits = logits.reshape(logits.shape[0], -1)
             flat_target = target.reshape(-1)
-            remaining = max_pixels - collected
-            if remaining <= 0:
-                continue
             stride = max(1, int(np.ceil(flat_target.size / remaining)))
             indices = np.arange(0, flat_target.size, stride, dtype=np.int64)[:remaining]
             logits_parts.append(flat_logits[:, indices])
@@ -1453,6 +1468,7 @@ def evaluate_model(
     sealed_release: Path | None = None,
     calibration_evidence_output: Path | None = None,
     collect_classwise: bool = True,
+    collect_frame_uncertainty: bool = True,
 ) -> dict[str, Any]:
     """Collect accuracy, classwise IoU, uncertainty and calibration in one inference pass."""
     _, mmengine, _ = _imports()
@@ -1498,6 +1514,7 @@ def evaluate_model(
         runner,
         max_pixels=max_reliability_pixels if needs_logits else 0,
         temperature=reporting_temperature,
+        collect_frame_uncertainty=collect_frame_uncertainty,
     )
     metrics = {
         "mIoU": classwise["mean_iou"],
@@ -1604,6 +1621,9 @@ def evaluate_model(
         "checkpoint_sha256": sha256_file(checkpoint),
         "temperature": reporting_temperature,
         "frames": frame_summaries,
+        # `null` frames mean "not collected", which is a different claim from an empty
+        # list ("collected, and there were none"). Say which one this is.
+        "frame_collection_skipped": frame_summaries is None,
         "pixel_anomaly_segmentation": False,
     }
     (output_dir / "frame_uncertainty.json").write_text(

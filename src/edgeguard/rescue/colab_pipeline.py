@@ -19,6 +19,7 @@ from edgeguard.rescue.colab_recovery import (
     create_state_archive,
     publish_recovery_file,
     restore_recovery_file,
+    supersede_stale_evidence,
     utc_now,
 )
 from edgeguard.rescue.multidomain import validate_dataset_manifest, verify_manifest_data_is_staged
@@ -1010,8 +1011,15 @@ class ColabPipeline:
                         "evaluation carries no verified_weight_tensor_count receipt, so it "
                         "predates the fix that loads the checkpoint into the runner",
                     )
+                    # A record is published atomically at the end of the run, so a
+                    # directory without one is the debris of an interrupted attempt, not
+                    # evidence. Superseding it lets the retry proceed and surface the real
+                    # error if one recurs, instead of stopping the campaign on a message
+                    # that only says a human should look.
                 if output.exists() and any(output.iterdir()):
-                    raise ValueError(f"incomplete screening evaluation requires review: {output}")
+                    supersede_stale_evidence(
+                        output, "screening evaluation was interrupted before it published a record"
+                    )
                 command = [
                     sys_executable(),
                     str(self.inputs.project_root / "scripts/evaluate.py"),
@@ -1028,6 +1036,10 @@ class ColabPipeline:
                     "train_select",
                     "--output-dir",
                     str(output),
+                    # Ranking passes need the confusion matrix, not the per-frame
+                    # uncertainty summaries, which nothing downstream reads and which
+                    # cost ~85% of the evaluation wall clock.
+                    "--skip-frame-uncertainty",
                 ]
                 if self.inputs.rare_classes_file is not None:
                     command.extend(("--rare-classes-file", str(self.inputs.rare_classes_file)))
@@ -1056,7 +1068,9 @@ class ColabPipeline:
                     reusable_export = False
             if not reusable_export:
                 if export_dir.exists() and any(export_dir.iterdir()):
-                    raise ValueError(f"incomplete screening export requires review: {export_dir}")
+                    supersede_stale_evidence(
+                        export_dir, "screening export was interrupted before it published a record"
+                    )
                 results.append(
                     self._run_command(
                         "screening",
@@ -1094,7 +1108,9 @@ class ColabPipeline:
                 )
         if not candidate_table.is_file():
             if report.exists() and any(report.iterdir()):
-                raise ValueError(f"incomplete screening report requires review: {report}")
+                supersede_stale_evidence(
+                    report, "screening report was interrupted before it published a candidate table"
+                )
             command = [
                 sys_executable(),
                 str(self.inputs.project_root / "scripts/evaluate.py"),
@@ -1142,7 +1158,10 @@ class ColabPipeline:
                         "predates the fix that loads the checkpoint into the runner",
                     )
                 if output.exists() and any(output.iterdir()):
-                    raise ValueError(f"incomplete final selection evaluation: {output}")
+                    supersede_stale_evidence(
+                        output,
+                        "final selection evaluation was interrupted before it published a record",
+                    )
                 command = [
                     sys_executable(),
                     str(self.inputs.project_root / "scripts/evaluate.py"),
@@ -1159,6 +1178,10 @@ class ColabPipeline:
                     "train_select",
                     "--output-dir",
                     str(output),
+                    # Ranking passes need the confusion matrix, not the per-frame
+                    # uncertainty summaries, which nothing downstream reads and which
+                    # cost ~85% of the evaluation wall clock.
+                    "--skip-frame-uncertainty",
                 ]
                 if self.inputs.rare_classes_file is not None:
                     command.extend(("--rare-classes-file", str(self.inputs.rare_classes_file)))
@@ -1184,7 +1207,10 @@ class ColabPipeline:
                     reusable_export = False
             if not reusable_export:
                 if export_dir.exists() and any(export_dir.iterdir()):
-                    raise ValueError(f"incomplete final selection export: {export_dir}")
+                    supersede_stale_evidence(
+                        export_dir,
+                        "final selection export was interrupted before it published a record",
+                    )
                 results.append(
                     self._run_command(
                         "selection",
@@ -1492,6 +1518,10 @@ class ColabPipeline:
                     "train_select",
                     "--output-dir",
                     str(output),
+                    # Ranking passes need the confusion matrix, not the per-frame
+                    # uncertainty summaries, which nothing downstream reads and which
+                    # cost ~85% of the evaluation wall clock.
+                    "--skip-frame-uncertainty",
                 ]
                 if self.inputs.rare_classes_file is not None:
                     command.extend(("--rare-classes-file", str(self.inputs.rare_classes_file)))
@@ -1730,7 +1760,10 @@ class ColabPipeline:
                 if calibration_evidence.is_file():
                     continue
                 if calibration_root.exists() and any(calibration_root.iterdir()):
-                    raise ValueError(f"incomplete calibration evidence: {calibration_root}")
+                    supersede_stale_evidence(
+                        calibration_root,
+                        "calibration pass was interrupted before it published its evidence",
+                    )
                 command = [
                     sys_executable(),
                     str(self.inputs.project_root / "scripts/evaluate.py"),
@@ -1792,8 +1825,9 @@ class ColabPipeline:
                         raise ValueError("existing accepted-release evaluation identity mismatch")
                     continue
                 if output.exists() and any(output.iterdir()):
-                    raise ValueError(
-                        f"incomplete accepted-release evaluation requires review: {output}"
+                    supersede_stale_evidence(
+                        output,
+                        "accepted-release evaluation was interrupted before it published a record",
                     )
                 command = [
                     sys_executable(),
@@ -1845,8 +1879,9 @@ class ColabPipeline:
                     raise ValueError("existing accepted-release ONNX identity mismatch")
                 continue
             if output.parent.exists() and any(output.parent.iterdir()):
-                raise ValueError(
-                    f"incomplete accepted-release export requires review: {output.parent}"
+                supersede_stale_evidence(
+                    output.parent,
+                    "accepted-release export was interrupted before it published a record",
                 )
             selection = self.inputs.work_root / "exports/selection" / source.model
             selection_onnx = selection / f"{source.model}.onnx"
@@ -1900,9 +1935,12 @@ class ColabPipeline:
             payload = json.loads(manifest.read_text(encoding="utf-8"))
             if payload.get("source_release_sha256") != sha256_file(self.inputs.accepted_release):
                 raise ValueError("existing thesis report belongs to another accepted release")
-        elif output.exists() or archive.exists():
-            raise ValueError(f"incomplete thesis report requires review: {output}")
         else:
+            if output.exists() or archive.exists():
+                supersede_stale_evidence(
+                    output, "thesis report was interrupted before it published its manifest"
+                )
+                archive.unlink(missing_ok=True)
             results.append(
                 self._run_command(
                     "report",
@@ -2075,37 +2113,6 @@ class ColabPipeline:
             "completed": completed,
             "skipped_verified": skipped,
         }
-
-
-def supersede_stale_evidence(directory: Path, reason: str) -> Path | None:
-    """Move evidence produced by a superseded code path aside so it can be rebuilt.
-
-    The screening reuse guards key on `checkpoint_sha256`, which answers "was this record
-    built from this checkpoint" but not "was it built by code that worked". When the
-    evaluation runner was fixed to actually load the checkpoint, every cached
-    `evaluation.json` still matched its checkpoint hash and would have been reused
-    verbatim, so the corrected run would have re-published the same untrained-weights
-    numbers. Nothing is deleted -- the directory is renamed and a note left beside it, so
-    the discarded record stays auditable.
-    """
-    if not directory.exists():
-        return None
-    superseded = directory.with_name(f"{directory.name}.superseded")
-    index = 1
-    while superseded.exists():
-        index += 1
-        superseded = directory.with_name(f"{directory.name}.superseded-{index}")
-    shutil.move(str(directory), str(superseded))
-    atomic_json(
-        superseded / "superseded.json",
-        {
-            "schema_version": "1.0",
-            "record_type": "edgeguard_superseded_evidence",
-            "original_path": directory.name,
-            "reason": reason,
-        },
-    )
-    return superseded
 
 
 def sys_executable() -> str:

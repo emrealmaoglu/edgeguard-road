@@ -45,6 +45,37 @@ def _label(value: str, field: str) -> str:
     return value
 
 
+def supersede_stale_evidence(directory: Path, reason: str) -> Path | None:
+    """Move evidence produced by a superseded code path aside so it can be rebuilt.
+
+    The screening reuse guards key on `checkpoint_sha256`, which answers "was this record
+    built from this checkpoint" but not "was it built by code that worked". When the
+    evaluation runner was fixed to actually load the checkpoint, every cached
+    `evaluation.json` still matched its checkpoint hash and would have been reused
+    verbatim, so the corrected run would have re-published the same untrained-weights
+    numbers. Nothing is deleted -- the directory is renamed and a note left beside it, so
+    the discarded record stays auditable.
+    """
+    if not directory.exists():
+        return None
+    superseded = directory.with_name(f"{directory.name}.superseded")
+    index = 1
+    while superseded.exists():
+        index += 1
+        superseded = directory.with_name(f"{directory.name}.superseded-{index}")
+    shutil.move(str(directory), str(superseded))
+    atomic_json(
+        superseded / "superseded.json",
+        {
+            "schema_version": "1.0",
+            "record_type": "edgeguard_superseded_evidence",
+            "original_path": directory.name,
+            "reason": reason,
+        },
+    )
+    return superseded
+
+
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
     """Publish a small JSON record last, leaving interrupted temporary files ignorable."""
     path.parent.mkdir(parents=True, exist_ok=True)

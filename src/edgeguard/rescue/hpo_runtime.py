@@ -12,6 +12,7 @@ from edgeguard.rescue.colab_recovery import (
     latest_checkpoint,
     publish_recovery_file,
     restore_recovery_file,
+    supersede_stale_evidence,
 )
 from edgeguard.rescue.config import RescueConfig
 from edgeguard.rescue.ledger import append_run_ledger
@@ -296,6 +297,19 @@ def run_hpo_study(
                 evaluation_dir = (
                     study_root / "evaluations" / run_name / str(rung) / str(payload["dataset_id"])
                 )
+                # A rung is only recorded as done once *every* domain has been evaluated
+                # (`domain_scores_{rung}` below), so an interruption between the two
+                # domains leaves a finished directory that the resumed trial must rebuild.
+                # `evaluate_model` refuses to write into an existing directory, and that
+                # FileExistsError is an OSError, which `study.optimize(catch=...)` swallows
+                # into a failed trial -- so without this the resumed study would burn its
+                # whole attempt budget re-failing on the same directory and end with
+                # "HPO exhausted N attempts", needing a hand-deleted path to recover.
+                supersede_stale_evidence(
+                    evaluation_dir,
+                    f"trial {run_name} rung {rung} was interrupted before every domain "
+                    "was scored, so this partial evaluation is being rebuilt",
+                )
                 result = evaluate_model(
                     protocol,
                     resolved_config=run_dir / "resolved.py",
@@ -312,6 +326,7 @@ def run_hpo_study(
                     rare_classes_file=(rare_classes_file if rung == maximum_steps else None),
                     dataset_manifest=manifest,
                     collect_classwise=rung == maximum_steps,
+                    collect_frame_uncertainty=False,
                 )
                 domain_scores.append(_metric(result["metrics"], "mIoU"))
                 if result["rare_class_mIoU"] is not None:
