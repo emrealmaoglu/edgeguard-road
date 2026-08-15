@@ -263,3 +263,51 @@ def test_separable_distance_transform_matches_the_breadth_first_search(seed: int
 def test_distance_from_an_empty_mask_stays_infinite() -> None:
     distance = _distance_from_mask(np.zeros((4, 4), dtype=np.bool_))
     assert np.isinf(distance).all()
+
+
+@pytest.mark.parametrize("seed", [0, 3, 11, 20260728])
+def test_single_pass_class_labelling_matches_the_per_class_calls(seed: int) -> None:
+    """`derive_perception` used to label each attention class with its own full-array
+    pass -- eleven per frame on the stage that dominates the Jetson budget. Components of
+    different classes can never merge, so one propagation restricted to same-class
+    neighbours resolves them all; it has to return exactly what the separate calls did,
+    including the order components appear in, since `region_id` comes from list position.
+    """
+    from edgeguard.rescue.perception import REGION_CLASS_IDS, _label_components_by_class
+
+    generator = np.random.default_rng(seed)
+    mask = generator.integers(0, 19, (26, 41)).astype(np.uint8)
+
+    grouped = _label_components_by_class(mask, REGION_CLASS_IDS)
+    for class_id in REGION_CLASS_IDS:
+        _, expected = _label_components(mask == class_id)
+        actual = grouped[class_id]
+        assert len(actual) == len(expected), class_id
+        for one, other in zip(actual, expected, strict=True):
+            assert sorted(map(tuple, one.tolist())) == sorted(map(tuple, other.tolist()))
+
+
+def test_single_pass_labelling_handles_a_mask_with_no_attention_classes() -> None:
+    from edgeguard.rescue.perception import REGION_CLASS_IDS, _label_components_by_class
+
+    mask = np.zeros((6, 6), dtype=np.uint8)  # road only
+    grouped = _label_components_by_class(mask, REGION_CLASS_IDS)
+    assert set(grouped) == set(REGION_CLASS_IDS)
+    assert all(not components for components in grouped.values())
+
+
+def test_adjacent_different_classes_never_merge_into_one_component() -> None:
+    """The whole optimisation rests on this: propagation is restricted to same-class
+    neighbours, so two touching regions of different classes stay separate.
+    """
+    from edgeguard.rescue.perception import _label_components_by_class
+
+    mask = np.zeros((4, 6), dtype=np.uint8)
+    mask[:, :3] = 11  # person
+    mask[:, 3:] = 13  # car
+
+    grouped = _label_components_by_class(mask, (11, 13))
+    assert len(grouped[11]) == 1
+    assert len(grouped[13]) == 1
+    assert grouped[11][0].shape[0] == 12
+    assert grouped[13][0].shape[0] == 12

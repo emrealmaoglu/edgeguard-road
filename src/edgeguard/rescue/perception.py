@@ -153,6 +153,70 @@ def _label_components(binary: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]
     return ordered.reshape(binary.shape), components
 
 
+def _label_components_by_class(
+    semantic_mask: np.ndarray, class_ids: tuple[int, ...]
+) -> dict[int, list[np.ndarray]]:
+    """Label every requested class's components in a single propagation.
+
+    Calling `_label_components` once per class walks the whole array once per class --
+    eleven full passes per frame for the road plus ten attention classes, on the stage
+    that already dominates the Jetson frame budget. Components of different classes can
+    never merge, so restricting propagation to same-class neighbours resolves all of them
+    at once for the cost of one.
+
+    Ordering matches the per-class calls it replaces: within each class, components are
+    numbered by the raster position of their first pixel.
+    """
+    wanted = np.isin(semantic_mask, class_ids)
+    if not wanted.any():
+        return {class_id: [] for class_id in class_ids}
+    seeds = np.arange(1, semantic_mask.size + 1, dtype=np.int64).reshape(semantic_mask.shape)
+    labels = np.where(wanted, seeds, 0)
+    vertical = semantic_mask[1:, :] == semantic_mask[:-1, :]
+    horizontal = semantic_mask[:, 1:] == semantic_mask[:, :-1]
+    while True:
+        merged = labels.copy()
+        merged[1:, :] = np.where(vertical, np.maximum(merged[1:, :], labels[:-1, :]), merged[1:, :])
+        merged[:-1, :] = np.where(
+            vertical, np.maximum(merged[:-1, :], labels[1:, :]), merged[:-1, :]
+        )
+        merged[:, 1:] = np.where(
+            horizontal, np.maximum(merged[:, 1:], labels[:, :-1]), merged[:, 1:]
+        )
+        merged[:, :-1] = np.where(
+            horizontal, np.maximum(merged[:, :-1], labels[:, 1:]), merged[:, :-1]
+        )
+        merged[~wanted] = 0
+        if np.array_equal(merged, labels):
+            break
+        labels = merged
+
+    flat = labels.reshape(-1)
+    foreground = np.flatnonzero(flat)
+    unique, inverse = np.unique(flat[foreground], return_inverse=True)
+    first_index = np.full(unique.size, flat.size, dtype=np.int64)
+    np.minimum.at(first_index, inverse, foreground)
+    grouped = np.argsort(inverse, kind="stable")
+    boundaries = np.searchsorted(inverse[grouped], np.arange(unique.size + 1))
+    width = semantic_mask.shape[1]
+    classes = semantic_mask.reshape(-1)
+
+    by_class: dict[int, list[tuple[int, np.ndarray]]] = {int(c): [] for c in class_ids}
+    for index in range(unique.size):
+        members = foreground[grouped[boundaries[index] : boundaries[index + 1]]]
+        class_id = int(classes[members[0]])
+        by_class[class_id].append(
+            (
+                int(first_index[index]),
+                np.stack((members // width, members % width), axis=1).astype(np.int32),
+            )
+        )
+    return {
+        class_id: [pixels for _, pixels in sorted(entries, key=lambda entry: entry[0])]
+        for class_id, entries in by_class.items()
+    }
+
+
 def drivable_corridor_from_semantics(
     semantic_mask: np.ndarray, *, minimum_area: int = 64
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -255,9 +319,9 @@ def derive_perception(
     relation_scale = max(1.0, height * 0.25)
     regions: list[SemanticRegion] = []
     attention_map = np.zeros(semantic_mask.shape, dtype=np.float32)
+    components_by_class = _label_components_by_class(semantic_mask, REGION_CLASS_IDS)
     for class_id in REGION_CLASS_IDS:
-        _labels, components = _label_components(semantic_mask == class_id)
-        for pixels in components:
+        for pixels in components_by_class[class_id]:
             area = int(pixels.shape[0])
             if area < minimum_region_area:
                 continue
