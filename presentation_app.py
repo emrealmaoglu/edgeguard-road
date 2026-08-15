@@ -72,10 +72,15 @@ def results_root() -> Path:
 
 
 def load_json(path: Path) -> dict[str, Any] | None:
-    """Read one record, returning None rather than raising when it is absent."""
+    """Read one record, returning None rather than raising for any unreadable file.
+
+    `UnicodeDecodeError` is a `ValueError`, not an `OSError`, so a stray binary file next
+    to the records used to take the whole panel down with a traceback -- during a
+    recording, that is the difference between a missing table and no presentation.
+    """
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None
 
 
@@ -84,6 +89,10 @@ def load_group(directory: Path) -> dict[str, dict[str, Any]]:
         return {}
     loaded = {}
     for path in sorted(directory.glob("*.json")):
+        # macOS archives carry AppleDouble sidecars named `._<original>`, which match a
+        # `*.json` glob while containing binary resource-fork data.
+        if path.name.startswith("._"):
+            continue
         record = load_json(path)
         if record is not None:
             loaded[path.stem] = record
