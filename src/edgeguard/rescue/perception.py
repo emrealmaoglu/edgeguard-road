@@ -97,6 +97,14 @@ def _validate_semantic_inputs(
 
 
 def _label_components(binary: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Label four-connected components, numbered by raster order of first pixel.
+
+    Deliberately still a breadth-first search. A vectorised label-propagation version was
+    written and measured against this one on the real 64x128 mask geometry, and it was
+    0.4-0.7x the speed: propagation touches all 8192 pixels on every iteration, while the
+    search only ever visits foreground. The Jetson cost of `derive_perception` lives in
+    the distance transform (see `_distance_from_mask`), not here.
+    """
     labels = np.zeros(binary.shape, dtype=np.int32)
     components: list[np.ndarray] = []
     height, width = binary.shape
@@ -154,26 +162,44 @@ def drivable_corridor_from_semantics(
     return road, labels == selected
 
 
+def _axis_distance(distance: np.ndarray, axis: int) -> np.ndarray:
+    """Propagate a one-dimensional min-plus sweep along one axis, in both directions.
+
+    A forward sweep `d[i] = min(d[i], d[i-1] + 1)` expands to `d[i] = i + min(d[j] - j)`
+    over `j <= i`, which is a running minimum -- so the sequential scan becomes a single
+    `np.minimum.accumulate` instead of a Python loop.
+    """
+    length = distance.shape[axis]
+    shape = [1] * distance.ndim
+    shape[axis] = length
+    # Both directions index from their own origin, so the reverse sweep reuses this same
+    # ramp against the flipped array rather than a flipped ramp.
+    offsets = np.arange(length, dtype=np.float32).reshape(shape)
+    forward = np.minimum.accumulate(distance - offsets, axis=axis) + offsets
+    flipped = np.flip(distance, axis=axis)
+    backward = np.flip(np.minimum.accumulate(flipped - offsets, axis=axis) + offsets, axis=axis)
+    return np.minimum(forward, backward)
+
+
 def _distance_from_mask(mask: np.ndarray) -> np.ndarray:
-    """Compute four-neighbour distance to a boolean mask without SciPy."""
-    height, width = mask.shape
-    distance = np.full(mask.shape, np.inf, dtype=np.float32)
-    queue: deque[tuple[int, int]] = deque()
-    for y, x in zip(*np.nonzero(mask), strict=True):
-        distance[y, x] = 0.0
-        queue.append((int(y), int(x)))
-    while queue:
-        y, x = queue.popleft()
-        candidate = distance[y, x] + 1.0
-        for next_y, next_x in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-            if (
-                0 <= next_y < height
-                and 0 <= next_x < width
-                and candidate < distance[next_y, next_x]
-            ):
-                distance[next_y, next_x] = candidate
-                queue.append((next_y, next_x))
-    return distance
+    """Compute four-neighbour distance to a boolean mask without SciPy.
+
+    Breadth-first search on an obstacle-free four-connected grid is exactly the L1
+    distance to the nearest source, and the L1 transform is separable: sweep each row,
+    then each column. That replaces a per-pixel Python queue -- which shared the blame for
+    `derive_perception` costing 96 ms of a 146 ms Jetson frame -- with four accumulate
+    passes, while returning the same distances.
+    """
+    if not mask.any():
+        return np.full(mask.shape, np.inf, dtype=np.float32)
+    # A finite sentinel keeps the min-plus arithmetic free of inf-minus-inf; anything
+    # still holding it afterwards is genuinely unreachable, which cannot happen here but
+    # is restored as `inf` so the caller's `np.isfinite` guard keeps its meaning.
+    unreachable = np.float32(mask.size + mask.shape[0] + mask.shape[1])
+    distance = np.where(mask, np.float32(0.0), unreachable).astype(np.float32)
+    distance = _axis_distance(distance, axis=1)
+    distance = _axis_distance(distance, axis=0)
+    return np.where(distance >= unreachable, np.inf, distance).astype(np.float32)
 
 
 def _attention_level(score: float) -> str:

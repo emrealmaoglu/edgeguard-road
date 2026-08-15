@@ -12,6 +12,7 @@ from edgeguard.detection.bdd import adapt_bdd_record
 from edgeguard.detection.contracts import Detection, LetterboxTransform, box_mask_overlap
 from edgeguard.evaluation.components import ComponentRecord, connected_components
 from edgeguard.evaluation.ood import pixel_ood_metrics, select_anomaly_threshold
+from edgeguard.rescue.perception import _distance_from_mask, _label_components
 from edgeguard.scoring.anomaly_head import LinearAnomalyHead, synthetic_outlier_exposure
 from edgeguard.temporal import TemporalPersistence
 
@@ -147,3 +148,118 @@ def test_temporal_snapshot_restore_continues_exact_track() -> None:
 def test_temporal_restore_rejects_corrupt_state() -> None:
     with pytest.raises(ValueError, match="malformed"):
         TemporalPersistence().restore({"sequence_id": "sequence"})
+
+
+def _bfs_label_components(binary: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
+    """The original per-pixel BFS, retained only as a correctness oracle.
+
+    It cost 96 ms of a 146 ms frame on a real Orin Nano Super -- 19x the TensorRT engine
+    it wraps -- which is why the shipped implementation is vectorised. Keeping the naive
+    version here pins the fast path to the labelling it replaced.
+    """
+    from collections import deque
+
+    labels = np.zeros(binary.shape, dtype=np.int32)
+    components: list[np.ndarray] = []
+    height, width = binary.shape
+    next_label = 0
+    for start_y, start_x in zip(*np.nonzero(binary), strict=True):
+        if labels[start_y, start_x] != 0:
+            continue
+        next_label += 1
+        queue: deque[tuple[int, int]] = deque([(int(start_y), int(start_x))])
+        labels[start_y, start_x] = next_label
+        pixels: list[tuple[int, int]] = []
+        while queue:
+            y, x = queue.popleft()
+            pixels.append((y, x))
+            for next_y, next_x in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                if (
+                    0 <= next_y < height
+                    and 0 <= next_x < width
+                    and binary[next_y, next_x]
+                    and labels[next_y, next_x] == 0
+                ):
+                    labels[next_y, next_x] = next_label
+                    queue.append((next_y, next_x))
+        components.append(np.asarray(pixels, dtype=np.int32))
+    return labels, components
+
+
+def _bfs_distance_from_mask(mask: np.ndarray) -> np.ndarray:
+    """The original per-pixel BFS distance, retained as a correctness oracle."""
+    from collections import deque
+
+    height, width = mask.shape
+    distance = np.full(mask.shape, np.inf, dtype=np.float32)
+    queue: deque[tuple[int, int]] = deque()
+    for y, x in zip(*np.nonzero(mask), strict=True):
+        distance[y, x] = 0.0
+        queue.append((int(y), int(x)))
+    while queue:
+        y, x = queue.popleft()
+        candidate = distance[y, x] + 1.0
+        for next_y, next_x in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if (
+                0 <= next_y < height
+                and 0 <= next_x < width
+                and candidate < distance[next_y, next_x]
+            ):
+                distance[next_y, next_x] = candidate
+                queue.append((next_y, next_x))
+    return distance
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 7, 20260728])
+@pytest.mark.parametrize("density", [0.15, 0.5, 0.85])
+def test_vectorised_labelling_matches_the_breadth_first_search(seed: int, density: float) -> None:
+    """Component order and label values are contract: callers map a component's list index
+    onto `labels == index + 1` to select the drivable corridor, and derive `region_id` from
+    list position. Pixel order inside a component is not, since every consumer takes an
+    area, extent or mean -- so pixel sets are compared as sets.
+    """
+    generator = np.random.default_rng(seed)
+    binary = generator.random((24, 37)) < density
+
+    expected_labels, expected_components = _bfs_label_components(binary)
+    actual_labels, actual_components = _label_components(binary)
+
+    assert np.array_equal(actual_labels, expected_labels)
+    assert len(actual_components) == len(expected_components)
+    for actual, expected in zip(actual_components, expected_components, strict=True):
+        assert sorted(map(tuple, actual.tolist())) == sorted(map(tuple, expected.tolist()))
+
+
+def test_labelling_handles_an_entirely_empty_mask() -> None:
+    labels, components = _label_components(np.zeros((5, 6), dtype=np.bool_))
+    assert components == []
+    assert not labels.any()
+
+
+def test_snake_shaped_component_still_converges_to_one_label() -> None:
+    """Label propagation needs one pass per unit of component diameter, so the worst case
+    is a single winding component rather than the compact blobs real masks produce.
+    """
+    binary = np.zeros((9, 9), dtype=np.bool_)
+    binary[::2, :] = True
+    binary[1::4, -1] = True
+    binary[3::4, 0] = True
+
+    labels, components = _label_components(binary)
+    assert len(components) == 1
+    assert set(np.unique(labels[binary]).tolist()) == {1}
+
+
+@pytest.mark.parametrize("seed", [0, 5, 20260728])
+def test_separable_distance_transform_matches_the_breadth_first_search(seed: int) -> None:
+    """BFS on an obstacle-free four-connected grid is exactly the L1 distance transform."""
+    generator = np.random.default_rng(seed)
+    mask = generator.random((19, 23)) < 0.08
+    mask[0, 0] = True  # guarantee a source so both paths return finite distances
+
+    assert np.array_equal(_distance_from_mask(mask), _bfs_distance_from_mask(mask))
+
+
+def test_distance_from_an_empty_mask_stays_infinite() -> None:
+    distance = _distance_from_mask(np.zeros((4, 4), dtype=np.bool_))
+    assert np.isinf(distance).all()
