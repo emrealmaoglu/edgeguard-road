@@ -196,6 +196,26 @@ def _number(value: Any, digits: int = 3, suffix: str = "") -> str:
     return f"{float(value):.{digits}f}{suffix}"
 
 
+def show_figure(st: Any, root: Path, name: str, caption: str = "") -> bool:
+    """Display a rendered figure if it was produced; stay silent if it was not.
+
+    A page that prints "figure missing" in a recorded presentation is noise; a page that
+    substitutes a placeholder would be worse. Absent evidence simply does not appear.
+    """
+    path = root / "thesis_figures" / f"{name}.png"
+    if not path.is_file():
+        return False
+    st.image(str(path), caption=caption or None, use_container_width=True)
+    return True
+
+
+def show_image(st: Any, path: Path, caption: str = "") -> bool:
+    if not path.is_file():
+        return False
+    st.image(str(path), caption=caption or None, use_container_width=True)
+    return True
+
+
 def main() -> None:
     try:
         st = __import__("streamlit")
@@ -246,9 +266,9 @@ def main() -> None:
     if page.startswith("1"):
         render_problem(st)
     elif page.startswith("2"):
-        render_comparison(st, accuracy, open_set, jetson)
+        render_comparison(st, accuracy, open_set, jetson, root)
     elif page.startswith("3"):
-        render_open_set(st, open_set)
+        render_open_set(st, open_set, root)
     elif page.startswith("4"):
         render_uncertainty(st, accuracy, open_set, acdc, shift, root)
     elif page.startswith("5"):
@@ -302,7 +322,7 @@ canlı üretilmez.
     )
 
 
-def render_comparison(st: Any, accuracy: dict, open_set: dict, jetson: dict) -> None:
+def render_comparison(st: Any, accuracy: dict, open_set: dict, jetson: dict, root: Path) -> None:
     st.title("Üç eksende model karşılaştırması")
     st.caption(
         "Doğruluk ve açık küme donanımdan bağımsızdır; maliyet Jetson Orin Nano Super'de "
@@ -341,10 +361,19 @@ def render_comparison(st: Any, accuracy: dict, open_set: dict, jetson: dict) -> 
         )
     )
     st.divider()
+    show_figure(
+        st,
+        root,
+        "01_published_vs_measured_miou",
+        "Yayınlanmış sıralama dağıtım sıralamasını öngörmüyor (ρ = +0,10)",
+    )
+    show_figure(st, root, "02_per_class_iou", "Sınıf bazlı IoU · dağıtım çözünürlüğü")
+    show_figure(st, root, "06_pareto", "Doğruluk ↔ enerji ve açık küme ↔ gecikme")
+    st.divider()
     left, right = st.columns(2)
     left.markdown(
         """
-#### Bulgu 1 · Doğruluk arttıkça açık küme güvenliği düşüyor
+#### Bulgu 1 · Yayın sıralaması dağıtımı öngörmüyor
 
 **Spearman ρ = −0,90.** En doğru model (PIDNet-M) yol tehlikelerini fark etmekte neredeyse
 yazı-tura seviyesinde. En az doğru olanlardan SegFormer-B0 ise 2,8 kat daha iyi.
@@ -371,7 +400,7 @@ indirilirse büyük ölçüde kaybolur.
     )
 
 
-def render_open_set(st: Any, open_set: dict) -> None:
+def render_open_set(st: Any, open_set: dict, root: Path) -> None:
     st.title("Açık küme yol tehlikesi algılama")
     st.caption(
         "RoadAnomaly (Lis ve ark., EPFL CVLab): 60 kare, piksel etiketli gerçek tehlikeler. "
@@ -405,6 +434,7 @@ def render_open_set(st: Any, open_set: dict) -> None:
         "energy > max-logit > entropi > MSP sıralaması OOD literatürünün bildirdiğiyle "
         "aynı — uygulamayı bu sayılardan bağımsız doğruluyor."
     )
+    show_figure(st, root, "05_open_set", "Skor karşılaştırması ve tehlike türü kırılımı")
     energy = scores.get("energy", {})
     per_hazard = energy.get("per_hazard_category", {})
     if per_hazard:
@@ -526,14 +556,21 @@ def render_uncertainty(
             "Sis ve karda düşük-güven piksel oranı neredeyse ikiye katlanıyor; gece ve "
             "yağmurda tepki yok. Bunlar algoritmik bozulmalardır, gerçek fotoğraf değil."
         )
+    show_figure(st, root, "03_reliability_diagrams", "Güvenilirlik diyagramları")
+    show_figure(st, root, "04_acdc_conditions", "Gerçek olumsuz koşullar")
+    show_figure(st, root, "09_overconfidence", "Kesin yanlış piksellerde güven")
+    show_figure(st, root, "08_synthetic_shift", "Sentetik bozulmaya tepki")
+    show_image(
+        st,
+        root / "qualitative" / "conditions_pidnet_s.png",
+        "Temiz · sis · gece — segmentasyon ve entropi",
+    )
     for name, caption in (
         ("confidence.png", "Güven haritası"),
         ("entropy.png", "Entropi haritası"),
         ("unreliable_mask.png", "Güvenilmez piksel maskesi"),
     ):
-        path = root / "figures" / "pidnet_s" / name
-        if path.is_file():
-            st.image(str(path), caption=caption, use_container_width=True)
+        show_image(st, root / "figures" / "pidnet_s" / name, caption)
 
 
 def render_risk(st: Any, risk: dict, root: Path) -> None:
@@ -572,15 +609,14 @@ def render_risk(st: Any, risk: dict, root: Path) -> None:
         "Bu bir operasyonel dikkat sıralamasıdır, fiziksel risk olasılığı değildir — "
         "kayıt `calibrated_physical_risk_probability: false` der."
     )
+    show_image(st, root / "qualitative" / "models_same_frame.png", "Aynı karede beş mimari")
     for name, caption in (
         ("overlay.png", "Segmentasyon"),
         ("drivable_corridor.png", "Sürülebilir koridor"),
         ("regions_overlay.png", "Bölgeler"),
         ("attention_map.png", "Operasyonel dikkat"),
     ):
-        path = root / "figures" / "pidnet_s" / name
-        if path.is_file():
-            st.image(str(path), caption=caption, use_container_width=True)
+        show_image(st, root / "figures" / "pidnet_s" / name, caption)
 
 
 def render_edge(st: Any, jetson: dict, profiles: dict, root: Path) -> None:
@@ -657,6 +693,12 @@ def render_edge(st: Any, jetson: dict, profiles: dict, root: Path) -> None:
             ],
         )
     )
+    show_figure(st, root, "07_frame_budget", "Kare bütçesi ve optimizasyon etkisi")
+    video = root / "video" / "edgeguard_demo.mp4"
+    if video.is_file():
+        st.markdown("#### Hareketli sahnede segmentasyon ve belirsizlik")
+        st.video(str(video))
+        st.caption("Cityscapes demoVideo · 180 kare · PIDNet-S referans · önceden üretildi")
     st.success(
         "TensorRT motoru kare bütçesinin yalnızca **%5,4'ü**. İki hedefli CPU tarafı "
         "optimizasyonuyla kare **1,88× hızlandı**, enerji **1,63× iyileşti**, modele hiç "
