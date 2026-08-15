@@ -182,30 +182,62 @@ AP [0,1550, 0,1574], FPR95 [0,8581, 0,8638].
 
 ---
 
-## 6 · Hava ve ışık koşullarına tepki
+## 6 · Hava ve ışık koşullarına dayanıklılık
 
 **İddia:** *"eğitim dağılımından farklı hava, ışık, yol ve trafik koşullarını fark
 edebilmesi"*
 
-15 RoadAnomaly karesi, `rescue.stress._corrupt` ile severity 0,7:
+### 6a · Gerçek olumsuz koşullar (ACDC, 406 kare, 5 mimari)
+
+| model | temiz | sis | kar | yağmur | **gece** | gece kaybı | gece ECE |
+|---|---|---|---|---|---|---|---|
+| **SegFormer-B0** | 69,34 | 59,93 | 46,33 | 45,71 | **20,59** | **−70,3%** | 0,3150 |
+| PIDNet-S | 67,68 | 57,14 | 42,79 | 39,64 | 14,97 | −77,9% | 0,2694 |
+| BiSeNetV2 | 66,02 | 46,59 | 36,82 | 37,75 | 13,34 | −79,8% | 0,2712 |
+| PIDNet-M | 68,47 | 60,29 | 41,53 | 42,64 | 12,54 | −81,7% | 0,3812 |
+| **DDRNet-23-slim** | 68,50 | 56,99 | 38,75 | 44,59 | **7,12** | **−89,6%** | **0,4626** |
+
+**Üç bulgu:**
+
+1. **Gece bütün mimarilerde felaket.** En iyisi bile doğruluğunun %70'ini kaybediyor.
+   Kalibrasyon her modelde **8,7–14,0 kat** bozuluyor (ECE ~0,03 → 0,27–0,46).
+
+2. **Ama mimariler eşit çökmüyor.** SegFormer-B0 gecede doğruluğunun %29,7'sini
+   koruyor; DDRNet-23-slim yalnızca %10,4'ünü — yani gecede **işlevsiz** (7,12 mIoU).
+
+3. **Hız/enerji kazananı, dayanıklılık kaybedeni.** DDRNet-23-slim en hızlı (77,43 ms)
+   ve en verimli (0,630 J/kare) model; aynı zamanda olumsuz koşullara en kırılgan olanı.
+   Bu, üç eksenli seçime **dördüncü bir ekseni** ekliyor.
+
+### 6b · Birleşik örüntü: tanıdık olmayan girdiye dayanıklılık
+
+SegFormer-B0 iki bağımsız "tanıdık olmayan girdi" testinde de birinci:
+
+| test | SegFormer-B0 | DDRNet-23-slim |
+|---|---|---|
+| bilinmeyen **nesne** (açık küme AP) | **0,3469** | 0,1651 |
+| bilinmeyen **koşul** (gecede korunan doğruluk) | **%29,7** | %10,4 |
+
+Beşlideki tek transformer bu. Dikkat tabanlı küresel bağlamın, girdi dağılımı kaydığında
+CNN'lerin yerel özniteliklerinden daha zarif bozulduğu yorumu bu iki ölçümle tutarlı —
+ancak n=5 ile bu bir gözlemdir, kanıtlanmış mekanizma değil.
+
+### 6c · Sentetik bozulma (karşılaştırma amaçlı)
+
+15 RoadAnomaly karesi, `rescue.stress._corrupt`, severity 0,7, PIDNet-S:
 
 | koşul | ort. entropi | artış | düşük-güven piksel |
 |---|---|---|---|
 | temiz | 0,1709 | 1,00× | 3,55% |
-| **sis** | 0,2009 | **1,18×** | **6,76%** |
-| **kar** | 0,1906 | **1,12×** | **6,01%** |
+| sis | 0,2009 | 1,18× | 6,76% |
+| kar | 0,1906 | 1,12× | 6,01% |
 | yağmur | 0,1736 | 1,02× | 4,33% |
-| gece | 0,1703 | 1,00× | 3,95% |
+| gece | 0,1703 | **1,00×** | 3,95% |
 
-**Kısmen karşılanıyor.** Kontrast azaltan bozulmalarda (sis, kar) düşük-güven piksel oranı
-neredeyse ikiye katlanıyor — sistem bu koşulları işaretliyor. Ama **gece ve yağmurda hiç
-tepki vermiyor**; o koşullarda güvenilmezliği bildirmez.
-
-**Dürüstlük sınırı:** bunlar algoritmik bozulmalardır, gerçek sisli/gece fotoğrafları
-değil. Kayıt `synthetic_corruption: true` ve `real_adverse_condition_imagery: false`
-diyor. Daha güçlü bir iddia için ACDC gibi gerçek olumsuz-koşul verisi gerekir.
-
----
+**Sentetik ile gerçek arasındaki uçurum:** sentetik "gece" (parlaklık düşürme) belirsizlik
+sinyalinde **hiçbir tepki** yaratmıyor; gerçek ACDC gecesinde doğruluk %78 düşüyor. Yani
+sentetik bozulma, gerçek koşul kaymasının yerine geçemez — bu, sentetik stres testlerine
+dayanan çalışmalar için doğrudan bir uyarıdır.
 
 ## 7 · Uç cihaz performansı
 

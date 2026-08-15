@@ -205,37 +205,75 @@ def figure_reliability(accuracy: dict, output: Path, written: list[str]) -> None
 
 
 def figure_acdc(root: Path, output: Path, written: list[str]) -> None:
-    """What real adverse conditions do to accuracy and to calibration."""
-    records = {}
+    """What real adverse conditions do to accuracy and to calibration, per architecture.
+
+    The interesting axis is not which condition is hardest -- night, for every model -- but
+    how differently the architectures survive it. Averaging that away would hide the
+    finding.
+    """
+    records: dict[str, dict[str, dict[str, Any]]] = {}
     for path in sorted((root / "acdc").glob("*.json")):
         record = load(path)
         if record:
-            records[record["split"].split("_")[-1]] = record
+            condition = record["split"].split("_")[-1]
+            records.setdefault(record["model"], {})[condition] = record
     if not records:
         return
-    order = sorted(records, key=lambda key: -records[key]["mIoU"])
-    miou = [records[k]["mIoU"] * 100 for k in order]
-    ece = [records[k]["expected_calibration_error"] for k in order]
-    confidence = [records[k]["mean_confidence"] * 100 for k in order]
-    accuracy = [records[k]["pixel_accuracy"] * 100 for k in order]
+    clean = {
+        model: accuracy["mIoU"]
+        for model in records
+        if (accuracy := load(root / "accuracy" / f"{model}_cityscapes_val.json"))
+    }
+    conditions = ("fog", "snow", "rain", "night")
+    models = [m for m in MODEL_ORDER if m in records]
 
-    figure, axes = plt.subplots(1, 3, figsize=(12, 3.4))
-    axes[0].bar(order, miou, color=["#2f6f9f"] * (len(order) - 1) + ["#d9534f"])
+    figure, axes = plt.subplots(1, 3, figsize=(13.5, 3.8))
+    positions = np.arange(len(conditions) + 1)
+    width = 0.8 / max(1, len(models))
+    for index, model in enumerate(models):
+        values = [clean.get(model, np.nan) * 100] + [
+            records[model][c]["mIoU"] * 100 if c in records[model] else np.nan for c in conditions
+        ]
+        axes[0].bar(
+            positions + (index - len(models) / 2 + 0.5) * width,
+            values,
+            width,
+            label=MODEL_LABEL[model],
+        )
+    axes[0].set_xticks(positions)
+    axes[0].set_xticklabels(["temiz", "sis", "kar", "yağmur", "gece"])
     axes[0].set_ylabel("mIoU (%)")
-    axes[0].set_title("Doğruluk")
-    axes[1].bar(order, ece, color=["#2f6f9f"] * (len(order) - 1) + ["#d9534f"])
-    axes[1].set_ylabel("ECE")
-    axes[1].set_title("Kalibrasyon hatası")
-    positions = np.arange(len(order))
-    axes[2].bar(positions - 0.2, confidence, 0.4, label="ortalama güven", color="#f0ad4e")
-    axes[2].bar(positions + 0.2, accuracy, 0.4, label="piksel doğruluğu", color="#5cb85c")
-    axes[2].set_xticks(positions)
-    axes[2].set_xticklabels(order)
-    axes[2].set_ylabel("%")
-    axes[2].legend(frameon=False, fontsize=8)
-    axes[2].set_title("Güven vs doğruluk")
-    figure.tight_layout(rect=(0, 0, 1, 0.93))
-    figure.suptitle("Gerçek olumsuz koşullar (ACDC) · PIDNet-S referans", fontsize=10)
+    axes[0].legend(frameon=False, fontsize=7, ncol=2)
+    axes[0].set_title("Doğruluk · koşul başına")
+
+    retention = [
+        100 * records[m]["night"]["mIoU"] / clean[m]
+        for m in models
+        if "night" in records[m] and m in clean
+    ]
+    labels = [MODEL_LABEL[m] for m in models if "night" in records[m] and m in clean]
+    order = np.argsort(retention)
+    colours = ["#c0392b" if v < 15 else "#f0ad4e" if v < 25 else "#3f8f5f" for v in retention]
+    axes[1].barh(
+        [labels[i] for i in order], [retention[i] for i in order], color=[colours[i] for i in order]
+    )
+    axes[1].set_xlabel("gecede korunan doğruluk (temizin %'si)")
+    axes[1].set_title("Gece dayanıklılığı")
+
+    for model in models:
+        values = [
+            records[model][c]["expected_calibration_error"]
+            for c in conditions
+            if c in records[model]
+        ]
+        axes[2].plot(range(len(values)), values, marker="o", markersize=4, label=MODEL_LABEL[model])
+    axes[2].set_xticks(range(len(conditions)))
+    axes[2].set_xticklabels(conditions)
+    axes[2].set_ylabel("ECE")
+    axes[2].set_yscale("log")
+    axes[2].set_title("Kalibrasyon · gecede 9-14× bozuluyor")
+    figure.tight_layout(rect=(0, 0, 1, 0.92))
+    figure.suptitle("Gerçek olumsuz koşullar (ACDC) · 406 kare · 5 mimari", fontsize=10)
     save(figure, output, "04_acdc_conditions", written)
 
 
