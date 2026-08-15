@@ -57,7 +57,7 @@ motora hiç dokunulmadan, çıktılar birebir aynı.
 |---|---|---|---|
 | D1 | FP16 dağıtım sadakati (Jetson'da mIoU) | `numerical_equivalence_pending` kapanır | ⚪ script hazır |
 | D2 | 5 modelin ACDC ölçümü (şu an sadece PIDNet-S) | koşul × mimari etkileşimi | ⚪ ~40 dk |
-| D3 | Zamansal kalıcılık (riskin 7. özelliği) | demo video ile ölçülebilir | ⚪ |
+| D3 | Zamansal kalıcılık (riskin 7. özelliği) | 150 kare: izlerin %50,1'i tek karelik | ✅ |
 | D4 | Sürülebilir alan sayısal metriği | Cityscapes val, 200 kare × 5 mimari | ✅ |
 | D5 | Kendi modellerimizin ACDC/RoadAnomaly ölçümü | referansla karşılaştırma | ⚪ |
 | D6 | Veri seti dağılım figürleri | rubrik: FAIR | ⚪ |

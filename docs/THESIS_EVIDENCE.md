@@ -146,6 +146,55 @@ Gerçek tehlike karelerinde ölçülmüş sıralama (PIDNet-S referans, RoadAnom
 
 Kayıt: `results/risk/*.json`.
 
+### 3b · Zamansal kalıcılık — yedinci özelliğin ölçümü
+
+`temporal_persistence`, risk sözleşmesinin yedinci özelliği ve bugüne kadar **hiç ağırlık
+taşımamış** olanı. Tek kare onu üretemez, o yüzden sıfır *ağırlıkla* dışlanıyordu — doğru
+bir karar, ama yedi özellikli bir füzyon iddia edip yedisinden birini hiç koşmamış olmak
+başka bir sorun. Ardışık kare bunu çözer.
+
+150 ardışık kare (Cityscapes demoVideo `stuttgart_00`), PIDNet-S referans, bölgeler
+`TemporalPersistence` ile ilişkilendirildi — tek-kare sürücüsünün düştüğü en-yakın-merkez
+yaklaşımı değil, gerçek izleyici.
+
+| ölçüm | değer |
+|---|---|
+| bölge gözlemi | 5.208 |
+| iz (track) | 1.441 (adil değerlendirilen: 1.382) |
+| **tek karelik iz** | **692 — %50,1** |
+| ortalama iz ömrü | 3,68 kare |
+| **medyan iz ömrü** | **1 kare** |
+| 1. sıradaki bölgesi değişen kare | 30 / 150 — **%20,0** |
+| high → daha düşük gözlem | 140 |
+| daha düşük → high gözlem | 162 |
+
+Kayıt: `results/temporal/pidnet_s.json`.
+
+> **Bulgu: sistemin işaretlediği şeyin yarısı tek kare yaşıyor.** Medyan iz ömrü **1
+> karedir**. Yani tek-kare operasyonel dikkat, baskın davranışı olarak titriyor. Zamansal
+> kalıcılık bu tabloda "olsa iyi olur" bir özellik değil, birincil hata kipine denk gelen
+> özelliktir.
+
+**Mekanizma — neden gerçek bir değişiklik.** İki skorlama farklı ağırlık toplamlarıyla
+normalize ediliyor: kalıcılık olmadan 0,90, kalıcılıkla 0,95. Bir kez görülmüş bölge payda
+büyürken paya neredeyse hiçbir şey eklemez, yani **gerçekten düşer**; hayatta kalmış bölge
+yeterince kazanıp yükselir. İki skorlama tek ağırlıkla yapılsaydı özellik yalnızca
+ekleyebilirdi ve ölçüm hiçbir şey söylemezdi. Bu, `test_activating_persistence_demotes_a_
+flicker_and_promotes_a_survivor` ile sabitlendi.
+
+**Sınır — bunun ölçmediği şey.** demoVideo'nun etiketi yok. Dolayısıyla ölçülen şey
+izlerin **geçici** olduğudur, **yanlış** olduğu değil. Gerçekten bir kare görünüp kaybolan
+bir yaya ile bir karelik segmentasyon gürültüsü bu ölçümde ayırt edilemez. "Kalıcılık
+yanlış alarmları eler" cümlesi bu veriyle **kurulamaz**; kurulabilen cümle şudur:
+*tek-kare dikkat sıralamasının %20'si, hiçbir yeni görüntü bilgisi olmadan yalnızca zamana
+bakılarak değişiyor.*
+
+**Karar:** özellik dağıtımda hâlâ tek karede sıfır ağırlıklıdır — çünkü tek karede
+ölçülemez, ve bu ölçüm onu değiştirmez. Değiştirdiği şey, dışlamanın *bedelinin* artık
+bilinmesidir.
+
+---
+
 **Dürüstlük sınırı:** `detector_overlap` (nesne dedektörü yok) ve `temporal_persistence`
 (tek kare) **sıfır ağırlıkla** dışlandı, sıfır değerle değil. Sıfır değer verilseydi
 ölçülmemiş bir sinyal "risk yok" gibi görünür ve bütün skorları aşağı çekerdi. Kayıt
