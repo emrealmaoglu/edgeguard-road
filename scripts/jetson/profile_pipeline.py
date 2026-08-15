@@ -44,6 +44,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--confidence-threshold", type=float, default=0.5)
     parser.add_argument("--entropy-threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--gpu-preprocess",
+        action="store_true",
+        help="letterbox and normalise on the GPU instead of the CPU; also reports how far "
+        "the resulting prediction moves, since the two filters are not bit-identical",
+    )
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -60,6 +66,7 @@ def main() -> int:
         runner.infer(tensor)
 
     timings: dict[str, list[float]] = {name: [] for name in STAGES}
+    agreement: list[float] = []
     resolutions: dict[str, int] = {}
     for index in range(args.frames):
         path = images[index % len(images)]
@@ -72,12 +79,27 @@ def main() -> int:
             resolutions.get(f"{image.width}x{image.height}", 0) + 1
         )
 
-        start = time.perf_counter()
-        tensor = preprocess_image(image, (input_height, input_width))
-        timings["preprocess"].append((time.perf_counter() - start) * 1000.0)
-
-        logits, pure_ms = runner.infer(tensor)
+        rgb = np.asarray(image, dtype=np.uint8)
+        if args.gpu_preprocess:
+            start = time.perf_counter()
+            runner.preprocess_on_device(rgb)
+            runner.torch.cuda.synchronize()
+            timings["preprocess"].append((time.perf_counter() - start) * 1000.0)
+            logits, pure_ms = runner.infer_prepared()
+        else:
+            start = time.perf_counter()
+            tensor = preprocess_image(image, (input_height, input_width))
+            timings["preprocess"].append((time.perf_counter() - start) * 1000.0)
+            logits, pure_ms = runner.infer(tensor)
         timings["engine_infer"].append(pure_ms)
+
+        if args.gpu_preprocess:
+            # A faster preprocess is only a win if the prediction survives it, so measure
+            # the disagreement rather than assuming the filters match.
+            reference, _ = runner.infer(preprocess_image(image, (input_height, input_width)))
+            agreement.append(
+                float(np.mean(np.argmax(logits[0], axis=0) == np.argmax(reference[0], axis=0)))
+            )
 
         start = time.perf_counter()
         mask = np.argmax(logits[0], axis=0).astype(np.uint8)
@@ -120,6 +142,8 @@ def main() -> int:
         "warmup_frames": args.warmup,
         "source_resolutions": resolutions,
         "stages": stages,
+        "gpu_preprocess": args.gpu_preprocess,
+        "cpu_preprocess_argmax_agreement": (float(np.mean(agreement)) if agreement else None),
         "summed_median_frame_ms": total_median,
         # Stage boundaries mirror `benchmark.py`'s measured region, but summing medians is
         # not the same statistic as the median of the whole frame, so this is an
@@ -137,6 +161,8 @@ def main() -> int:
             f"{(share * 100 if share else 0):6.1f}%"
         )
     print(f"\n{'toplam (medyanlar)':24s} {total_median:10.2f}")
+    if agreement:
+        print(f"CPU on islemeye argmax uyumu: {np.mean(agreement) * 100:.4f}%")
     print(f"kayıt: {args.output}")
     return 0
 

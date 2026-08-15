@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from edgeguard.rescue.inference import preprocess_image
+from edgeguard.rescue.inference import IMAGENET_MEAN, IMAGENET_STD, preprocess_image
 from edgeguard.rescue.perception import derive_perception
 from edgeguard.rescue.visualization import confidence_entropy
 from edgeguard.serialization import canonical_json, sha256_file
@@ -143,6 +143,49 @@ class TensorRTTorchRunner:
         self.output = self.torch.empty(self.output_shape, device="cuda", dtype=self.torch.float32)
         self.context.set_tensor_address(self.input_name, self.input.data_ptr())
         self.context.set_tensor_address(self.output_name, self.output.data_ptr())
+
+    def preprocess_on_device(self, rgb: np.ndarray) -> None:
+        """Letterbox and normalise on the GPU, writing straight into the engine input.
+
+        The CPU path costs 24.7 ms of a 76 ms frame on an Orin Nano Super -- a third of
+        the budget spent resizing and scaling 1.5M floats on an ARM core while the GPU
+        idles. Uploading the raw uint8 frame instead moves both to the accelerator and
+        transfers the same number of bytes.
+
+        This is *not* bit-identical to the PIL path: `antialias=True` brings torch's
+        bilinear filter close to PIL's, but not to the last bit. Agreement therefore has
+        to be measured rather than assumed, which is why the CPU path stays available.
+        """
+        torch = self.torch
+        height, width = self.input_shape[2:]
+        frame = torch.from_numpy(np.ascontiguousarray(rgb)).to("cuda", non_blocking=True)
+        frame = frame.permute(2, 0, 1).unsqueeze(0).float()
+        scale = min(width / rgb.shape[1], height / rgb.shape[0])
+        target = (max(1, round(rgb.shape[0] * scale)), max(1, round(rgb.shape[1] * scale)))
+        resized = torch.nn.functional.interpolate(
+            frame, size=target, mode="bilinear", align_corners=False, antialias=True
+        )
+        mean = torch.as_tensor(IMAGENET_MEAN, device="cuda").view(1, 3, 1, 1)
+        std = torch.as_tensor(IMAGENET_STD, device="cuda").view(1, 3, 1, 1)
+        # The canvas is zeros before normalisation, exactly as the CPU path pastes onto
+        # black, so the padding carries the same normalised value.
+        canvas = torch.zeros((1, 3, height, width), device="cuda", dtype=torch.float32)
+        top = (height - target[0]) // 2
+        left = (width - target[1]) // 2
+        canvas[:, :, top : top + target[0], left : left + target[1]] = resized
+        self.input.copy_((canvas - mean) / std)
+
+    def infer_prepared(self) -> tuple[np.ndarray, float]:
+        """Run the engine on whatever already sits in the device input buffer."""
+        start = self.torch.cuda.Event(enable_timing=True)
+        end = self.torch.cuda.Event(enable_timing=True)
+        stream = self.torch.cuda.current_stream()
+        start.record(stream)
+        if not self.context.execute_async_v3(stream_handle=stream.cuda_stream):
+            raise RuntimeError("TensorRT execute_async_v3 returned false")
+        end.record(stream)
+        end.synchronize()
+        return self.output.detach().cpu().numpy(), float(start.elapsed_time(end))
 
     def infer(self, tensor: np.ndarray) -> tuple[np.ndarray, float]:
         """Run one synchronized engine call and return CPU logits plus GPU latency."""
