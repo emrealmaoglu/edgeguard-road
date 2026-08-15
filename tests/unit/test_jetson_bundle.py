@@ -131,3 +131,46 @@ def test_the_archive_is_written_when_asked(tmp_path: Path) -> None:
     )
 
     assert archive.is_file() and archive.stat().st_size > 0
+
+
+def test_a_device_run_directory_is_filed_into_the_groups_the_panel_reads(tmp_path: Path) -> None:
+    """The device writes one flat directory; the panel reads three groups. Sorting that by
+    hand under deadline is how a telemetry log gets left behind.
+    """
+    results = _results(tmp_path / "results")
+    run = tmp_path / "device-run"
+    run.mkdir()
+    for name in (
+        "pidnet_s_reference_benchmark.json",
+        "ddrnet_23_slim_reference_benchmark.json",
+        "pidnet_s_reference_stage_profile.json",
+        "pidnet_s_reference_tegrastats.log",
+        "pidnet_s_reference.plan",
+        "pidnet_s_reference_build.json",
+    ):
+        (run / name).write_text("{}", encoding="utf-8")
+    output = tmp_path / "bundle"
+
+    _run(
+        [
+            "--results",
+            str(results),
+            "--output",
+            str(output),
+            "--jetson-run",
+            str(run),
+            "--require",
+            "jetson",
+            "--require",
+            "telemetry",
+        ]
+    )
+
+    assert (output / "jetson" / "pidnet_s_reference_benchmark.json").is_file()
+    assert (output / "jetson" / "ddrnet_23_slim_reference_benchmark.json").is_file()
+    assert (output / "profile" / "pidnet_s_reference_stage_profile.json").is_file()
+    assert (output / "telemetry" / "pidnet_s_reference_tegrastats.log").is_file()
+    # The engine and its build record are device build artefacts, not results; they are
+    # large and the panel never reads them.
+    assert not (output / "jetson" / "pidnet_s_reference.plan").exists()
+    assert not any(path.name.endswith("_build.json") for path in (output / "jetson").iterdir())

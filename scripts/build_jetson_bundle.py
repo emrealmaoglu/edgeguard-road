@@ -33,6 +33,9 @@ GROUPS = (
     "profile",
     "qualitative",
     "risk",
+    # Not JSON: the edge page charts `telemetry/*_tegrastats.log` directly, so the raw
+    # logs travel with the records they describe.
+    "telemetry",
 )
 LOOSE_RECORDS = (
     "candidate_table.json",
@@ -51,6 +54,14 @@ def _parser() -> argparse.ArgumentParser:
         help="tree of rendered thesis figures, copied in as `thesis_figures`",
     )
     parser.add_argument("--video", type=Path, help="demo video tree, copied in as `video`")
+    parser.add_argument(
+        "--jetson-run",
+        type=Path,
+        help=(
+            "flat output directory copied back from the device (`run_all_models.sh`'s "
+            "third argument). Its records are filed into the groups the panel reads."
+        ),
+    )
     parser.add_argument("--output", type=Path, required=True, help="bundle directory to build")
     parser.add_argument("--archive", type=Path, help="also write a .tgz of the bundle")
     parser.add_argument(
@@ -64,6 +75,32 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     return parser
+
+
+# `run_all_models.sh` writes every record for every model into one flat directory on the
+# device, because that is what is convenient there. The panel reads three separate groups.
+# Rather than ask for a hand-sort of fifteen files under deadline, the suffix decides.
+DEVICE_RECORD_GROUPS = (
+    ("_benchmark.json", "jetson"),
+    ("_stage_profile.json", "profile"),
+    ("_tegrastats.log", "telemetry"),
+)
+
+
+def _file_device_records(run: Path, output: Path) -> dict[str, int]:
+    """Sort one on-device run directory into the groups the panel loads."""
+    counts = {group: 0 for _, group in DEVICE_RECORD_GROUPS}
+    for path in sorted(run.iterdir()):
+        if not path.is_file() or path.name.startswith("._"):
+            continue
+        for suffix, group in DEVICE_RECORD_GROUPS:
+            if path.name.endswith(suffix):
+                target = output / group / path.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+                counts[group] += 1
+                break
+    return counts
 
 
 def _copy_tree(source: Path, destination: Path) -> int:
@@ -103,6 +140,12 @@ def main() -> int:
             contents[name] = 0
     for option, destination in ((args.figures, "thesis_figures"), (args.video, "video")):
         contents[destination] = _copy_tree(option.resolve(), output / destination) if option else 0
+    if args.jetson_run:
+        run = args.jetson_run.resolve()
+        if not run.is_dir():
+            raise ValueError(f"device run directory not found: {run}")
+        for group, count in _file_device_records(run, output).items():
+            contents[group] = contents.get(group, 0) + count
 
     missing = sorted(name for name in args.require if not contents.get(name))
     manifest = {

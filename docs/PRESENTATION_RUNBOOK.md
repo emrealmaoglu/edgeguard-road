@@ -162,24 +162,49 @@ pratik — kayıt sırasında bir modelin yüklenmesi ya da bir kareye takılmas
 
 *(Not: `app.py` ayrı bir geliştirici arayüzüdür ve sunumda kullanılmaz.)*
 
-### 4a · Paketi kur (Mac'te)
+### 4a · Önce: Jetson kayıtlarını cihazdan geri al ⚠️
+
+**Bu adım yapılmadan panelin 6. sayfası boş kalır** — sunumun en güçlü slaytı odur.
+`run_all_models.sh` ölçümleri cihazda **tek düz klasöre** yazar ve o klasör bugüne kadar
+hiç Mac'e kopyalanmadı; §7'deki gecikme/güç/joule tablosu şu an yalnızca bu dokümanda
+duruyor, panelde değil.
+
+Mac'te, tek komut:
+
+```bash
+scp -r emre@100.102.153.67:~/edgeguard-jetson-runs .local/presentation/jetson-run
+```
+
+*(Yol farklıysa: `run_all_models.sh`'e üçüncü argüman olarak verdiğin klasör hangisiyse
+odur; cihazda `ls ~/*jetson*` ile bulunur.)*
+
+Klasörde model başına şunlar olmalı: `<model>_benchmark.json`,
+`<model>_tegrastats.log`, `<model>_stage_profile.json`. `.plan` motor dosyaları ve
+`_build.json` kayıtları da orada olacak — paketleyici onları **almaz**, gerek yok.
+
+### 4b · Paketi kur (Mac'te)
 
 ```bash
 .venv/bin/python scripts/build_jetson_bundle.py \
   --results .local/presentation/results \
   --figures .local/presentation/figures \
   --video .local/presentation/video \
+  --jetson-run .local/presentation/jetson-run \
   --output .local/presentation/bundle \
   --archive .local/presentation/eg_presentation_bundle.tgz \
-  --require accuracy --require jetson --require drivable --require open_set
+  --require accuracy --require drivable --require open_set \
+  --require jetson --require telemetry
 ```
+
+`--jetson-run` düz klasörü panelin okuduğu üç gruba dağıtır: `*_benchmark.json` →
+`jetson/`, `*_stage_profile.json` → `profile/`, `*_tegrastats.log` → `telemetry/`.
 
 `--require`, sunumun onsuz verilemeyeceği sonuçlar içindir. Sebebi: panel eksik bir gruba
 hata vermez, sadece o tabloyu göstermez — yani unutulan bir ölçüm sessizce kaybolur.
 `--require` o sessizliği hataya çevirir. Paketin içindeki `bundle_manifest.json` neyin
 bulunduğunu ve neyin bulunamadığını ayrı ayrı yazar; kopyalamadan önce ona bakın.
 
-### 4b · Cihaza kopyala
+### 4c · Cihaza kopyala
 
 ```bash
 scp .local/presentation/eg_presentation_bundle.tgz emre@100.102.153.67:~/
@@ -191,7 +216,7 @@ Jetson'da:
 tar xzf ~/eg_presentation_bundle.tgz -C ~/ && ls ~/bundle
 ```
 
-### 4c · Paneli çalıştır
+### 4d · Paneli çalıştır
 
 ```bash
 EDGEGUARD_RESULTS=~/bundle streamlit run ~/edgeguard-road/presentation_app.py
