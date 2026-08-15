@@ -273,7 +273,7 @@ def main() -> None:
         st.caption(f"kayıtlar: `{root}`")
 
     if page.startswith("1"):
-        render_problem(st)
+        render_problem(st, root)
     elif page.startswith("2"):
         render_comparison(st, accuracy, open_set, jetson, root)
     elif page.startswith("3"):
@@ -288,7 +288,7 @@ def main() -> None:
         render_limits(st)
 
 
-def render_problem(st: Any) -> None:
+def render_problem(st: Any, root: Path) -> None:
     st.title(
         "Kaynak Kısıtlı Uç Cihazlarda Belirsizlik Farkındalıklı Açık Küme "
         "Yol Tehlikesi Algılama ve Bağlamsal Risk Analizi"
@@ -315,6 +315,12 @@ Bu çalışma o soruyu dört eksende ölçüyor.
     ):
         column.markdown(f"**{title}**")
         column.caption(body)
+    st.divider()
+    show_figure(st, root, "D1_system_architecture", "Görüntüden risk sıralamasına sinyal yolu")
+    show_figure(
+        st, root, "D2_measurement_protocol", "Hangi veri hangi soruyu, nerede ölçülerek yanıtlıyor"
+    )
+    show_figure(st, root, "D3_three_axis_framework", "Üç eksen, üç farklı kazanan")
     st.divider()
     st.markdown(
         """
@@ -702,6 +708,7 @@ def render_edge(st: Any, jetson: dict, profiles: dict, root: Path) -> None:
             ],
         )
     )
+    show_figure(st, root, "D4_frame_budget_flow", "Kare bütçesi akışı")
     show_figure(st, root, "07_frame_budget", "Kare bütçesi ve optimizasyon etkisi")
     video = root / "video" / "edgeguard_demo.mp4"
     if video.is_file():
