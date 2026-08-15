@@ -81,6 +81,60 @@ Kanıt: `predict.py --emit-regions` çıktıları, `results/figures/`.
   alt-orta bölgeye bağlı bileşen seçiliyor (`road_mask.png`, `drivable_corridor.png`).
 - **Risk bölgeleri:** yedi özellikli açıklanabilir füzyon (`contextual_risk`).
 
+### 3a · Sürülebilir alan — sayısal ölçüm (Cityscapes val, 200 kare, 5 mimari)
+
+Bu bölüm bugüne kadar yalnızca **görsele** dayanıyordu. `evaluation/perception.py`
+içindeki metrik takımı baştan beri hazır ve testliydi ama çağıranı yoktu; ihtiyaç duyduğu
+şey gerçek yol maskeleriydi ve Cityscapes val onları veriyor. Ölçüm aşağıda.
+
+| mimari | yol IoU | sınır F1 (1 px) | sınır F1 (8 px) | **yanlış-sürülebilir** | yol parçası |
+|---|---|---|---|---|---|
+| SegFormer-B0 | **0,9653** | **0,2336** | **0,6143** | 0,0091 | 8,62 |
+| DDRNet-23-slim | 0,9622 | 0,1683 | 0,5817 | **0,0064** | **4,54** |
+| PIDNet-M | 0,9617 | 0,1581 | 0,5651 | 0,0065 | 4,92 |
+| PIDNet-S | 0,9614 | 0,1604 | 0,5651 | 0,0076 | 4,63 |
+| BiSeNetV2 | 0,9602 | 0,1717 | 0,5910 | 0,0097 | 5,25 |
+
+Kayıt: `results/drivable/*.json`. Ignore pikselleri (255) dışlanmıştır.
+
+**Yanlış-sürülebilir oranı**, aracın gireceği ama yol *olmayan* piksellerin oranıdır —
+güvenlik açısından anlamlı olan sayı budur. IoU'nun tamamı 0,5 puanlık bir aralığa
+sıkışırken (yol kolay bir sınıftır) yanlış-sürülebilir 0,0064–0,0097 arasında **1,5 kat**
+değişiyor. Yani mimarileri ayıran metrik IoU değil, bu.
+
+**İki tolerans, tek sebep.** 1 piksel toleransı, kaba logit'ten büyütülmüş bir maskeden
+çözünürlüğünün izin vermediği bir kesinlik ister; tek başına raporlansaydı modelin
+başarısızlığı gibi okunurdu, oysa bir çözünürlük sınırıdır. 8 piksel **her mimari için
+aynı** tutuldu: beşten dördünün dağıtım logit stride'ı budur. Tolerans modele göre
+esnetilseydi aşağıdaki bulgu metriğin içinde kaybolurdu.
+
+**Bulgu — stride 4'ün iki yüzü.** SegFormer-B0 logit'lerini stride 4'te (128×256), diğer
+dördü stride 8'de (64×128) üretir (`logit_stride_tradeoff.json`). Sınır F1'de tek başına
+öne çıkması (0,2336'ya karşı 0,158–0,172, **%36–48 daha iyi**) tesadüf değil, tam olarak
+bunun sonucudur. Bedeli de aynı ölçümde görünüyor: yol maskesi **1,9 kat** daha parçalı
+(8,62'ye karşı 4,54–5,25) ve yanlış-sürülebilir oranı en kötü ikinci. Daha ince ızgara
+daha keskin sınır çiziyor, ama aynı incelik sahte küçük yol lekelerini de geçiriyor.
+Üçüncü bir bedel zaten ölçülmüştü: aynı stride farkı post-processing'i 3,98 kat
+pahalılaştırıyor ve logit'i stride 8'e indirmek 2,03 mIoU'ya mal oluyor. Tek mimari
+seçimi, üç ayrı ölçümde tutarlı biçimde ortaya çıkıyor.
+
+**Bulgu — ego koridoru adımının ölçülmüş karşılığı.** Ham yol maskesinden ego koridorunu
+ayırmak bugüne kadar bir tasarım tercihiydi; ne kazandırdığı ölçülmemişti. Beş mimaride
+de aynı yönde çıkıyor:
+
+| mimari | yanlış-sürülebilir: yol → koridor | değişim | IoU bedeli |
+|---|---|---|---|
+| PIDNet-M | 0,0065 → 0,0048 | **−%26,2** | −0,53 puan |
+| PIDNet-S | 0,0076 → 0,0058 | **−%23,7** | −0,57 puan |
+| SegFormer-B0 | 0,0091 → 0,0071 | **−%22,0** | −0,53 puan |
+| BiSeNetV2 | 0,0097 → 0,0077 | **−%20,6** | −0,67 puan |
+| DDRNet-23-slim | 0,0064 → 0,0052 | **−%18,8** | −0,54 puan |
+
+Koridor seçimi, ego konumuna bağlı olmayan yol bileşenlerini atar — yani tam olarak sahte
+yol lekelerini. Beş mimaride de **yaklaşık 0,55 puan IoU karşılığında yanlış-sürülebilir
+piksellerin beşte biriyle dörtte biri arası** eleniyor. Güvenlik açısından bu takas
+doğru yönde: kaybedilen şey doğru yolun bir kısmı, kazanılan şey yanlış yola girmemek.
+
 Gerçek tehlike karelerinde ölçülmüş sıralama (PIDNet-S referans, RoadAnomaly):
 
 | kare | 1. sıra | risk | seviye | baskın etken |
@@ -319,30 +373,61 @@ kaldırılabilir mi" değil, **"bu doğruluk bu enerjiye değer mi"**.
 
 ## 9 · Üç eksenin birleşimi
 
-| model | mIoU | OOD AUROC | OOD AP | J/kare | FPS |
-|---|---|---|---|---|---|
-| PIDNet-M | **80,22** | 0,562 | 0,124 | 0,808 | 10,82 |
-| PIDNet-S | 78,74 | 0,667 | 0,156 | 0,665 | 11,87 |
-| DDRNet-23-slim | 77,84 | 0,674 | 0,165 | **0,630** | **12,36** |
-| SegFormer-B0 | 76,54 | **0,785** | **0,347** | 2,221 | 3,57 |
-| BiSeNetV2 | 75,76 | 0,708 | 0,175 | 0,809 | 10,34 |
+| model | mIoU (yayın) | **mIoU (ölçülen)** | OOD AUROC | OOD AP | yanlış-sürül. | J/kare | FPS |
+|---|---|---|---|---|---|---|---|
+| PIDNet-M | **80,22** | 0,6847 | 0,562 | 0,124 | 0,0065 | 0,808 | 10,82 |
+| PIDNet-S | 78,74 | 0,6768 | 0,667 | 0,156 | 0,0076 | 0,665 | 11,87 |
+| DDRNet-23-slim | 77,84 | 0,6850 | 0,674 | 0,165 | **0,0064** | **0,630** | **12,36** |
+| SegFormer-B0 | 76,54 | **0,6934** | **0,785** | **0,347** | 0,0091 | 2,221 | 3,57 |
+| BiSeNetV2 | 75,76 | 0,6602 | 0,708 | 0,175 | 0,0097 | 0,809 | 10,34 |
 
-**Spearman ρ(mIoU, AUROC) = −0,90** · **ρ(mIoU, AP) = −0,90**
+### Önce bir düzeltme: hangi mIoU?
 
-> **Doğruluk arttıkça açık küme güvenliği düşüyor.** En doğru model (PIDNet-M) yol
-> tehlikelerini fark etmekte neredeyse yazı-tura seviyesinde (AUROC 0,562). En az doğru
-> olanlardan SegFormer-B0 ise 2,8× daha iyi (AP 0,347 vs 0,124).
+Bu tablonun daha önceki hâli tek bir mIoU sütunu taşıyordu ve o sütun **yayınlanmış**
+değerlerdi. O sütunla hesaplanan korelasyon çarpıcıydı — ρ(mIoU, AUROC) = −0,90, yani
+"doğruluk arttıkça açık küme güvenliği düşüyor". **Bu bulgu geri çekilmiştir.**
+Kendi dağıtım koşulumuzda ölçülen mIoU ile aynı hesap:
 
-Mekanizma: SegFormer-B0 bu beşlideki tek transformer; öznitelik geometrisi bilinmeyen
-nesneleri ayırmakta CNN dekoderlerinden farklı davranıyor.
+| ilişki | Spearman ρ | okuma |
+|---|---|---|
+| yayınlanmış mIoU ↔ AUROC | −0,90 | önceki (geri çekilen) başlık |
+| **ölçülen mIoU ↔ AUROC** | **+0,30** | ilişki yok |
+| **ölçülen mIoU ↔ AP** | **+0,30** | ilişki yok |
+| **yayınlanmış mIoU ↔ ölçülen mIoU** | **+0,10** | *asıl bulgu* |
 
-**Karar:** DDRNet-23-slim pratik kazanan — en hızlı, en düşük enerjili, açık kümede ikinci
-en iyi. SegFormer-B0 güvenlikte açık ara önde ama bu pipeline'da 3,53× enerjiye mal
-oluyor; §8'deki stride düzeltmesi uygulanırsa bu maliyet büyük ölçüde kaybolur.
+Yani −0,90'ı üreten şey mimarilerin bir özelliği değil, **yayınlanmış sıralamanın bizim
+dağıtım koşulumuzda geçerli olmamasıydı.** ρ(yayın, ölçüm) = +0,10 — model zoo sıralaması
+ile 512×1024 dağıtım çözünürlüğünde ölçtüğümüz sıralama arasında pratikte hiçbir ilişki
+yok. En doğru yayınlanan model (PIDNet-M, 80,22) ölçümde üçüncü; en düşük yayınlanan
+(BiSeNetV2, 75,76) ölçümde de sonuncu ama SegFormer-B0 76,54'ten **birinciliğe** çıkıyor.
 
-**Dürüstlük sınırı:** n = 5 mimari. ρ = −0,90 güçlü bir eğilim ama kesin kanıt değil.
-Ayrıca bunlar farklı reçetelerle (farklı iterasyon/batch) eğitilmiş yayınlanmış
-checkpoint'lerdir; kontrollü ablasyon değil, model karşılaştırmasıdır.
+> **Tezde kullanılacak cümle bu:** yayınlanmış sıralamalar dağıtım koşuluna aktarılamaz,
+> ve aktarılabilir sanmak sahte bir "doğruluk–güvenlik ödünleşimi" üretir. Bunu bir hata
+> olarak yaşadık ve düzelttik; §9'un önceki hâli o hatanın kendisidir.
+
+### Kalan gerçek ödünleşim
+
+Doğruluk ile açık küme arasında ilişki yok, ama **enerji** ile açık küme arasında var:
+SegFormer-B0 hem ölçülen mIoU'da hem OOD AP'de birinci (0,347, ikincinin 2,1 katı), ve
+kare başına **3,53 kat** enerji harcıyor (2,221 J'ye karşı 0,630). Ödünleşim
+doğruluk–güvenlik değil, **güvenlik–enerji**.
+
+Mekanizma gözlemi: SegFormer-B0 bu beşlideki tek transformer ve iki bağımsız
+"tanıdık-olmayan girdi" testinin ikisinde de önde — bilinmeyen nesneler (AP 0,347'ye
+karşı 0,124) ve bilinmeyen koşullar (gece dayanıklılığı %29,7'ye karşı %10,4). n = 5'te
+bir gözlemdir, gösterilmiş bir mekanizma değil.
+
+**Karar:** DDRNet-23-slim pratik kazanan — en hızlı, en düşük enerjili, sürülebilir alanda
+en güvenli (yanlış-sürülebilir 0,0064) ve ölçülen mIoU'da ikinci. SegFormer-B0 açık küme
+ve sınır keskinliğinde açık ara önde ama 3,53× enerjiye mal oluyor **ve bu maliyet
+giderilemez**: §8'de ölçüldü, logit'i stride 8'e indirmek post-processing'i 3,98×
+hızlandırırken 2,03 mIoU'ya mal oluyor. (§9'un önceki hâli burada "stride düzeltmesi
+uygulanırsa maliyet kaybolur" diyordu — bu §8'in ölçümüyle çelişiyordu ve düzeltildi.)
+
+**Dürüstlük sınırı:** n = 5 mimari; bu ölçekte hiçbir ρ kesin kanıt değildir — nitekim
+−0,90 tam da bu yüzden yanlış okundu. Ayrıca bunlar farklı reçetelerle (farklı
+iterasyon/batch) eğitilmiş yayınlanmış checkpoint'lerdir; kontrollü ablasyon değil, model
+karşılaştırmasıdır.
 
 ---
 

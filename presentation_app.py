@@ -716,10 +716,11 @@ def render_drivable(st: Any, drivable: dict) -> None:
         )
     )
     st.caption(
-        f"İki tolerans bilerek yan yana: 1 piksel, stride-{stride} logit'ten büyütülmüş bir "
-        f"maskeden çözünürlüğünün izin vermediği bir kesinlik ister; {stride} piksel, "
-        "mimarinin gerçekten sorumlu tutulabileceği soruyu sorar. Aradaki fark modelin "
-        "başarısızlığı değil, kaba tahmin edip büyütmenin bedelidir."
+        "İki tolerans bilerek yan yana: 1 piksel, kaba logit'ten büyütülmüş bir maskeden "
+        f"çözünürlüğünün izin vermediği bir kesinlik ister. {stride} piksel her mimari için "
+        "**aynı** tutulur — beşten dördünün dağıtım stride'ı budur. SegFormer-B0 stride 4'te "
+        "logit üretir; sınırdaki üstünlüğünün sebebi tam olarak bu, ve tolerans modele göre "
+        "esnetilseydi bu fark metriğin içinde kaybolurdu."
     )
 
 
@@ -825,14 +826,26 @@ Hiçbiri "ölçülmüş" gibi sunulmuyor.
 | Eksik | Neden |
 |---|---|
 | Gerçek zaman kapısı | **geçilmedi** — en iyi 12,36 FPS; darboğaz CPU tarafı, model değil |
-| SegFormer stride düzeltmesi | önerildi, ölçülmedi |
-| Sürülebilir alan sayısal metriği | GT yol maskeleri gerekiyor |
 | FP16 dağıtım sadakati | ölçüm scripti hazır, koşulmayı bekliyor |
+| Zamansal kalıcılık | riskin 7. özelliği; tek karede sıfır **ağırlıkla** dışlanıyor |
 | Mühürlü final test verisi | **kasıtlı** — yalnızca insan tetikler |
+
+#### Geri çekilen iki iddia
+
+Bu projede yanlış çıkan iki sonuç var ve ikisi de burada duruyor, çünkü ölçüm yapan bir
+çalışmanın en zayıf yeri düzeltmediği hatalardır.
+
+- **"Doğruluk arttıkça açık küme güvenliği düşüyor" (ρ = −0,90).** O korelasyon
+  *yayınlanmış* mIoU ile hesaplanmıştı. Kendi dağıtım koşulumuzda ölçülen mIoU ile
+  ρ = **+0,30** — ilişki yok. Asıl bulgu şu: ρ(yayınlanmış, ölçülen) = **+0,10**, yani
+  model zoo sıralaması dağıtım koşuluna aktarılamıyor.
+- **"SegFormer'ın maliyeti entegrasyon artığıdır."** Ölçüldü: logit'i stride 8'e indirmek
+  post-processing'i 3,98× hızlandırıyor ama **2,03 mIoU'ya** mal oluyor. Bedava değil.
 
 #### Yöntemsel sınırlar
 
-- **n = 5 mimari.** ρ = −0,90 güçlü bir eğilim, kesin kanıt değil.
+- **n = 5 mimari.** Bu ölçekte hiçbir korelasyon kesin kanıt değildir — nitekim −0,90 tam
+  bu yüzden yanlış okundu.
 - Referans checkpoint'ler farklı reçetelerle eğitilmiştir; kontrollü ablasyon değil,
   yayınlanmış model karşılaştırmasıdır.
 - Kendi eğitilen modeller 2.500 adımda kalmıştır — yayınların %0,7'si kadar örnek.

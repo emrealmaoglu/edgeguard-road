@@ -36,8 +36,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-name")
     parser.add_argument("--frames", type=int, default=120)
     parser.add_argument("--minimum-drivable-area", type=int, default=64)
-    # Boundary agreement at 1 px asks a stride-8 prediction for something its
-    # resolution forbids; at the stride it asks what the architecture can be held to.
+    # A common tolerance for every model, set to 8 because that is the deployment logit
+    # stride of four of the five. SegFormer-B0 emits at stride 4, which is exactly why it
+    # is expected to lead on boundaries -- so the tolerance stays fixed across models
+    # rather than following each one, or the comparison would hide the difference it is
+    # meant to expose.
     parser.add_argument("--output-stride", type=int, default=8)
     parser.add_argument("--output", type=Path, required=True)
     return parser

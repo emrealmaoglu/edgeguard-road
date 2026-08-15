@@ -77,11 +77,15 @@ def drivable_metrics(
     """Measure road mask accuracy without treating ignore pixels as non-road.
 
     Boundary agreement is reported at two tolerances because one alone misleads. At 1 px
-    it asks for pixel-exact edges from a mask that was upsampled from stride-8 logits,
-    which no amount of training could deliver -- the answer is bounded by the output
-    resolution, not by the model. At the stride it asks the question the architecture can
-    actually be held to. Both are measured; the gap between them is the cost of predicting
-    coarsely and upsampling, and it belongs in the record rather than in a footnote.
+    it asks for pixel-exact edges from a mask upsampled from coarse logits, which no
+    amount of training could deliver -- the answer is bounded by the output resolution,
+    not by the model, and reported alone it reads as a failure. At `output_stride` it
+    asks a question the prediction's resolution can answer. Both are measured; the gap
+    between them is the cost of predicting coarsely and upsampling.
+
+    `output_stride` is a property of the comparison, not of the model: hold it fixed
+    across architectures, or a model that predicts on a finer grid gets a looser
+    tolerance and its advantage disappears into the metric.
     """
     if prediction.shape != target_semantics.shape or prediction.dtype != np.bool_:
         raise ValueError("drivable prediction must be bool and match target geometry")
