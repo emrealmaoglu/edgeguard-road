@@ -409,8 +409,9 @@ motor farkının 17 katı.
 Sebep: SegFormer stride-4'te (128×256), diğerleri stride-8'de (64×128) logit üretiyor.
 **4 kat daha fazla piksel** CPU tarafındaki her aşamaya giriyor.
 
-**Sonuç:** maliyet mimariden değil entegrasyondan geliyor; logitler post-processing öncesi
-indirilirse büyük ölçüde kaybolur.
+**Ölçüldü:** logitleri stride-8'e indirmek post-processing'i 3,98× hızlandırıyor ama
+**2,03 mIoU'ya mal oluyor**. Maliyet giderilebilir bir artık değil — yüksek çözünürlüklü
+logit gerçek doğruluk taşıyor.
 """
     )
 

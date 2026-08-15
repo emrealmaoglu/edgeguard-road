@@ -151,8 +151,9 @@ motora dokunulmadan, çıktılar birebir aynı.
 1. **Yayınlanmış sıralama dağıtımı öngörmüyor** (ρ = +0,10, n=5). Dağıtım
    çözünürlüğünde SegFormer-B0 birinci, yayında sonuncuydu.
 2. **SegFormer-B0 üç kalite ekseninde de birinci**: mIoU 69,34 · ECE 0,0117 · açık küme
-   AP 0,347. Tek kaybı enerji, o da stride-4 çıktısının CPU tarafına 4× piksel
-   vermesinden — mimariden değil entegrasyondan.
+   AP 0,347. Tek kaybı enerji, sebebi stride-4 çıktısının CPU tarafına 4× piksel
+   vermesi. **Bu maliyet giderilemez:** logitleri stride-8'e indirmek post-processing'i
+   3,98× hızlandırıyor ama 2,03 mIoU'ya mal oluyor ve modeli dördüncülüğe düşürüyor.
 3. **Gecede sessiz başarısızlık**: mIoU 0,1497, piksel doğruluğu %45,2, ortalama güven
    %71,9, ECE 0,2694 (en iyi koşulun 8,7 katı). Model en çok yanıldığı koşulda
    yanıldığını bilmiyor.
@@ -172,8 +173,10 @@ motora dokunulmadan, çıktılar birebir aynı.
 - Sistem maliyetini FLOP değil segmentasyon başının **çıktı stride'ı** belirler.
 - Gece koşulu ayrı ele alınmalı ya da belirsizlik sinyali aydınlatmaya duyarlı hâle
   getirilmelidir.
-- **Öneri (ölçülmedi):** SegFormer logitleri post-processing öncesi 64×128'e indirilirse
-  enerji maliyetinin büyük kısmı kaybolur.
+- **Ölçüldü:** SegFormer logitlerini stride-8'e indirmek post-processing'i 3,98×
+  hızlandırır ama 2,03 mIoU'ya mal olur. Yüksek çözünürlüklü logit gerçek doğruluk
+  taşıyor; uç cihaz için soru "maliyet kaldırılabilir mi" değil, "bu doğruluk bu enerjiye
+  değer mi".
 - **Sürdürülebilirlik (rubrik 4 puan):** joule/kare doğrudan ölçüldü; DDRNet seçimi
   PIDNet-M'e göre kare başına %22 enerji tasarrufu sağlar.
 - **Girişimcilik/yenilikçilik (rubrik 4 puan):** üç eksenli seçim yöntemi ve stride

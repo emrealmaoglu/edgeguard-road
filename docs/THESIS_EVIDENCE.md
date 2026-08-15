@@ -274,8 +274,14 @@ yavaş — motor farkının **17 katı**. Sebep `output_shape`: SegFormer stride
 > değil, segmentasyon başının çıktı stride'ıdır** — çünkü CPU tarafındaki algı yığını
 > çıktı piksel sayısıyla ölçeklenir, hızlandırıcı ölçeklenmez.
 
-Bu maliyet mimariden değil entegrasyondan gelir: logitler post-processing öncesi 64×128'e
-indirilirse maliyet çöker. **Test edilmedi** — sonuç bölümünde öneri olarak durur.
+**Bu maliyet giderilebilir bir entegrasyon artığı değil; ölçüldü.** Logitleri stride-8'e
+indirmek post-processing'i **3,98×** hızlandırıyor ama **2,03 mIoU'ya mal oluyor**
+(0,6721 → 0,6518, 60 Cityscapes val karesi, `scripts/measure_logit_stride_tradeoff.py`).
+SegFormer-B0 bu durumda doğruluk sıralamasında birincilikten dördüncülüğe düşer.
+
+Yani stride-4 çıktısı gerçek doğruluk taşıyor: yüksek çözünürlüklü logit hem daha iyi
+segmentasyon hem daha yüksek CPU maliyeti demek. Uç cihaz için doğru soru "bu maliyet
+kaldırılabilir mi" değil, **"bu doğruluk bu enerjiye değer mi"**.
 
 ---
 
