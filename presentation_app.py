@@ -205,6 +205,27 @@ def _number(value: Any, digits: int = 3, suffix: str = "") -> str:
     return f"{float(value):.{digits}f}{suffix}"
 
 
+# A recorded presentation is watched, not read: the panel is styled once here so every
+# page inherits the same rhythm instead of each table and caption drifting apart.
+THEME = """
+<style>
+  .block-container { padding-top: 2.2rem; max-width: 1500px; }
+  h1 { font-size: 2.0rem !important; line-height: 1.18; letter-spacing: -0.015em; }
+  h2, h3 { letter-spacing: -0.01em; }
+  h4 { font-size: 1.05rem !important; margin-top: 1.1rem; opacity: 0.92; }
+  /* Tables carry the evidence, so they get the legibility budget. */
+  table { font-variant-numeric: tabular-nums; font-size: 0.92rem; }
+  thead tr th { font-weight: 600 !important; opacity: 0.75; }
+  tbody tr td { padding-top: 0.34rem !important; padding-bottom: 0.34rem !important; }
+  tbody tr:hover { background: rgba(127,127,127,0.07); }
+  [data-testid="stMetricValue"] { font-size: 1.5rem; }
+  [data-testid="stCaptionContainer"] { opacity: 0.7; }
+  section[data-testid="stSidebar"] { border-right: 1px solid rgba(127,127,127,0.18); }
+  img { border-radius: 6px; }
+</style>
+"""
+
+
 def show_figure(st: Any, root: Path, name: str, caption: str = "") -> bool:
     """Display a rendered figure if it was produced; stay silent if it was not.
 
@@ -232,6 +253,7 @@ def main() -> None:
         raise RuntimeError("pip install streamlit") from error
 
     st.set_page_config(page_title="EdgeGuard-Road", layout="wide", page_icon="🛣️")
+    st.markdown(THEME, unsafe_allow_html=True)
     root = results_root()
 
     jetson = load_group(root / "jetson")
@@ -271,6 +293,9 @@ def main() -> None:
         )
         st.divider()
         st.caption(f"kayıtlar: `{root}`")
+        st.caption(
+            "Gösterilen her sayı diskteki bir ölçüm kaydından okunur. Panel canlı çıkarım yapmaz."
+        )
 
     if page.startswith("1"):
         render_problem(st, root)
@@ -338,10 +363,19 @@ canlı üretilmez.
 
 
 def render_comparison(st: Any, accuracy: dict, open_set: dict, jetson: dict, root: Path) -> None:
-    st.title("Üç eksende model karşılaştırması")
+    st.title("Dört eksende model karşılaştırması")
     st.caption(
-        "Doğruluk ve açık küme donanımdan bağımsızdır; maliyet Jetson Orin Nano Super'de "
-        "25 W'ta ölçülmüştür."
+        "Doğruluk, kalibrasyon ve açık küme donanımdan bağımsızdır; maliyet Jetson Orin "
+        "Nano Super'de 25 W'ta, 600 saniye sürdürülen yük altında ölçülmüştür."
+    )
+    columns = st.columns(4)
+    columns[0].metric("Doğrulukta birinci", "SegFormer-B0", "69,34 mIoU")
+    columns[1].metric("Açık kümede birinci", "SegFormer-B0", "AP 0,347")
+    columns[2].metric("Enerjide birinci", "DDRNet-23-slim", "0,630 J/kare")
+    columns[3].metric("Gecede en dayanıklı", "SegFormer-B0", "%29,7 korunan")
+    st.caption(
+        "Dört eksenin üçünü aynı model kazanıyor; enerjiyi kazanan model gecede "
+        "işlevsiz kalıyor (7,12 mIoU)."
     )
     rows = []
     for model in MODEL_ORDER:
@@ -390,29 +424,30 @@ def render_comparison(st: Any, accuracy: dict, open_set: dict, jetson: dict, roo
         """
 #### Bulgu 1 · Yayın sıralaması dağıtımı öngörmüyor
 
-**Spearman ρ = −0,90.** En doğru model (PIDNet-M) yol tehlikelerini fark etmekte neredeyse
-yazı-tura seviyesinde. En az doğru olanlardan SegFormer-B0 ise 2,8 kat daha iyi.
+**Spearman ρ = +0,10** (n=5). Dağıtım çözünürlüğünde SegFormer-B0 birinci; yayınlanmış
+sıralamada sonuncuydu. Her mimari çözünürlük düşüşünden farklı etkileniyor (−%9,4 ile
+−%14,7 arası).
 
-Beşli içindeki tek transformer SegFormer-B0; öznitelik geometrisi bilinmeyen nesneleri
-ayırmakta CNN dekoderlerinden farklı davranıyor.
-
-**Sonuç:** uç cihazda model seçimi mIoU'ya bakarak yapılamaz.
+**Sonuç:** uç cihaz için model seçimi yayınlanmış mIoU'ya bakarak yapılamaz.
 """
     )
     right.markdown(
         """
-#### Bulgu 2 · Sistem maliyetini FLOP değil çıktı stride'ı belirliyor
+#### Bulgu 2 · Sistem maliyetini çıktı stride'ı belirliyor
 
-SegFormer-B0'ın motoru DDRNet'ten yalnızca **+11,2 ms** yavaş, ama karesi **+193,4 ms** —
-motor farkının 17 katı.
+SegFormer-B0'ın motoru DDRNet'ten **+11,2 ms** yavaş, ama karesi **+193,4 ms** — 17 katı.
+Sebep: stride-4 çıktısı (128×256) CPU tarafına 4× piksel veriyor.
 
-Sebep: SegFormer stride-4'te (128×256), diğerleri stride-8'de (64×128) logit üretiyor.
-**4 kat daha fazla piksel** CPU tarafındaki her aşamaya giriyor.
-
-**Ölçüldü:** logitleri stride-8'e indirmek post-processing'i 3,98× hızlandırıyor ama
-**2,03 mIoU'ya mal oluyor**. Maliyet giderilebilir bir artık değil — yüksek çözünürlüklü
-logit gerçek doğruluk taşıyor.
+**Ve bu maliyet giderilemiyor:** logitleri stride-8'e indirmek post-processing'i 3,98×
+hızlandırıyor ama **2,03 mIoU'ya** mal oluyor. Yüksek çözünürlüklü logit gerçek doğruluk
+taşıyor.
 """
+    )
+    st.info(
+        "**Bulgu 3 · Hız kazananı, dayanıklılık kaybedeni.** DDRNet-23-slim en hızlı "
+        "(77,43 ms) ve en verimli (0,630 J/kare) model; gecede doğruluğunun yalnızca "
+        "%10,4'ünü koruyor (7,12 mIoU) ve kalibrasyonu 14 kat bozuluyor. Aynı testte "
+        "SegFormer-B0 %29,7 koruyor."
     )
 
 
