@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.build_presentation_outputs import (  # noqa: E402
+    _bundled_library_path,
     discover_screening_models,
     discover_training_manifests,
     main,
@@ -46,6 +48,28 @@ import sys
 
 print("stub deliberately failed", file=sys.stderr)
 raise SystemExit(3)
+"""
+
+# `train.py` differs from the artefact scripts: its `--output-root` is the shared `runs/`
+# directory, which already exists. It creates `<root>/<stage>/<model>/<run-name>` itself.
+_STUB_TRAIN = """
+import json
+import sys
+from pathlib import Path
+
+argv = sys.argv[1:]
+
+
+def value(flag):
+    return argv[argv.index(flag) + 1]
+
+
+root = Path(value("--output-root"))
+run_dir = root / value("--stage") / value("--model") / value("--run-name")
+run_dir.mkdir(parents=True, exist_ok=False)
+(run_dir / "summary.json").write_text("{}", encoding="utf-8")
+(root / "argv.json").write_text(json.dumps(argv), encoding="utf-8")
+print("stub trained")
 """
 
 
@@ -120,7 +144,15 @@ def _build_work_root(
     return work_root
 
 
-def _run_driver(tmp_path: Path, project_root: Path, work_root: Path, output_root: Path) -> dict:
+def _run_driver(
+    tmp_path: Path,
+    project_root: Path,
+    work_root: Path,
+    output_root: Path,
+    *,
+    extra: Sequence[str] = (),
+    record: str = "presentation_outputs.json",
+) -> dict:
     evidence_root = tmp_path / "evidence"
     evidence_root.mkdir(exist_ok=True)
     argv = [
@@ -137,6 +169,7 @@ def _run_driver(tmp_path: Path, project_root: Path, work_root: Path, output_root
         "cpu",
         "--frames-per-domain",
         "2",
+        *extra,
     ]
     original = sys.argv
     sys.argv = argv
@@ -144,7 +177,7 @@ def _run_driver(tmp_path: Path, project_root: Path, work_root: Path, output_root
         exit_code = main()
     finally:
         sys.argv = original
-    payload = json.loads((output_root / "presentation_outputs.json").read_text(encoding="utf-8"))
+    payload = json.loads((output_root / record).read_text(encoding="utf-8"))
     payload["_exit_code"] = exit_code
     return payload
 
@@ -240,6 +273,119 @@ def test_reruns_reuse_existing_evidence_instead_of_overwriting_it(tmp_path: Path
     assert steps["figure:pidnet_s:cityscapes:00"] == "reused"
     assert steps["calibration:pidnet_s:cityscapes"] == "reused"
     assert json.loads(marker.read_text(encoding="utf-8")) == {"kept": True}
+
+
+def test_training_mode_never_overwrites_the_artefact_record(tmp_path: Path) -> None:
+    """The artefact record is the only account of what the presentation actually has.
+
+    The longer training run happens in the same output root and can be started hours
+    later, so it writes its own record rather than replacing that account.
+    """
+    project_root = tmp_path / "project"
+    _write_stub_scripts(project_root)
+    (project_root / "scripts/train.py").write_text(_STUB_TRAIN, encoding="utf-8")
+    (project_root / "configs/pretrained").mkdir(parents=True)
+    (project_root / "configs/pretrained/pidnet_s.json").write_text("{}", encoding="utf-8")
+    work_root = _build_work_root(tmp_path)
+    output_root = tmp_path / "out"
+
+    artefacts = _run_driver(tmp_path, project_root, work_root, output_root)
+    assert artefacts["mode"] == "artefacts"
+
+    training = _run_driver(
+        tmp_path,
+        project_root,
+        work_root,
+        output_root,
+        extra=["--train-steps", "10000"],
+        record="training_run.json",
+    )
+    assert training["mode"] == "train"
+    assert training["train_steps"] == 10000
+    steps = {row["step"]: row["status"] for row in training["steps"]}
+    assert steps == {"train_longer": "produced"}
+
+    # The artefact record still says exactly what it said before the training run.
+    unchanged = json.loads((output_root / "presentation_outputs.json").read_text(encoding="utf-8"))
+    assert unchanged["step_counts"] == artefacts["step_counts"]
+    assert unchanged["mode"] == "artefacts"
+
+
+def test_the_longer_run_never_writes_into_the_drive_recovery_store(tmp_path: Path) -> None:
+    """A bonus run must not be able to damage the finished screening evidence.
+
+    `train.py` only touches the Drive recovery store when handed `--recovery-root`, so
+    the command must never carry that flag.
+    """
+    project_root = tmp_path / "project"
+    _write_stub_scripts(project_root)
+    # The stub records the argv it was handed so the assembled command can be inspected.
+    (project_root / "scripts/train.py").write_text(_STUB_TRAIN, encoding="utf-8")
+    (project_root / "configs/pretrained").mkdir(parents=True)
+    (project_root / "configs/pretrained/pidnet_s.json").write_text("{}", encoding="utf-8")
+    work_root = _build_work_root(tmp_path)
+
+    _run_driver(
+        tmp_path,
+        project_root,
+        work_root,
+        tmp_path / "out",
+        extra=["--train-steps", "4000"],
+        record="training_run.json",
+    )
+
+    argv = json.loads((work_root / "runs/argv.json").read_text(encoding="utf-8"))
+    assert "--recovery-root" not in argv
+    assert argv[argv.index("--max-steps") + 1] == "4000"
+    assert argv[argv.index("--stage") + 1] == "final"
+    assert argv[argv.index("--initialization") + 1] == "pretrained"
+    assert argv.count("--data-manifest") == 1
+
+
+def test_a_missing_pretrained_manifest_is_skipped_rather_than_trained_from_scratch(
+    tmp_path: Path,
+) -> None:
+    """Silently falling back to random initialization would make the run incomparable."""
+    project_root = tmp_path / "project"
+    _write_stub_scripts(project_root)
+    (project_root / "scripts/train.py").write_text(_STUB_TRAIN, encoding="utf-8")
+    work_root = _build_work_root(tmp_path)
+
+    training = _run_driver(
+        tmp_path,
+        project_root,
+        work_root,
+        tmp_path / "out",
+        extra=["--train-steps", "10000"],
+        record="training_run.json",
+    )
+
+    row = next(row for row in training["steps"] if row["step"] == "train_longer")
+    assert row["status"] == "skipped"
+    assert "pretrained" in row["reason"]
+    assert training["scientific_status"] == "not_run"
+
+
+def test_bundled_cuda_libraries_precede_the_host_toolkit(tmp_path: Path) -> None:
+    """Colab prepends its own CUDA toolkit, which the pinned torch wheel may not match.
+
+    `run_colab_master.py` reorders `LD_LIBRARY_PATH` before launching training; anything
+    else invoking that interpreter has to do the same or a checkpoint that trained fine
+    can fail to load.
+    """
+    runtime_python = tmp_path / "runtime/bin/python"
+    torch_lib = tmp_path / "runtime/lib/python3.11/site-packages/torch/lib"
+    nvidia_lib = tmp_path / "runtime/lib/python3.11/site-packages/nvidia/cublas/lib"
+    torch_lib.mkdir(parents=True)
+    nvidia_lib.mkdir(parents=True)
+
+    resolved = _bundled_library_path(runtime_python, {"LD_LIBRARY_PATH": "/usr/local/cuda/lib64"})
+
+    entries = resolved.split(":")
+    assert entries.index(str(torch_lib)) < entries.index("/usr/local/cuda/lib64")
+    assert str(nvidia_lib) in entries
+    # The hosted driver path supplies libcuda and must survive the reordering.
+    assert "/usr/local/cuda/lib64" in entries
 
 
 def test_best_checkpoint_is_preferred_over_the_last_iteration(tmp_path: Path) -> None:

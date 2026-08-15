@@ -98,21 +98,27 @@ yazar; `scientific_status` ancak gerçekten üretilmiş bir adım varsa `measure
 Notebook'un son hücresi başarısız ve atlanan adımları ayrıca listeler — **çıktıyı
 kullanmadan önce oraya bakın.**
 
-## 2 · Colab oturumu B — daha uzun pidnet_s eğitimi (opsiyonel, paralel)
+## 2 · Daha uzun pidnet_s eğitimi (opsiyonel)
 
-Orkestratör yok, düz komut. Bittiğinde headline mIoU 35,48'in üstüne çıkar; bitmezse
-hiçbir şey kaybedilmez, sunum screening rakamlarıyla ayakta.
+**Ayrı bir notebook yok ve olmamalı.** Aynı `EdgeGuard_10_Sunum_Ciktilari.ipynb`
+notebook'unun 4. hücresi bu işi yapar; varsayılan olarak kapalıdır.
 
-```bash
-MMSEG_ROOT=/content/edgeguard-checkouts/mmsegmentation python scripts/train.py \
-  --stage final --model pidnet_s \
-  --data-manifest <cityscapes.frozen.json> --data-manifest <idd20k.frozen.json> \
-  --initialization pretrained --pretrained-manifest configs/pretrained/pidnet_s.json \
-  --output-root /content/edgeguard-work-v3/runs --loss ce --max-steps 10000
-```
+Ayrı ikinci bir Colab oturumu açmak **bilerek reddedildi**: o oturumun da Drive'daki
+kampanya durum deposunu geri yüklemesi gerekirdi ve iki oturumun aynı depoya eşzamanlı
+yazması, sunumun tamamen üzerine kurulu olduğu bitmiş screening kaydını bozabilirdi.
+İkinci oturumun kazandıracağı şey (belki 0,37 → 0,45 mIoU), o riski karşılamıyor.
+
+Bunun yerine: **A oturumu bitip zip indikten sonra**, aynı oturumda 4. hücrede
+`RUN_LONGER_TRAINING = True` yapıp hücreyi elle çalıştırın. Çalışma zamanı, veri ve
+manifestler zaten hazır olduğu için ikinci bir geri yükleme yapılmaz.
+
+Bu hücrenin çalıştırdığı komut `--recovery-root` **almaz**, yani Drive kurtarma deposuna
+hiç yazmaz: uzun koşu, sunumun dayandığı kanıta zarar veremez. Kendi kaydını
+`training_run.json` olarak yazar, `presentation_outputs.json`'ı ezmez.
 
 `--max-steps` LR programının ufkunu da kısaltır: bu, 2.500'lük koşunun devamı değil,
-kendi içinde tutarlı 10.000 adımlık ayrı bir koşudur.
+kendi içinde tutarlı 10.000 adımlık ayrı bir koşudur. Bittiğinde `evaluate.py run` ile
+ölçüp yeni sayıyı kullanabilirsiniz; bitmezse hiçbir şey kaybedilmez.
 
 ## 3 · Jetson Orin Nano Super — sunumun en güçlü kısmı
 
@@ -168,9 +174,16 @@ ve kayıtta görünmesinde sakınca yoktur; dürüstlüğün kanıtıdır.
   tam ve testlidir ama tek besleyeni sentetik rastgele logittir
   (`campaign/stages.py:358`, `run_local_closure.py:233`). Gerçek ölçüm için piksel-etiketli
   anomali verisi (Fishyscapes Lost&Found) gerekir; `data/fishyscapes.py` adaptörü vardır
-  ama hiç çağrılmaz ve veri indirilmemiştir. Sunumda açık küme **niteliksel** anlatılır
-  (entropi/energy haritaları + `unreliable_mask`), sayısal kısım "sıradaki adım" olarak
-  konumlandırılır. İlk sunumda da bu "Beklenen Çıktı" başlığı altındaydı; geri adım değil.
+  ama hiç çağrılmaz ve veri indirilmemiştir.
+
+  Bu **final** sunum olduğu için bunu "sıradaki adım" diye geçiştirmek yanlış olur —
+  sahiplenilmiş bir kapsam sınırı olarak, gerekçesiyle söylenir: *"Açık küme tespitini
+  belirsizlik tabanlı olarak uyguladım ve niteliksel olarak gösteriyorum; sayısal
+  AUPR/FPR95 için piksel düzeyinde anomali etiketli bir veri seti (Fishyscapes
+  Lost&Found) gerekiyor, bu da altyapı ve hesaplama bütçesi nedeniyle kapsam dışında
+  bırakıldı."* Bitirme projesinde gerekçelendirilmiş kapsam daraltması normaldir; uydurma
+  sayı vermek değildir. Gösterilen şey gerçek: entropi/energy haritaları ve
+  `unreliable_mask` ile güvenilmez bölge işaretleme çalışıyor.
 - **`--emit-risk` fiziksel risk olasılığı üretmez.** `context/risk.py::contextual_risk`
   çağrılmaz; üretilen şey deterministik bir *dikkat* skorudur ve `summary.json` zaten
   `"physical_risk_probability": false` der. Slaytta "operasyonel dikkat göstergesi" denir.

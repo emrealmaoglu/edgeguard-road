@@ -728,6 +728,55 @@ eg_sunum_bundle()
 """,
         ),
         _cell(
+            "markdown",
+            """
+### 4 · (İsteğe bağlı) pidnet_s'i daha uzun eğit
+
+**Önce yukarıdaki zip'in indiğinden emin olun.** Bu hücre saatlerce sürer ve oturum
+koparsa yarıda kalır; sunum çıktıları o zamana kadar çoktan elinizde olmalı.
+
+Bu, screening koşusunun devamı değil: `--max-steps` LR programının ufkunu da kısalttığı
+için kendi içinde tutarlı, ayrı bir 10.000 adımlık koşudur. Drive kurtarma deposuna
+**yazmaz**, yani sunumun dayandığı bitmiş screening kanıtına zarar veremez. Biterse
+headline mIoU 0,370'in üstüne çıkar; bitmezse hiçbir şey kaybedilmez.
+
+Çalıştırmak için `RUN_LONGER_TRAINING = True` yapıp bu hücreyi elle çalıştırın.
+""",
+        ),
+        _cell(
+            "code",
+            """
+RUN_LONGER_TRAINING = False
+LONGER_TRAINING_STEPS = 10000
+
+if not RUN_LONGER_TRAINING:
+    print("Daha uzun eğitim kapalı. Açmak için RUN_LONGER_TRAINING = True yapın.")
+elif LOCAL_TEST_MODE:
+    print("LOCAL_TEST_MODE: eğitim atlandı.")
+else:
+    run_visible(
+        [
+            "/usr/bin/python3",
+            str(PROJECT_ROOT / "scripts/build_presentation_outputs.py"),
+            "--project-root",
+            str(PROJECT_ROOT),
+            "--work-root",
+            str(PHASE_WORK_ROOT),
+            "--evidence-root",
+            str(CONTENT_ROOT / "edgeguard-evidence"),
+            "--output-root",
+            str(PRESENTATION_ROOT),
+            "--train-steps",
+            str(LONGER_TRAINING_STEPS),
+            "--train-model",
+            "pidnet_s",
+        ],
+        cwd=PROJECT_ROOT,
+        env=MASTER_ENVIRONMENT,
+    )
+""",
+        ),
+        _cell(
             "code",
             """
 if not LOCAL_TEST_MODE and (PRESENTATION_ROOT / "presentation_outputs.json").is_file():

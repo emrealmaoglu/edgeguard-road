@@ -101,6 +101,27 @@ def resolve_mmseg_root(evidence_root: Path, override: Path | None) -> Path | Non
     return None
 
 
+def _bundled_library_path(runtime_python: Path, environment: dict[str, str]) -> str:
+    """Put the pinned wheel's own CUDA libraries ahead of Colab's toolkit.
+
+    Colab prepends its current CUDA toolkit to `LD_LIBRARY_PATH`, and those libraries are
+    not necessarily ABI-compatible with the deliberately pinned PyTorch wheel that owns
+    this runtime. `run_colab_master.py::_runtime_environment` does exactly this reordering
+    before it launches training, so anything else invoking that interpreter has to do it
+    too -- otherwise a checkpoint that trained fine can fail to even load here. The hosted
+    driver paths are kept, since `libcuda` comes from the host rather than the wheel.
+    """
+    runtime_root = runtime_python.parent.parent
+    bundled: list[str] = []
+    for site_packages in sorted(runtime_root.glob("lib/python*/site-packages")):
+        candidates = [site_packages / "torch/lib"]
+        candidates.extend(sorted(site_packages.glob("nvidia/*/lib")))
+        bundled.extend(str(path) for path in candidates if path.is_dir())
+    hosted = [value for value in environment.get("LD_LIBRARY_PATH", "").split(os.pathsep) if value]
+    ordered = list(dict.fromkeys((*bundled, *hosted)))
+    return os.pathsep.join(ordered)
+
+
 def _checkpoint_sort_key(path: Path) -> tuple[int, int]:
     """Rank checkpoints: the best-mIoU snapshot first, then the latest iteration."""
     iteration = 0
@@ -211,6 +232,8 @@ class PresentationBuilder:
         self.output_root = args.output_root.resolve()
         self.device = args.device
         self.frames_per_domain = args.frames_per_domain
+        self.train_steps = args.train_steps
+        self.train_model = args.train_model
         self.log_path = self.output_root / "presentation-build.log"
         self.steps = StepLog()
         self.interpreter, self.interpreter_source = resolve_runtime_interpreter(self.evidence_root)
@@ -224,6 +247,9 @@ class PresentationBuilder:
         environment["MPLBACKEND"] = "Agg"
         if self.mmseg_root is not None:
             environment["MMSEG_ROOT"] = str(self.mmseg_root)
+        library_path = _bundled_library_path(self.interpreter, environment)
+        if library_path:
+            environment["LD_LIBRARY_PATH"] = library_path
         return environment
 
     def _run(self, name: str, command: Sequence[str], *, output_dir: Path) -> dict[str, Any]:
@@ -399,6 +425,56 @@ class PresentationBuilder:
             command.extend(("--log-file", str(log)))
         self._run("training_analysis", command, output_dir=output_dir)
 
+    def train_longer(self, steps: int, model: str, manifests: list[Path]) -> None:
+        """Train one model for longer, straight through `train.py`, no orchestrator.
+
+        This deliberately omits `--recovery-root`: the run must not write into the Drive
+        recovery store the finished screening state lives in. A longer run is a bonus, and
+        it must not be able to damage the evidence the presentation already depends on.
+
+        `--max-steps` also shortens the LR schedule horizon, so this is a self-consistent
+        run of its own length -- not a continuation of the 2.500-step screening run.
+        """
+        print(f"\n[+] Daha uzun eğitim: {model}, {steps} adım (orkestratör yok)", flush=True)
+        if not manifests:
+            self.steps.record(
+                "train_longer", "skipped", reason="dondurulmuş veri manifesti bulunamadı"
+            )
+            return
+        pretrained = self.project_root / "configs/pretrained" / f"{model}.json"
+        if not pretrained.is_file():
+            self.steps.record(
+                "train_longer", "skipped", reason=f"pretrained manifesti yok: {pretrained}"
+            )
+            return
+        run_name = f"long{steps}"
+        output_dir = self.work_root / "runs" / "final" / model / run_name
+        command = [
+            str(self.interpreter),
+            str(self.project_root / "scripts/train.py"),
+            "--stage",
+            "final",
+            "--model",
+            model,
+            "--output-root",
+            str(self.work_root / "runs"),
+            "--initialization",
+            "pretrained",
+            "--pretrained-manifest",
+            str(pretrained),
+            "--loss",
+            "ce",
+            "--run-name",
+            run_name,
+            "--max-steps",
+            str(steps),
+        ]
+        if self.mmseg_root is not None:
+            command.extend(("--mmseg-root", str(self.mmseg_root)))
+        for manifest in manifests:
+            command.extend(("--data-manifest", str(manifest)))
+        self._run("train_longer", command, output_dir=output_dir)
+
     def collect_screening_reports(self) -> None:
         """Copy the already-measured screening tables next to the new artefacts."""
         print("\n[5/5] Mevcut screening raporları", flush=True)
@@ -429,23 +505,21 @@ class PresentationBuilder:
         print(f"  modeller    : {[entry['model'] for entry in models] or 'BULUNAMADI'}", flush=True)
         print(f"  manifestler : {[path.name for path in manifests] or 'BULUNAMADI'}", flush=True)
 
-        if models:
-            self.build_figures(models, manifests)
-            self.build_calibration(models, manifests)
+        if self.train_steps:
+            # Training only. It runs for hours and a dropped Colab session cuts it off, so
+            # it never shares a run with the artefacts it could otherwise take down.
+            self.train_longer(self.train_steps, self.train_model, manifests)
         else:
-            self.steps.record(
-                "figures",
-                "skipped",
-                reason=f"{self.work_root / 'runs' / SCREENING_STAGE} altında checkpoint yok",
-            )
-            self.steps.record(
-                "calibration",
-                "skipped",
-                reason=f"{self.work_root / 'runs' / SCREENING_STAGE} altında checkpoint yok",
-            )
-        self.build_dataset_figures(manifests)
-        self.build_training_analysis()
-        self.collect_screening_reports()
+            if models:
+                self.build_figures(models, manifests)
+                self.build_calibration(models, manifests)
+            else:
+                missing = f"{self.work_root / 'runs' / SCREENING_STAGE} altında checkpoint yok"
+                self.steps.record("figures", "skipped", reason=missing)
+                self.steps.record("calibration", "skipped", reason=missing)
+            self.build_dataset_figures(manifests)
+            self.build_training_analysis()
+            self.collect_screening_reports()
 
         counts = self.steps.counts()
         summary = {
@@ -459,6 +533,8 @@ class PresentationBuilder:
             "mmseg_root": str(self.mmseg_root) if self.mmseg_root else None,
             "device": self.device,
             "frames_per_domain": self.frames_per_domain,
+            "mode": "train" if self.train_steps else "artefacts",
+            "train_steps": self.train_steps,
             "screening_models": models,
             "training_manifests": [str(path) for path in manifests],
             "steps": self.steps.rows,
@@ -469,10 +545,13 @@ class PresentationBuilder:
             "accepted_release": False,
             "sealed_test_data_opened": False,
         }
+        # Training writes its own record: it must not overwrite the artefact record from
+        # an earlier run, which is the only account of what the presentation actually has.
+        record = "training_run.json" if self.train_steps else "presentation_outputs.json"
         # Deliberately stdlib-only: this driver has to stay runnable by whichever
         # interpreter a Colab cell happens to have, before any project package is
         # importable. The record is a build log, not hash-bound scientific evidence.
-        (self.output_root / "presentation_outputs.json").write_text(
+        (self.output_root / record).write_text(
             json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
@@ -493,6 +572,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mmseg-root", type=Path)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--frames-per-domain", type=int, default=3)
+    parser.add_argument(
+        "--train-steps",
+        type=int,
+        help=(
+            "train one model for this many steps through scripts/train.py instead of "
+            "rendering artefacts. Writes no Drive recovery state, so a longer run cannot "
+            "damage the finished screening evidence the presentation depends on."
+        ),
+    )
+    parser.add_argument("--train-model", default="pidnet_s")
     return parser
 
 
