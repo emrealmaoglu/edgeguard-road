@@ -158,7 +158,8 @@ class TensorRTTorchRunner:
         """
         torch = self.torch
         height, width = self.input_shape[2:]
-        frame = torch.from_numpy(np.ascontiguousarray(rgb)).to("cuda", non_blocking=True)
+        # `np.asarray(PIL.Image)` is read-only; torch refuses to own that memory safely.
+        frame = torch.from_numpy(np.array(rgb, copy=True)).to("cuda", non_blocking=True)
         frame = frame.permute(2, 0, 1).unsqueeze(0).float()
         scale = min(width / rgb.shape[1], height / rgb.shape[0])
         target = (max(1, round(rgb.shape[0] * scale)), max(1, round(rgb.shape[1] * scale)))

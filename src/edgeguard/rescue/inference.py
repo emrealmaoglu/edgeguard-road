@@ -22,6 +22,11 @@ from edgeguard.rescue.visualization import (
 IMAGENET_MEAN = np.asarray([123.675, 116.28, 103.53], dtype=np.float32)
 IMAGENET_STD = np.asarray([58.395, 57.12, 57.375], dtype=np.float32)
 
+# Preprocessing is swappable so an alternative resampler can be scored against the same
+# graph; the Jetson GPU path uses a different bilinear filter and its accuracy cost has
+# to be measured rather than assumed.
+Letterbox = Callable[[Image.Image, tuple[int, int]], tuple[np.ndarray, tuple[int, int, int, int]]]
+
 
 def discover_demo_models(run_root: Path) -> list[dict[str, str]]:
     """Discover only complete ONNX or checkpoint/config pairs for the demo."""
@@ -86,6 +91,7 @@ def _predict_with_runner(
     backend: str,
     metadata: dict[str, Any],
     run: Callable[[np.ndarray], tuple[np.ndarray, float]],
+    letterbox: Letterbox | None = None,
 ) -> InferenceResult:
     """Letterbox, run one engine call, and un-letterbox logits into one result.
 
@@ -93,7 +99,7 @@ def _predict_with_runner(
     postprocessing geometry stays identical regardless of which engine produced
     the raw NCHW logits.
     """
-    tensor, bounds = _letterbox_image(image, input_size)
+    tensor, bounds = (letterbox or _letterbox_image)(image, input_size)
     logits, latency_ms = run(tensor)
     if logits.ndim != 4 or logits.shape[0] != 1:
         raise RuntimeError(f"unexpected {backend} logits shape: {logits.shape}")
@@ -125,8 +131,14 @@ def predict_onnx(
     *,
     input_size: tuple[int, int] = (512, 1024),
     session: Any | None = None,
+    letterbox: Letterbox | None = None,
 ) -> InferenceResult:
-    """Run a validated static-shape semantic ONNX graph on CPU."""
+    """Run a validated static-shape semantic ONNX graph on CPU.
+
+    `letterbox` overrides the default preprocessing so an alternative resampler can be
+    scored against the same graph -- the Jetson GPU path uses a different bilinear filter,
+    and its accuracy cost has to be measured rather than assumed.
+    """
     try:
         ort = __import__("onnxruntime")
     except ModuleNotFoundError as error:
@@ -148,6 +160,7 @@ def predict_onnx(
         backend="onnxruntime_cpu",
         metadata={"model": model_path.name},
         run=run,
+        letterbox=letterbox,
     )
 
 

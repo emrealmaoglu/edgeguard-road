@@ -23,12 +23,41 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from edgeguard.rescue.inference import predict_onnx
+from edgeguard.rescue.inference import IMAGENET_MEAN, IMAGENET_STD, predict_onnx
 from edgeguard.serialization import canonical_json, sha256_file
 
 CLASS_COUNT = 19
 IGNORE_LABEL = 255
 RELIABILITY_BINS = 15
+
+
+def _torch_letterbox(
+    image: Image.Image, input_size: tuple[int, int]
+) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+    """Reproduce the Jetson GPU preprocessing on CPU so its accuracy cost is measurable.
+
+    The device path resizes with torch's bilinear filter and `antialias=True`, which is
+    close to PIL's but not identical; on real frames the two disagree on 0.54% of pixels.
+    Whether that matters is an mIoU question, and answering it does not need the Jetson.
+    """
+    import torch
+
+    height, width = input_size
+    rgb = image.convert("RGB")
+    frame = torch.from_numpy(np.array(rgb, dtype=np.uint8)).permute(2, 0, 1).unsqueeze(0).float()
+    scale = min(width / rgb.width, height / rgb.height)
+    target = (max(1, round(rgb.height * scale)), max(1, round(rgb.width * scale)))
+    resized = torch.nn.functional.interpolate(
+        frame, size=target, mode="bilinear", align_corners=False, antialias=True
+    )
+    canvas = torch.zeros((1, 3, height, width), dtype=torch.float32)
+    top = (height - target[0]) // 2
+    left = (width - target[1]) // 2
+    canvas[:, :, top : top + target[0], left : left + target[1]] = resized
+    array = canvas.numpy()[0].transpose(1, 2, 0)
+    normalized = (array - IMAGENET_MEAN) / IMAGENET_STD
+    tensor = np.transpose(normalized, (2, 0, 1))[None].astype(np.float32)
+    return tensor, (left, top, left + target[1], top + target[0])
 
 
 def discover_pairs(
@@ -67,6 +96,12 @@ def _parser() -> argparse.ArgumentParser:
         help="deterministic subsample used for the reliability curve; mIoU uses every pixel",
     )
     parser.add_argument("--seed", type=int, default=20260728)
+    parser.add_argument(
+        "--torch-preprocess",
+        action="store_true",
+        help="letterbox with torch bilinear+antialias instead of PIL, matching what the "
+        "Jetson GPU path does, so its accuracy cost can be measured off-device",
+    )
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -89,7 +124,10 @@ def main() -> int:
         with Image.open(image_path) as opened:
             image = opened.convert("RGB")
         result = predict_onnx(
-            image, args.model.resolve(), input_size=(args.input_height, args.input_width)
+            image,
+            args.model.resolve(),
+            input_size=(args.input_height, args.input_width),
+            letterbox=_torch_letterbox if args.torch_preprocess else None,
         )
         target = np.array(Image.open(mask_path))
         prediction, confidence = result.mask, result.confidence
