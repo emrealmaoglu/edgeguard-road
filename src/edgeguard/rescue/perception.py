@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -99,37 +98,59 @@ def _validate_semantic_inputs(
 def _label_components(binary: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
     """Label four-connected components, numbered by raster order of first pixel.
 
-    Deliberately still a breadth-first search. A vectorised label-propagation version was
-    written and measured against this one on the real 64x128 mask geometry, and it was
-    0.4-0.7x the speed: propagation touches all 8192 pixels on every iteration, while the
-    search only ever visits foreground. The Jetson cost of `derive_perception` lives in
-    the distance transform (see `_distance_from_mask`), not here.
+    Labels propagate by whole-array maxima rather than a per-pixel breadth-first search.
+    The two were timed against each other twice, and the answer depended on the machine:
+    on the development Mac the search won at 1.4-2.5x, so propagation was written and
+    reverted; on the Jetson Orin Nano Super that actually runs this, propagation won at
+    1.59x (3.154 ms -> 1.989 ms per call over 220 real 64x128 masks), because an ARM CPU
+    runs the Python interpreter far slower relative to NumPy. `derive_perception` calls
+    this eleven times per frame, so that is 34.7 ms against 21.9 ms of a frame already
+    dominated by CPU-side work. The target device decides.
+
+    Component order and the returned label values are part of the contract: callers map a
+    component's index onto its label (`labels == selected`) and derive `region_id` from
+    list position. Pixel order *within* a component is not -- every consumer takes areas,
+    extents or means -- so pixels come back in raster order rather than BFS order.
     """
-    labels = np.zeros(binary.shape, dtype=np.int32)
-    components: list[np.ndarray] = []
-    height, width = binary.shape
-    next_label = 0
-    for start_y, start_x in zip(*np.nonzero(binary & (labels == 0)), strict=True):
-        if labels[start_y, start_x] != 0:
-            continue
-        next_label += 1
-        queue: deque[tuple[int, int]] = deque([(int(start_y), int(start_x))])
-        labels[start_y, start_x] = next_label
-        pixels: list[tuple[int, int]] = []
-        while queue:
-            y, x = queue.popleft()
-            pixels.append((y, x))
-            for next_y, next_x in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-                if (
-                    0 <= next_y < height
-                    and 0 <= next_x < width
-                    and binary[next_y, next_x]
-                    and labels[next_y, next_x] == 0
-                ):
-                    labels[next_y, next_x] = next_label
-                    queue.append((next_y, next_x))
-        components.append(np.asarray(pixels, dtype=np.int32))
-    return labels, components
+    if not binary.any():
+        return np.zeros(binary.shape, dtype=np.int32), []
+    seeds = np.arange(1, binary.size + 1, dtype=np.int64).reshape(binary.shape)
+    labels = np.where(binary, seeds, 0)
+    while True:
+        merged = labels.copy()
+        merged[1:, :] = np.maximum(merged[1:, :], labels[:-1, :])
+        merged[:-1, :] = np.maximum(merged[:-1, :], labels[1:, :])
+        merged[:, 1:] = np.maximum(merged[:, 1:], labels[:, :-1])
+        merged[:, :-1] = np.maximum(merged[:, :-1], labels[:, 1:])
+        merged[~binary] = 0
+        if np.array_equal(merged, labels):
+            break
+        labels = merged
+
+    flat = labels.reshape(-1)
+    foreground = np.flatnonzero(flat)
+    unique, inverse = np.unique(flat[foreground], return_inverse=True)
+    # The search numbered components by the raster position of the pixel that started
+    # them, so rank each component by its own first pixel to reproduce that numbering.
+    first_index = np.full(unique.size, flat.size, dtype=np.int64)
+    np.minimum.at(first_index, inverse, foreground)
+    ranking = np.empty(unique.size, dtype=np.int32)
+    ranking[np.argsort(first_index)] = np.arange(1, unique.size + 1, dtype=np.int32)
+    renumbered = ranking[inverse]
+
+    ordered = np.zeros(flat.size, dtype=np.int32)
+    ordered[foreground] = renumbered
+    grouped = np.argsort(renumbered, kind="stable")
+    boundaries = np.searchsorted(renumbered[grouped], np.arange(1, unique.size + 2))
+    width = binary.shape[1]
+    components = [
+        np.stack(
+            (foreground[grouped[start:end]] // width, foreground[grouped[start:end]] % width),
+            axis=1,
+        ).astype(np.int32)
+        for start, end in zip(boundaries[:-1], boundaries[1:], strict=True)
+    ]
+    return ordered.reshape(binary.shape), components
 
 
 def drivable_corridor_from_semantics(
