@@ -193,8 +193,13 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     if not args.telemetry_log.is_file():
         raise FileNotFoundError(
             f"telemetry log is missing: {args.telemetry_log}\n"
-            "Start it in another shell immediately before this benchmark:\n"
-            f"  sudo tegrastats --interval 1000 --logfile {args.telemetry_log} &"
+            "Start the collector immediately before this benchmark. Authenticate first:\n"
+            "backgrounding sudo straight away leaves the job Stopped on the password\n"
+            "prompt, which writes no log at all.\n"
+            "  sudo -v\n"
+            f"  sudo tegrastats --interval 1000 --logfile {args.telemetry_log} "
+            "> /dev/null 2>&1 &\n"
+            f"  sleep 3 && wc -l {args.telemetry_log}"
         )
     images = _images(args.image_root)
     runner = TensorRTTorchRunner(args.engine)
