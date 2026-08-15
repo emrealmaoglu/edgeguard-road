@@ -43,7 +43,7 @@ motora hiç dokunulmadan, çıktılar birebir aynı.
 | # | iş | rubrik puanı | durum |
 |---|---|---|---|
 | C1 | PRISMA akış şeması (Şekil 1.1) | 5 | 🔵 |
-| C2 | ~50 kaynağın doğrulanması + ISO 690 listesi | 5 | 🔵 ben yapacağım |
+| C2 | ~50 kaynağın doğrulanması + ISO 690 listesi | 5 | 🔵 14 doğrulandı, bekleyen yok |
 | C3 | Konu dışı 34 kaydın elenmesi | — | 🔵 |
 | C4 | Standartlara atıf (ISO/IEC 25010, IEEE 829, ISO 690) | 5 | ⚪ |
 | C5 | Girişimcilik/yenilikçilik bölümü | 4 | ⚪ |
@@ -58,7 +58,7 @@ motora hiç dokunulmadan, çıktılar birebir aynı.
 | D1 | FP16 dağıtım sadakati (Jetson'da mIoU) | `numerical_equivalence_pending` kapanır | ⚪ script hazır |
 | D2 | 5 modelin ACDC ölçümü (şu an sadece PIDNet-S) | koşul × mimari etkileşimi | ⚪ ~40 dk |
 | D3 | Zamansal kalıcılık (riskin 7. özelliği) | demo video ile ölçülebilir | ⚪ |
-| D4 | Sürülebilir alan sayısal metriği | `drivable_metrics` çağrısız duruyor | ⚪ |
+| D4 | Sürülebilir alan sayısal metriği | Cityscapes val, 200 kare × 5 mimari | ✅ |
 | D5 | Kendi modellerimizin ACDC/RoadAnomaly ölçümü | referansla karşılaştırma | ⚪ |
 | D6 | Veri seti dağılım figürleri | rubrik: FAIR | ⚪ |
 

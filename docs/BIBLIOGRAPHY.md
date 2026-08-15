@@ -67,8 +67,18 @@ https://openaccess.thecvf.com/content_cvpr_2016/html/Cordts_The_Cityscapes_Datas
 ✔ doğrulandı · 50 şehir, 5000 ince anotasyonlu görüntü, 1024×2048, **19 sınıf** — bu
 tezdeki bütün ontolojinin temeli
 
-**[8]** *(IDD — doğrulanacak)* India Driving Dataset. Kendi çok-domainli eğitimimizde
-Cityscapes ile birlikte kullanıldı.
+**[8]** VARMA, Girish, SUBRAMANIAN, Anbumani, NAMBOODIRI, Anoop, CHANDRAKER, Manmohan ve
+JAWAHAR, C. V. *IDD: A Dataset for Exploring Problems of Autonomous Navigation in
+Unconstrained Environments.* IEEE Winter Conference on Applications of Computer Vision
+(WACV), 2019. arXiv:1811.10200. https://arxiv.org/abs/1811.10200
+✔ doğrulandı · 182 sürüş dizisinden 10.004 görüntü, 34 sınıf, **dört düzeyli etiket
+hiyerarşisi**
+
+> **Tezdeki rolü:** IDD'nin varlık nedeni, Cityscapes'in dayandığı varsayımların —
+> şeritli yol, az sayıda iyi tanımlı nesne sınıfı, trafik kurallarına uyum —
+> yapılandırılmamış yollarda geçerli olmamasıdır. Bizim çok-domainli eğitim kararımızın
+> gerekçesi tam olarak budur; makale ayrıca "geleneksel yol dışındaki sürülebilir alan"
+> gibi yeni sınıflar tanımlıyor, ki bu da sürülebilir alan ölçümümüzle doğrudan ilgili.
 
 ## C · Belirsizlik, kalibrasyon ve açık küme
 
@@ -99,11 +109,45 @@ https://arxiv.org/abs/2104.14812
 
 ## D · Uç cihaz dağıtımı
 
-**[12]** *(NVIDIA Jetson Orin Nano Super — resmî ürün/teknik dokümanı)*
+**[12]** SHESHADRI, Suhas Hariharapura, KARUMBUNATHAN, Leela Subramaniam ve FRANKLIN,
+Dustin. *NVIDIA Jetson Orin Nano Developer Kit Gets a "Super" Boost.* NVIDIA Technical
+Blog, 17 Aralık 2024.
+https://developer.nvidia.com/blog/nvidia-jetson-orin-nano-developer-kit-gets-a-super-boost/
+✔ doğrulandı · 67 seyrek / 33 yoğun INT8 TOPS, 8 GB 128-bit LPDDR5, 102 GB/s bant
+genişliği, 1024 CUDA + 32 Tensor çekirdeği @ 1020 MHz, 6 çekirdekli Arm Cortex-A78AE @
+1,7 GHz, **7 W | 15 W | 25 W** güç modları
 
-**[13]** *(NVIDIA TensorRT dokümanı)*
+> **Neden bu kaynak:** ölçümlerimizin tamamı `--power-profile 25W` ile alındı ve 25 W
+> modu tam olarak bu duyuruyla gelen "super" moddur (GPU 635 → 1020 MHz, bellek 68 → 102
+> GB/s). Cihazın hangi yapılandırmada ölçüldüğü, sayıların kendisi kadar tezin parçasıdır.
 
-**[14]** *(Jetson termal/güç davranışı — MDPI, doğrulanacak)*
+**[13]** NVIDIA. *Accuracy Considerations.* NVIDIA TensorRT Documentation, Inference
+Library. https://docs.nvidia.com/deeplearning/tensorrt/latest/inference-library/accuracy-considerations.html
+✔ doğrulandı · FP16'nın 5 bit üs + 10 bit mantis yapısının hız/bellek kazancı sağladığını
+ama "azaltılmış hassasiyet gösterebileceğini" ve indirgenmiş hassasiyetin "anlamlı
+doğruluk kaybına yol açabileceğini" belirtiyor
+
+> **Dikkat — bu kaynağa yükleyebileceğimizden fazlasını yüklemeyelim:** doküman FP16
+> sonrası bağımsız doğrulamayı *zorunlu kılan* bir ifade içermiyor; doğruluk kaybının
+> mümkün olduğunu söylüyor. Bizim `numerical_equivalence_pending: true` bayrağımızın
+> gerekçesi budur: motor FP16'da kuruldu, dağıtım doğruluğu henüz cihazda ölçülmedi, ve
+> "olabilir"i "olmadı"ya çevirecek tek şey ölçümün kendisidir (bkz. yapılacaklar D1).
+
+**[14]** KRIŠLAURKS, Rihards, TISCENKO, Deniss, MEDVEDEVS, Vladislavs, ORMANIS, Juris ve
+JUDVAITIS, Janis. *Ambient Temperature Impact on the Thermal Behavior and Power
+Consumption of the NVIDIA Jetson AGX Orin in an Outdoor Enclosure.* Electronics, 2026,
+cilt 15, sayı 11, makale 2467. https://doi.org/10.3390/electronics15112467
+✔ doğrulandı · −20 °C ile +40 °C arası ortam sıcaklığında AGX Orin karakterizasyonu;
++40 °C'de stres testi **GPU +95,6 °C / CPU +99,0 °C**'de termal kısıtlamayı tetikliyor;
+YOLOv8s çıkarım yükü 19,1 W ortalama güçte 108,8 FPS
+
+> **Tezdeki rolü — iki kayıt, bir uyarı.** Birincisi: kısıtlamanın gerçekleştiği eşik
+> *sıcaklık* değerlerinden okunuyor, bir uyarı bayrağından değil. Bizim
+> `benchmark.py`'deki `throttling_warning_detected` kontrolü stok `tegrastats`
+> çıktısında hiç geçmeyen kelimeleri aradığı için pratikte boş bir kontroldür; termal
+> kanıtı biz de sıcaklık serisinden okuyoruz. İkincisi: ölçülen cihaz **AGX Orin**'dir,
+> bizimki **Orin Nano Super** — farklı güç zarfı, farklı soğutma. Sayılar bizim cihazımıza
+> aktarılamaz; aktarılabilen şey yöntemdir.
 
 ## E · Araçlar ve yazılım (akademik kaynak değil, araç atfı)
 
@@ -120,8 +164,8 @@ Materyal ve yöntem bölümünde ayrı listelenir:
 
 | durum | sayı |
 |---|---|
-| ✔ tam künyesiyle doğrulandı | **10** |
-| ⏳ doğrulanacak | 4 |
+| ✔ tam künyesiyle doğrulandı | **14** |
+| ⏳ doğrulanacak | 0 |
 | hedef | ~45–55 |
 
 **Kural:** bu listeye yalnızca açılıp doğrulanmış kaynak girer. `researchs/` klasöründeki
