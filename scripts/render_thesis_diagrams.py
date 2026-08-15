@@ -485,6 +485,59 @@ def diagram_frame_budget(output: Path, written: list[str]) -> None:
     save(figure, output, "D4_frame_budget_flow", written)
 
 
+def diagram_prisma(output: Path, written: list[str]) -> None:
+    """The literature screening, drawn as the review flow it actually was."""
+    figure, axis = blank(7.5, 6.2)
+    axis.text(
+        0.5,
+        0.965,
+        "Literatür tarama akışı (PRISMA)",
+        ha="center",
+        fontsize=11,
+        color=INK,
+        fontweight="bold",
+    )
+
+    stages = [
+        (0.80, "Tanımlama", "36 yapılandırılmış tarama dokümanı\n**912 benzersiz kayıt**", BLUE),
+        (0.60, "Tarama", "konu dışı alanlar elendi  −34\nkod/forum/ürün ayrıldı  −661", EDGE),
+        (0.40, "Uygunluk", "**251 akademik yayın**\nbaşlık ve özet düzeyinde tarandı", EDGE),
+        (0.20, "Dahil edilen", "**~50 kaynak**\nher biri açılıp doğrulandı", GREEN),
+    ]
+    for y, title, body, colour in stages:
+        box(
+            axis,
+            0.20,
+            y,
+            0.60,
+            0.145,
+            f"{title}\n{body.replace('**', '')}",
+            face="#ffffff",
+            edge=colour,
+            fontsize=8.4,
+        )
+        if y > 0.20:
+            arrow(axis, (0.50, y), (0.50, y - 0.055), colour=colour)
+
+    for y, text in (
+        (0.665, "konu dışı: su, tarım, biyomedikal"),
+        (0.465, "kod deposu, forum, ürün sayfası"),
+        (0.265, "bölümlere göre konu ayrımı"),
+    ):
+        axis.text(0.83, y, text, ha="left", va="center", fontsize=7, color=EDGE, style="italic")
+
+    axis.text(
+        0.5,
+        0.075,
+        "Kod depoları ve resmî dokümanlar akademik kaynak sayılmaz;\n"
+        "materyal ve yöntem bölümünde araç/veri atfı olarak ayrı listelenir.",
+        ha="center",
+        fontsize=7.6,
+        color=EDGE,
+    )
+    save(figure, output, "D5_prisma_flow", written)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -500,6 +553,7 @@ def main() -> int:
     diagram_protocol(output, written)
     diagram_three_axes(output, written)
     diagram_frame_budget(output, written)
+    diagram_prisma(output, written)
     for name in written:
         print(f"  {name}.png / .pdf")
     print(f"\n{len(written)} şema -> {output}")
