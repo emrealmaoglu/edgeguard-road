@@ -153,20 +153,58 @@ Jetson SSH çalıştırmaz; yukarıdaki sudo satırlarını sahip kendi elleriyl
 
 **Kabul kriteri (25W):** medyan ≤ 50 ms · p95 ≤ 66,7 ms · ≥ 20 FPS · telemetri tam.
 
-## 4 · Streamlit demosu
+## 4 · Sunum paneli — Jetson üzerinde
 
-`app.py:65`'teki "Unaccepted local developer mode" kutusu kabul edilmiş kayıt yokken
-görünür ve `EDGEGUARD_RUN_ROOT` altındaki modelleri okur. `discover_demo_models` hem
-`*.onnx` hem `*.pth` + kardeş `resolved.py` çiftini tanır; screening çıktısında ikisi de
-vardır.
+Kaydedilecek panel `presentation_app.py`'dir ve **anlattığı cihazın üzerinde** çalışır.
+Canlı çıkarım yapmaz: gösterdiği her sayı diskteki bir ölçüm kaydından okunur. Sebep
+pratik — kayıt sırasında bir modelin yüklenmesi ya da bir kareye takılması, anlatılan
+şeyle ilgisi olmayan bir risktir.
+
+*(Not: `app.py` ayrı bir geliştirici arayüzüdür ve sunumda kullanılmaz.)*
+
+### 4a · Paketi kur (Mac'te)
 
 ```bash
-EDGEGUARD_RUN_ROOT=<runs klasoru> streamlit run app.py
+.venv/bin/python scripts/build_jetson_bundle.py \
+  --results .local/presentation/results \
+  --figures .local/presentation/figures \
+  --video .local/presentation/video \
+  --output .local/presentation/bundle \
+  --archive .local/presentation/eg_presentation_bundle.tgz \
+  --require accuracy --require jetson --require drivable --require open_set
 ```
 
-Ekran kaydı sırası: **Model comparison** → **Image inference** → **Calibration & failures**
-→ **Jetson benchmark**. Sol altta "Artifact mode: UNACCEPTED DEVELOPER" yazması normaldir
-ve kayıtta görünmesinde sakınca yoktur; dürüstlüğün kanıtıdır.
+`--require`, sunumun onsuz verilemeyeceği sonuçlar içindir. Sebebi: panel eksik bir gruba
+hata vermez, sadece o tabloyu göstermez — yani unutulan bir ölçüm sessizce kaybolur.
+`--require` o sessizliği hataya çevirir. Paketin içindeki `bundle_manifest.json` neyin
+bulunduğunu ve neyin bulunamadığını ayrı ayrı yazar; kopyalamadan önce ona bakın.
+
+### 4b · Cihaza kopyala
+
+```bash
+scp .local/presentation/eg_presentation_bundle.tgz emre@100.102.153.67:~/
+```
+
+Jetson'da:
+
+```bash
+tar xzf ~/eg_presentation_bundle.tgz -C ~/ && ls ~/bundle
+```
+
+### 4c · Paneli çalıştır
+
+```bash
+EDGEGUARD_RESULTS=~/bundle streamlit run ~/edgeguard-road/presentation_app.py
+```
+
+Kenar çubuğundaki anlık sıcaklık/güç/RAM cihazın **o andaki** durumudur; asıl telemetri
+sayfa 6'daki, sonuçlar üretilirken kaydedilmiş zaman serileridir. İkisi ayrı şeydir ve
+panel bunu kendi üstünde yazar.
+
+Kayıt sırası, sayfa numaralarıyla aynı: **1 Problem ve yöntem** → **2 Model
+karşılaştırması** → **3 Açık küme** → **4 Belirsizlik ve kalibrasyon** → **5 Bağlamsal
+risk** → **6 Uç cihaz telemetrisi** → **7 Sınırlar**. Toplam 2–3 dakika; kalan 2–3 dakika
+konuşma.
 
 ## Sunumda söylenmeyecekler
 

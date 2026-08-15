@@ -1,101 +1,133 @@
-"""Tests for the device-neutral Jetson deployment handoff bundle."""
+"""Exercise the bundle builder against a real results tree.
+
+The bundle is how measurements reach the device, and its failure mode is silence: the
+panel renders a smaller page rather than complaining, so a result left behind disappears
+without anyone noticing until the recording. These tests pin the two things that prevent
+that -- the manifest names what was absent, and `--require` turns a named absence into an
+error.
+"""
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 
-import numpy as np
 import pytest
 
-from edgeguard.deployment.jetson_bundle import (
-    build_jetson_deployment_bundle,
-    verify_jetson_deployment_bundle,
-)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from scripts.build_jetson_bundle import main  # noqa: E402
 
 
-def _onnx(path: Path) -> None:
-    onnx = pytest.importorskip("onnx")
-    helper = onnx.helper
-    tensor = onnx.TensorProto
-    weights = onnx.numpy_helper.from_array(
-        np.zeros((19, 3, 1, 1), dtype=np.float32), name="weights"
-    )
-    graph = helper.make_graph(
-        [
-            helper.make_node(
-                "Conv",
-                ["normalized_rgb", "weights"],
-                ["native_logits"],
-                strides=[8, 8],
-            )
-        ],
-        "jetson-fixture",
-        [helper.make_tensor_value_info("normalized_rgb", tensor.FLOAT, [1, 3, 512, 1024])],
-        [helper.make_tensor_value_info("native_logits", tensor.FLOAT, [1, 19, 64, 128])],
-        [weights],
-    )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
-    model.ir_version = min(model.ir_version, 10)
-    onnx.save(model, path)
+def _results(root: Path) -> Path:
+    for group, name in (("accuracy", "pidnet_s.json"), ("drivable", "pidnet_s.json")):
+        target = root / group / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('{"model": "pidnet_s"}', encoding="utf-8")
+    (root / "shift_response.json").write_text('{"ratio": 1.0}', encoding="utf-8")
+    return root
 
 
-def test_jetson_bundle_contains_golden_contract_without_engine(tmp_path: Path) -> None:
-    pytest.importorskip("onnxruntime")
-    model = tmp_path / "model.onnx"
-    _onnx(model)
-    ontology = tmp_path / "ontology.yaml"
-    ontology.write_text("classes: 19\n", encoding="utf-8")
-    package = tmp_path / "jetson-deployment.zip"
-    input_array = np.zeros((1, 3, 512, 1024), dtype=np.float32)
-    output_array = np.zeros((1, 19, 64, 128), dtype=np.float32)
-
-    created = build_jetson_deployment_bundle(
-        package,
-        onnx_path=model,
-        ontology_path=ontology,
-        preprocessing={
-            "model_input": {
-                "name": "normalized_rgb",
-                "shape": [1, 3, 512, 1024],
-                "dtype": "float32",
-            },
-            "channel_order": "RGB",
-        },
-        model_family="segformer_b0",
-        source_commit="1" * 40,
-        config_sha256="2" * 64,
-        checkpoint_sha256="3" * 64,
-        golden_input=input_array,
-        golden_output=output_array,
-    )
-    verified = verify_jetson_deployment_bundle(package)
-
-    assert created["tensorrt_engine_included"] is False
-    assert verified["status"] == "verified"
-    assert verified["jetson_benchmark_status"] == "not_run"
+def _run(argv: list[str]) -> None:
+    original = sys.argv
+    sys.argv = ["build_jetson_bundle.py", *argv]
+    try:
+        main()
+    finally:
+        sys.argv = original
 
 
-def test_jetson_bundle_rejects_dynamic_or_wrong_input_contract(tmp_path: Path) -> None:
-    model = tmp_path / "model.onnx"
-    model.write_bytes(b"not-reached")
-    ontology = tmp_path / "ontology.yaml"
-    ontology.write_text("classes: 19\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="static 1x3x512x1024"):
-        build_jetson_deployment_bundle(
-            tmp_path / "bundle.zip",
-            onnx_path=model,
-            ontology_path=ontology,
-            preprocessing={
-                "model_input": {
-                    "name": "normalized_rgb",
-                    "shape": [1, 3, -1, -1],
-                    "dtype": "float32",
-                }
-            },
-            model_family="segformer_b0",
-            source_commit="1" * 40,
-            config_sha256="2" * 64,
-            checkpoint_sha256="3" * 64,
-            golden_input=np.zeros((1, 3, 512, 1024), dtype=np.float32),
-            golden_output=np.zeros((1, 19, 64, 128), dtype=np.float32),
+def test_the_bundle_carries_the_records_and_names_what_it_did_not_find(tmp_path: Path) -> None:
+    results = _results(tmp_path / "results")
+    output = tmp_path / "bundle"
+
+    _run(["--results", str(results), "--output", str(output)])
+
+    manifest = json.loads((output / "bundle_manifest.json").read_text(encoding="utf-8"))
+    assert (output / "drivable" / "pidnet_s.json").is_file()
+    assert (output / "shift_response.json").is_file()
+    assert "drivable" in manifest["present"]
+    # The groups that were never produced have to be visible somewhere that gets read.
+    assert "jetson" in manifest["absent"]
+    assert manifest["required_and_missing"] == []
+
+
+def test_a_required_result_that_is_missing_stops_the_build(tmp_path: Path) -> None:
+    results = _results(tmp_path / "results")
+
+    with pytest.raises(ValueError, match="jetson"):
+        _run(
+            [
+                "--results",
+                str(results),
+                "--output",
+                str(tmp_path / "bundle"),
+                "--require",
+                "jetson",
+            ]
         )
+
+
+def test_a_required_result_that_is_present_does_not(tmp_path: Path) -> None:
+    results = _results(tmp_path / "results")
+
+    _run(
+        [
+            "--results",
+            str(results),
+            "--output",
+            str(tmp_path / "bundle"),
+            "--require",
+            "drivable",
+            "--require",
+            "accuracy",
+        ]
+    )
+
+
+def test_appledouble_sidecars_are_left_behind(tmp_path: Path) -> None:
+    """The panel already learned this once: `._name.json` matches the records' glob but
+    holds resource-fork bytes, and macOS creates them whenever the tree crosses an archive.
+    """
+    results = _results(tmp_path / "results")
+    (results / "drivable" / "._pidnet_s.json").write_bytes(b"\x00\x05\x16\x07")
+    (results / "drivable" / ".DS_Store").write_bytes(b"\x00\x00\x00\x01")
+    output = tmp_path / "bundle"
+
+    _run(["--results", str(results), "--output", str(output)])
+
+    assert [path.name for path in sorted((output / "drivable").iterdir())] == ["pidnet_s.json"]
+
+
+def test_rebuilding_does_not_keep_a_result_that_was_removed(tmp_path: Path) -> None:
+    """A stale record surviving a rebuild is the same silent failure from the other side:
+    the panel would show a number no longer backed by the results tree.
+    """
+    results = _results(tmp_path / "results")
+    output = tmp_path / "bundle"
+    _run(["--results", str(results), "--output", str(output)])
+    assert (output / "drivable" / "pidnet_s.json").is_file()
+
+    (results / "drivable" / "pidnet_s.json").unlink()
+    _run(["--results", str(results), "--output", str(output)])
+
+    assert not (output / "drivable" / "pidnet_s.json").exists()
+
+
+def test_the_archive_is_written_when_asked(tmp_path: Path) -> None:
+    results = _results(tmp_path / "results")
+    archive = tmp_path / "eg_presentation_bundle.tgz"
+
+    _run(
+        [
+            "--results",
+            str(results),
+            "--output",
+            str(tmp_path / "bundle"),
+            "--archive",
+            str(archive),
+        ]
+    )
+
+    assert archive.is_file() and archive.stat().st_size > 0
