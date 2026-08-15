@@ -85,6 +85,63 @@ def test_phase_notebooks_execute_their_code_cells_in_local_mode(
     assert all(row["status"] == "passed" for row in result["cells"])
 
 
+def test_presentation_notebook_is_pinned_and_executes_its_cells_in_local_mode(
+    tmp_path: Path,
+) -> None:
+    """The presentation notebook renders artefacts from finished screening checkpoints.
+
+    It must stay pinned to the same commit as the master notebook for the same reason the
+    phase notebooks do -- it reads a campaign state store written by that code -- and it
+    must drive `screening` and nothing later, since the whole point is that the rest of
+    the chain is not a prerequisite for any presentation output.
+    """
+    path = Path("notebooks/EdgeGuard_10_Sunum_Ciktilari.ipynb")
+    master = json.loads(Path("notebooks/EdgeGuard_Master_Colab.ipynb").read_text())
+    master_source = "".join("".join(cell["source"]) for cell in master["cells"])
+    pin = next(
+        line for line in master_source.splitlines() if line.startswith("EXPECTED_PROJECT_COMMIT")
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    source = "".join("".join(cell["source"]) for cell in payload["cells"])
+    assert pin in source
+    driven = {target for target, _ in PHASE_SECTIONS if f'eg_phase("{target}")' in source}
+    assert driven == {"screening"}
+    assert "build_presentation_outputs.py" in source
+    assert all(
+        cell.get("outputs") == [] and cell.get("execution_count") is None
+        for cell in payload["cells"]
+        if cell["cell_type"] == "code"
+    )
+
+    result = execute_notebook_contract(path, tmp_path / "drive", tmp_path / "content")
+    assert result["status"] == "passed"
+    assert all(row["status"] == "passed" for row in result["cells"])
+
+
+def test_presentation_bundle_keeps_images_unlike_the_text_only_phase_bundle() -> None:
+    """`eg_bundle` filters to text suffixes so weights never bloat a log archive.
+
+    The presentation outputs are almost entirely PNG/PDF figures, so reusing that bundler
+    would hand back an archive with every figure stripped out. The presentation notebook
+    therefore carries its own archiver, which must not inherit the suffix filter and must
+    keep the pre-1980 mtime clamp that the log bundler needed.
+    """
+    payload = json.loads(Path("notebooks/EdgeGuard_10_Sunum_Ciktilari.ipynb").read_text())
+    source = "".join(
+        "".join(cell["source"]) for cell in payload["cells"] if cell["cell_type"] == "code"
+    )
+    header = "def eg_sunum_bundle():"
+    start = source.index(header)
+    # Search past the definition line itself, which also contains the call spelling.
+    end = source.index("\neg_sunum_bundle()", start + len(header))
+    bundle_source = source[start:end]
+    assert "shutil.make_archive" in bundle_source
+    assert "keep_suffixes" not in bundle_source
+    assert "os.utime(" in bundle_source
+    assert "1980" in bundle_source
+
+
 def test_eg_bundle_source_clamps_pre_1980_mtimes_before_archiving() -> None:
     """`eg_bundle` never raises (`try`/`except BaseException`), which is exactly why this
     defect was invisible until now: on 2026-08-14 a real failed HPO phase printed "'hpo-FAILED'

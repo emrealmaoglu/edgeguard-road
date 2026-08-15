@@ -15,6 +15,7 @@ from typing import Any
 ROOT = Path(__file__).parents[2]
 NOTEBOOK = ROOT / "notebooks/EdgeGuard_Master_Colab.ipynb"
 PHASE_NOTEBOOK_ROOT = ROOT / "notebooks/phases"
+PRESENTATION_NOTEBOOK = ROOT / "notebooks/EdgeGuard_10_Sunum_Ciktilari.ipynb"
 
 
 def _source(text: str) -> list[str]:
@@ -611,6 +612,170 @@ def build_master_notebook(*, branch: str, project_commit: str) -> Path:
     return _write_notebook(NOTEBOOK, cells)
 
 
+def _presentation_cells() -> list[dict[str, Any]]:
+    """Cells that turn finished screening checkpoints into presentation artefacts.
+
+    None of this touches the campaign chain past `screening`, and none of it goes near the
+    accepted-release gate: `predict.py`, `evaluate.py`, `audit_dataset.py` and
+    `analyze_training_results.py` are all ungated. The heavy lifting lives in
+    `scripts/build_presentation_outputs.py` so it can be unit-tested off Colab.
+    """
+    return [
+        _cell(
+            "markdown",
+            """
+### 1 · Screening durumunu geri yükle
+
+Bu hücre taze bir çalışma zamanında Drive'daki doğrulanmış screening kaydını geri yükler:
+checkpoint'ler, `resolved.py` dosyaları, dondurulmuş veri manifestleri ve rapor klasörü.
+Screening zaten tamamlanmış olduğu için yeniden eğitim yapılmaz.
+""",
+        ),
+        _cell("code", '\neg_phase("screening")\n'),
+        _cell(
+            "markdown",
+            """
+### 2 · Sunum çıktılarını üret
+
+Her adım tek tek çalışır ve tek tek kaydedilir. Bir adım patlarsa diğerleri yine de üretilir
+— kampanyanın baştan beri düşürdüğü şey buydu. Üretilen kayıt `presentation_outputs.json`
+hangi adımın gerçekten koştuğunu, hangisinin atlandığını ve nedenini yazar; koşmayan hiçbir
+şey ölçülmüş gibi görünmez.
+
+Üretilenler: segmentasyon/güven/entropi haritaları, sürülebilir koridor ve operasyonel
+dikkat görselleri, sıcaklık ölçekleme + ECE/reliability kayıtları, alan-başına belirsizlik,
+veri seti figürleri, eğitim eğrileri ve mevcut screening tabloları.
+""",
+        ),
+        _cell(
+            "code",
+            """
+PRESENTATION_ROOT = CONTENT_ROOT / "edgeguard-sunum"
+
+if LOCAL_TEST_MODE:
+    print("LOCAL_TEST_MODE: sunum çıktıları atlandı (gerçek checkpoint yok).")
+else:
+    run_visible(
+        [
+            "/usr/bin/python3",
+            str(PROJECT_ROOT / "scripts/build_presentation_outputs.py"),
+            "--project-root",
+            str(PROJECT_ROOT),
+            "--work-root",
+            str(PHASE_WORK_ROOT),
+            "--evidence-root",
+            str(CONTENT_ROOT / "edgeguard-evidence"),
+            "--output-root",
+            str(PRESENTATION_ROOT),
+            "--device",
+            "cuda",
+            "--frames-per-domain",
+            "3",
+        ],
+        cwd=PROJECT_ROOT,
+        env=MASTER_ENVIRONMENT,
+    )
+""",
+        ),
+        _cell(
+            "markdown",
+            """
+### 3 · Paketle ve indir
+
+`eg_bundle` bilerek yalnızca metin dosyalarını alır (ağırlıklar 335 MiB'lik indirilemeyen
+bir arşive yol açmıştı). Sunum çıktıları ise **görsellerden ibaret**, dolayısıyla burada
+ayrı bir paketleyici var: PNG/PDF dahil her şeyi alır ve boyutu açıkça yazar.
+""",
+        ),
+        _cell(
+            "code",
+            """
+def eg_sunum_bundle():
+    \"\"\"Zip the presentation outputs, images included, and hand them to the browser.
+
+    Never raises: a failed archive must not discard artefacts that took GPU time to make.
+    \"\"\"
+    if LOCAL_TEST_MODE:
+        print("LOCAL_TEST_MODE: sunum paketi atlandı.")
+        return None
+    try:
+        if not PRESENTATION_ROOT.is_dir():
+            print("Sunum çıktısı bulunamadı:", PRESENTATION_ROOT)
+            return None
+        # Same DOS-epoch clamp as eg_bundle: files restored from Drive can land at 1970,
+        # which ZIP's date field cannot represent, and the archive then never gets built.
+        dos_epoch = datetime(1980, 1, 1).timestamp()
+        for path in PRESENTATION_ROOT.rglob("*"):
+            if path.is_file() and path.stat().st_mtime < dos_epoch:
+                os.utime(path, (dos_epoch, dos_epoch))
+        archive = shutil.make_archive(
+            str(CONTENT_ROOT / "EdgeGuard_Sunum_Ciktilari"), "zip", PRESENTATION_ROOT
+        )
+        size_mib = Path(archive).stat().st_size / 1024 ** 2
+        print(f"Sunum paketi: {size_mib:.1f} MiB -> {archive}")
+        if size_mib > 500:
+            print("UYARI: paket çok büyük, tarayıcı indirmesi yarıda kesilebilir.")
+        from google.colab import files
+
+        files.download(archive)
+        return archive
+    except BaseException as error:
+        print("Sunum paketi oluşturulamadı (çıktılar diskte duruyor):", repr(error))
+        return None
+
+
+eg_sunum_bundle()
+""",
+        ),
+        _cell(
+            "code",
+            """
+if not LOCAL_TEST_MODE and (PRESENTATION_ROOT / "presentation_outputs.json").is_file():
+    record = json.loads((PRESENTATION_ROOT / "presentation_outputs.json").read_text("utf-8"))
+    print("Adım özeti:", record["step_counts"])
+    print("Bulunan modeller:", [row["model"] for row in record["screening_models"]])
+    failed = [row for row in record["steps"] if row["status"] == "failed"]
+    skipped = [row for row in record["steps"] if row["status"] == "skipped"]
+    for row in failed + skipped:
+        print(f"  {row['status'].upper()}: {row['step']} — {row.get('reason', '')}")
+    if not failed and not skipped:
+        print("Her adım üretildi.")
+else:
+    print("Sunum kaydı yok; yukarıdaki hücreleri sırayla çalıştırın.")
+""",
+        ),
+    ]
+
+
+def build_presentation_notebook(*, branch: str, project_commit: str) -> Path:
+    """Write the notebook that turns finished screening runs into presentation artefacts."""
+    cells = _prelude_cells(branch=branch, project_commit=project_commit)
+    cells[0] = _cell(
+        "markdown",
+        """
+# EdgeGuard · 10 — Sunum ve tez çıktıları
+
+Bu notebook **yeni eğitim yapmaz**. Bitmiş `screening` koşusunun checkpoint'lerinden
+sunum ve tez için gereken bütün somut çıktıları üretir:
+
+- segmentasyon örtüşümü, güven ve entropi haritaları,
+- sürülebilir koridor, yol maskesi, güvenilmez-piksel maskesi ve operasyonel dikkat görseli,
+- sıcaklık ölçekleme + ECE / reliability diyagramı kayıtları,
+- alan başına (Cityscapes'e karşı IDD20K) kare-başına belirsizlik özetleri,
+- veri seti dağılım figürleri ve eğitim eğrileri,
+- hâlihazırda ölçülmüş screening karşılaştırma tabloları.
+
+Colab'da **L4 GPU** + **Yüksek RAM** seçin, sonra **Çalışma zamanı → Tümünü çalıştır**.
+Sonunda `EdgeGuard_Sunum_Ciktilari.zip` iner.
+
+Kampanyanın `hpo`/`final`/`accept`/`package` zinciri buraya dahil değil: sunumun hiçbir
+çıktısı o zincire bağlı değil ve bu notebook kabul kapısına hiç dokunmuyor.
+""",
+    )
+    cells.extend(_presentation_cells())
+    return _write_notebook(PRESENTATION_NOTEBOOK, cells)
+
+
 def build_phase_notebooks(*, branch: str, project_commit: str) -> list[Path]:
     """Write one notebook per campaign phase, each independently runnable.
 
@@ -672,6 +837,7 @@ def main() -> int:
     print(build_master_notebook(branch=args.branch, project_commit=commit))
     for path in build_phase_notebooks(branch=args.branch, project_commit=commit):
         print(path)
+    print(build_presentation_notebook(branch=args.branch, project_commit=commit))
     return 0
 
 
