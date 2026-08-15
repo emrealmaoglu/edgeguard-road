@@ -186,6 +186,16 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     manifest = json.loads(args.engine_manifest.read_text(encoding="utf-8"))
     if manifest.get("engine_sha256") != sha256_file(args.engine):
         raise ValueError("TensorRT engine does not match its build manifest")
+    # The telemetry log used to be opened only after the measurement loop, so forgetting
+    # to start `tegrastats` cost a full ten-minute soak before the run failed on a missing
+    # file -- and the operator has to start it by hand, under sudo, in a separate shell.
+    # Fail before the GPU does any work instead, and say what to run.
+    if not args.telemetry_log.is_file():
+        raise FileNotFoundError(
+            f"telemetry log is missing: {args.telemetry_log}\n"
+            "Start it in another shell immediately before this benchmark:\n"
+            f"  sudo tegrastats --interval 1000 --logfile {args.telemetry_log} &"
+        )
     images = _images(args.image_root)
     runner = TensorRTTorchRunner(args.engine)
     input_height, input_width = runner.input_shape[2:]

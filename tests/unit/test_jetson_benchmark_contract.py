@@ -26,3 +26,40 @@ def test_realtime_gate_requires_latency_fps_and_complete_telemetry() -> None:
     assert passing["passed"] is True
     failing = realtime_acceptance(median_ms=40.0, p95_ms=70.0, fps=22.0, telemetry=telemetry)
     assert failing["passed"] is False
+
+
+def test_missing_telemetry_log_fails_before_the_ten_minute_soak(tmp_path: Path) -> None:
+    """The operator starts `tegrastats` by hand, under sudo, in a separate shell, so
+    forgetting it is easy. The log used to be opened only after the measurement loop had
+    finished, which on a real Jetson meant burning a full 600-second soak and then dying
+    on a missing file. Validate it up front, and say the exact command to run.
+    """
+    import argparse
+
+    import pytest
+
+    from scripts.jetson.benchmark import benchmark
+
+    engine = tmp_path / "model.plan"
+    engine.write_bytes(b"engine")
+    manifest = tmp_path / "engine.json"
+    manifest.write_text('{"engine_sha256": "wrong"}', encoding="utf-8")
+
+    args = argparse.Namespace(
+        engine=engine,
+        engine_manifest=manifest,
+        image_root=tmp_path,
+        telemetry_log=tmp_path / "absent.log",
+        warmup=200,
+        minimum_iterations=5000,
+        minimum_duration_seconds=600.0,
+    )
+
+    # The engine/manifest mismatch guard fires first, so point the manifest at the real
+    # digest and confirm the telemetry check is reached before any engine is loaded --
+    # `TensorRTTorchRunner` would need real TensorRT hardware, which this host lacks.
+    from edgeguard.serialization import sha256_file
+
+    manifest.write_text(f'{{"engine_sha256": "{sha256_file(engine)}"}}', encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="tegrastats"):
+        benchmark(args)
