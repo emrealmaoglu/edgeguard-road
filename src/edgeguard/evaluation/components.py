@@ -36,6 +36,91 @@ def road_mask_from_semantics(
     return np.isin(semantic_mask, np.asarray(road_class_ids, dtype=np.int64))
 
 
+def _run_starts(counts: np.ndarray) -> np.ndarray:
+    """Offset of each element within its own run, for `np.repeat`-expanded arrays."""
+    total = int(counts.sum())
+    ends = np.cumsum(counts)
+    return np.arange(total) - np.repeat(ends - counts, counts)
+
+
+def label_components(mask: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Label four-connected components, numbered by raster order of first pixel.
+
+    Deliberately a different algorithm from `rescue.perception._label_components`, which
+    resolves the same problem by propagating labels through whole-array maxima. That one
+    takes as many passes as a component is wide, which is cheap on the stride-8 masks the
+    deployment path derives perception from (64x128, where it is the measured-faster
+    option on the Jetson) and ruinous at evaluation resolution: a Cityscapes road spans
+    the image, and a single 2048x1024 frame costs 76 s.
+
+    This runs over horizontal runs instead of pixels -- a few thousand of them in a road
+    mask rather than two million -- unioning runs that overlap in adjacent rows. The cost
+    follows the number of runs, not the width of a component, so it does not care about
+    resolution. Output is identical to the propagation labeller, which
+    `test_labellers_agree` pins across random masks.
+    """
+    if not mask.any():
+        return np.zeros(mask.shape, dtype=np.int32), []
+    height, width = mask.shape
+    padded = np.zeros((height, width + 2), dtype=np.int8)
+    padded[:, 1:-1] = mask
+    transitions = np.diff(padded, axis=1)
+    row, start = np.nonzero(transitions == 1)
+    end = np.nonzero(transitions == -1)[1]
+
+    # Runs arrive in raster order and never overlap within a row, so both key arrays are
+    # globally sorted and a search for a row's neighbours cannot stray outside its block.
+    stride = width + 2
+    end_keys = row * stride + end
+    start_keys = row * stride + start
+    above = (row - 1) * stride
+    first = np.searchsorted(end_keys, above + start, side="right")
+    last = np.searchsorted(start_keys, above + end, side="left")
+    overlaps = np.maximum(last - first, 0)
+    neighbour = np.repeat(first, overlaps) + _run_starts(overlaps)
+    current = np.repeat(np.arange(row.size), overlaps)
+
+    parent = np.arange(row.size)
+
+    def find(node: int) -> int:
+        root = node
+        while parent[root] != root:
+            root = parent[root]
+        while parent[node] != root:
+            parent[node], node = root, parent[node]
+        return root
+
+    for below, above_run in zip(current.tolist(), neighbour.tolist(), strict=True):
+        left, right = find(below), find(above_run)
+        if left != right:
+            parent[max(left, right)] = min(left, right)
+
+    roots = np.array([find(index) for index in range(row.size)], dtype=np.int64)
+    unique, inverse = np.unique(roots, return_inverse=True)
+    # Runs are in raster order, so a component's lowest run index is its first pixel.
+    first_run = np.full(unique.size, row.size, dtype=np.int64)
+    np.minimum.at(first_run, inverse, np.arange(row.size))
+    ranking = np.empty(unique.size, dtype=np.int32)
+    ranking[np.argsort(first_run)] = np.arange(1, unique.size + 1, dtype=np.int32)
+
+    lengths = end - start
+    pixels = np.repeat(row * width + start, lengths) + _run_starts(lengths)
+    flat = np.zeros(mask.size, dtype=np.int32)
+    flat[pixels] = np.repeat(ranking[inverse], lengths)
+
+    foreground = np.flatnonzero(flat)
+    grouped = np.argsort(flat[foreground], kind="stable")
+    boundaries = np.searchsorted(flat[foreground][grouped], np.arange(1, unique.size + 2))
+    components = [
+        np.stack(
+            (foreground[grouped[begin:finish]] // width, foreground[grouped[begin:finish]] % width),
+            axis=1,
+        ).astype(np.int32)
+        for begin, finish in zip(boundaries[:-1], boundaries[1:], strict=True)
+    ]
+    return flat.reshape(mask.shape), components
+
+
 def connected_components(
     anomaly_mask: npt.NDArray[np.bool_],
     scores: npt.NDArray[np.floating],
@@ -57,45 +142,23 @@ def connected_components(
         raise ValueError("road mask must be bool and match anomaly-mask geometry")
     else:
         road = road_mask
-    visited = np.zeros_like(anomaly_mask)
-    height, width = anomaly_mask.shape
+    # Every statistic below is order-invariant -- area, bbox extremes, centroid, mean and
+    # max score, road fraction -- so only which pixels share a component matters, not the
+    # order the search would have visited them in.
+    _, components = label_components(anomaly_mask)
     records: list[ComponentRecord] = []
-    for y in range(height):
-        for x in range(width):
-            if not anomaly_mask[y, x] or visited[y, x]:
-                continue
-            queue = [(y, x)]
-            visited[y, x] = True
-            pixels: list[tuple[int, int]] = []
-            while queue:
-                current_y, current_x = queue.pop()
-                pixels.append((current_y, current_x))
-                for next_y, next_x in (
-                    (current_y - 1, current_x),
-                    (current_y + 1, current_x),
-                    (current_y, current_x - 1),
-                    (current_y, current_x + 1),
-                ):
-                    if (
-                        0 <= next_y < height
-                        and 0 <= next_x < width
-                        and anomaly_mask[next_y, next_x]
-                        and not visited[next_y, next_x]
-                    ):
-                        visited[next_y, next_x] = True
-                        queue.append((next_y, next_x))
-            ys = np.asarray([item[0] for item in pixels], dtype=np.int64)
-            xs = np.asarray([item[1] for item in pixels], dtype=np.int64)
-            values = scores[ys, xs]
-            records.append(
-                ComponentRecord(
-                    component_id=len(records) + 1,
-                    area=len(pixels),
-                    bbox_xyxy=(int(xs.min()), int(ys.min()), int(xs.max() + 1), int(ys.max() + 1)),
-                    centroid_xy=(float(xs.mean()), float(ys.mean())),
-                    mean_score=float(values.mean()),
-                    max_score=float(values.max()),
-                    road_overlap=float(np.count_nonzero(road[ys, xs]) / len(pixels)),
-                )
+    for pixels in components:
+        ys, xs = pixels[:, 0].astype(np.int64), pixels[:, 1].astype(np.int64)
+        values = scores[ys, xs]
+        records.append(
+            ComponentRecord(
+                component_id=len(records) + 1,
+                area=int(pixels.shape[0]),
+                bbox_xyxy=(int(xs.min()), int(ys.min()), int(xs.max() + 1), int(ys.max() + 1)),
+                centroid_xy=(float(xs.mean()), float(ys.mean())),
+                mean_score=float(values.mean()),
+                max_score=float(values.max()),
+                road_overlap=float(np.count_nonzero(road[ys, xs]) / pixels.shape[0]),
             )
+        )
     return tuple(records)

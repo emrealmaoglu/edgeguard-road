@@ -36,6 +36,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-name")
     parser.add_argument("--frames", type=int, default=120)
     parser.add_argument("--minimum-drivable-area", type=int, default=64)
+    # Boundary agreement at 1 px asks a stride-8 prediction for something its
+    # resolution forbids; at the stride it asks what the architecture can be held to.
+    parser.add_argument("--output-stride", type=int, default=8)
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -63,8 +66,18 @@ def main() -> int:
         )
         # Two questions, not one: how well the road class is segmented, and how well the
         # ego corridor -- the subset the vehicle would actually enter -- is carved from it.
-        road_rows.append(drivable_metrics(road.astype(np.bool_), target.astype(np.int64)))
-        corridor_rows.append(drivable_metrics(corridor.astype(np.bool_), target.astype(np.int64)))
+        road_rows.append(
+            drivable_metrics(
+                road.astype(np.bool_), target.astype(np.int64), output_stride=args.output_stride
+            )
+        )
+        corridor_rows.append(
+            drivable_metrics(
+                corridor.astype(np.bool_),
+                target.astype(np.int64),
+                output_stride=args.output_stride,
+            )
+        )
         if index % 25 == 0:
             print(f"  {index}/{len(images)}", flush=True)
 
@@ -84,6 +97,7 @@ def main() -> int:
         "frames": len(road_rows),
         "road_mask": summarise(road_rows),
         "ego_corridor": summarise(corridor_rows),
+        "output_stride": args.output_stride,
         "ignore_pixels_excluded": True,
         "scientific_measurement": True,
     }
@@ -97,7 +111,9 @@ def main() -> int:
     ):
         print(
             f"  {name:12s} IoU {summary['road_iou']:.4f} · sınır F1 "
-            f"{summary['road_boundary_f1_tolerance_1px']:.4f} · yanlış-sürülebilir "
+            f"{summary['road_boundary_f1_tolerance_1px']:.4f} (1 px) / "
+            f"{summary[f'road_boundary_f1_tolerance_{args.output_stride}px']:.4f} "
+            f"({args.output_stride} px) · yanlış-sürülebilir "
             f"{summary['false_drivable_rate']:.4f}"
         )
     print(f"kayıt: {args.output}")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -11,8 +12,14 @@ from edgeguard.context import RiskWeights, contextual_risk
 from edgeguard.detection.bdd import adapt_bdd_record
 from edgeguard.detection.contracts import Detection, LetterboxTransform, box_mask_overlap
 from edgeguard.evaluation.components import ComponentRecord, connected_components
+from edgeguard.evaluation.components import label_components as _run_label_components
 from edgeguard.evaluation.ood import pixel_ood_metrics, select_anomaly_threshold
-from edgeguard.rescue.perception import _distance_from_mask, _label_components
+from edgeguard.rescue import perception as rescue_perception
+from edgeguard.rescue.perception import (
+    REGION_CLASS_IDS,
+    _distance_from_mask,
+    _label_components,
+)
 from edgeguard.scoring.anomaly_head import LinearAnomalyHead, synthetic_outlier_exposure
 from edgeguard.temporal import TemporalPersistence
 
@@ -311,3 +318,155 @@ def test_adjacent_different_classes_never_merge_into_one_component() -> None:
     assert len(grouped[13]) == 1
     assert grouped[11][0].shape[0] == 12
     assert grouped[13][0].shape[0] == 12
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 7, 20260728])
+@pytest.mark.parametrize("density", [0.05, 0.15, 0.5, 0.85, 1.0])
+def test_labellers_agree(seed: int, density: float) -> None:
+    """The evaluation module labels components by unioning horizontal runs instead of
+    propagating labels, because propagation costs one pass per unit of component width and
+    evaluation scores full-resolution masks where a road spans the image. Two algorithms
+    for one definition is a licence to drift, so pin them to each other: same labels, same
+    component order, same pixel sets.
+    """
+    generator = np.random.default_rng(seed)
+    binary = generator.random((31, 43)) < density
+
+    expected_labels, expected_components = _label_components(binary)
+    actual_labels, actual_components = _run_label_components(binary)
+
+    assert np.array_equal(actual_labels, expected_labels)
+    assert len(actual_components) == len(expected_components)
+    for actual, expected in zip(actual_components, expected_components, strict=True):
+        assert sorted(map(tuple, actual.tolist())) == sorted(map(tuple, expected.tolist()))
+
+
+def test_run_labelling_handles_an_entirely_empty_mask() -> None:
+    labels, components = _run_label_components(np.zeros((5, 6), dtype=np.bool_))
+    assert components == []
+    assert not labels.any()
+
+
+def test_run_labelling_does_not_slow_down_with_component_width() -> None:
+    """The property that made this algorithm necessary: a component as wide as the image
+    is not more expensive than a narrow one. Propagation needs a pass per unit of width, so
+    on the 2048-wide road mask this replaces it took 76 s.
+    """
+    wide = np.zeros((256, 2048), dtype=np.bool_)
+    wide[64:192, :] = True
+    started = time.perf_counter()
+    labels, components = _run_label_components(wide)
+    assert time.perf_counter() - started < 5.0
+    assert len(components) == 1
+    assert int(labels.max()) == 1
+
+
+def _naive_connected_components(
+    anomaly_mask: np.ndarray, scores: np.ndarray, road_mask: np.ndarray
+) -> tuple[ComponentRecord, ...]:
+    """The per-pixel search `connected_components` replaced, kept to compare against."""
+    visited = np.zeros_like(anomaly_mask)
+    height, width = anomaly_mask.shape
+    records: list[ComponentRecord] = []
+    for y in range(height):
+        for x in range(width):
+            if not anomaly_mask[y, x] or visited[y, x]:
+                continue
+            queue = [(y, x)]
+            visited[y, x] = True
+            pixels: list[tuple[int, int]] = []
+            while queue:
+                current_y, current_x = queue.pop()
+                pixels.append((current_y, current_x))
+                for next_y, next_x in (
+                    (current_y - 1, current_x),
+                    (current_y + 1, current_x),
+                    (current_y, current_x - 1),
+                    (current_y, current_x + 1),
+                ):
+                    if (
+                        0 <= next_y < height
+                        and 0 <= next_x < width
+                        and anomaly_mask[next_y, next_x]
+                        and not visited[next_y, next_x]
+                    ):
+                        visited[next_y, next_x] = True
+                        queue.append((next_y, next_x))
+            ys = np.asarray([item[0] for item in pixels], dtype=np.int64)
+            xs = np.asarray([item[1] for item in pixels], dtype=np.int64)
+            values = scores[ys, xs]
+            records.append(
+                ComponentRecord(
+                    component_id=len(records) + 1,
+                    area=len(pixels),
+                    bbox_xyxy=(int(xs.min()), int(ys.min()), int(xs.max() + 1), int(ys.max() + 1)),
+                    centroid_xy=(float(xs.mean()), float(ys.mean())),
+                    mean_score=float(values.mean()),
+                    max_score=float(values.max()),
+                    road_overlap=float(np.count_nonzero(road_mask[ys, xs]) / len(pixels)),
+                )
+            )
+    return tuple(records)
+
+
+@pytest.mark.parametrize("seed", [0, 3, 11, 20260728])
+@pytest.mark.parametrize("density", [0.08, 0.3, 0.75])
+def test_component_records_match_the_search_they_replaced(seed: int, density: float) -> None:
+    """`component_id` is a contract -- temporal tracks and region IDs are derived from it --
+    so the run-based rewrite has to reproduce the search's numbering and every statistic,
+    not merely find the same partition.
+    """
+    generator = np.random.default_rng(seed)
+    anomaly = generator.random((29, 41)) < density
+    scores = generator.random((29, 41))
+    road = generator.random((29, 41)) < 0.4
+
+    actual = connected_components(anomaly, scores, road_mask=road)
+    expected = _naive_connected_components(anomaly, scores, road)
+
+    assert len(actual) == len(expected)
+    for left, right in zip(actual, expected, strict=True):
+        assert left.component_id == right.component_id
+        assert left.area == right.area
+        assert left.bbox_xyxy == right.bbox_xyxy
+        # Summation order inside a component differs, so the means differ in the last bit.
+        # Pixel order is explicitly not part of the contract; the partition and the
+        # numbering are.
+        assert left.centroid_xy == pytest.approx(right.centroid_xy, rel=1e-12)
+        assert left.mean_score == pytest.approx(right.mean_score, rel=1e-12)
+        assert left.max_score == right.max_score
+        assert left.road_overlap == pytest.approx(right.road_overlap, rel=1e-12)
+
+
+def test_the_size_threshold_does_not_change_what_is_labelled(monkeypatch) -> None:
+    """`_label_components` picks its algorithm by mask size, so the branch has to be
+    invisible: the same mask must label identically on either side of the limit.
+    """
+    generator = np.random.default_rng(4)
+    binary = generator.random((37, 53)) < 0.35
+
+    monkeypatch.setattr(rescue_perception, "_PROPAGATION_PIXEL_LIMIT", binary.size + 1)
+    propagated_labels, propagated = rescue_perception._label_components(binary)
+    monkeypatch.setattr(rescue_perception, "_PROPAGATION_PIXEL_LIMIT", 0)
+    run_based_labels, run_based = rescue_perception._label_components(binary)
+
+    assert np.array_equal(propagated_labels, run_based_labels)
+    assert len(propagated) == len(run_based)
+    for left, right in zip(propagated, run_based, strict=True):
+        assert sorted(map(tuple, left.tolist())) == sorted(map(tuple, right.tolist()))
+
+
+def test_the_size_threshold_does_not_change_multi_class_labelling(monkeypatch) -> None:
+    generator = np.random.default_rng(9)
+    semantic = generator.integers(0, 19, size=(31, 47))
+
+    monkeypatch.setattr(rescue_perception, "_PROPAGATION_PIXEL_LIMIT", semantic.size + 1)
+    propagated = rescue_perception._label_components_by_class(semantic, REGION_CLASS_IDS)
+    monkeypatch.setattr(rescue_perception, "_PROPAGATION_PIXEL_LIMIT", 0)
+    run_based = rescue_perception._label_components_by_class(semantic, REGION_CLASS_IDS)
+
+    assert set(propagated) == set(run_based)
+    for class_id in propagated:
+        assert len(propagated[class_id]) == len(run_based[class_id])
+        for left, right in zip(propagated[class_id], run_based[class_id], strict=True):
+            assert sorted(map(tuple, left.tolist())) == sorted(map(tuple, right.tolist()))

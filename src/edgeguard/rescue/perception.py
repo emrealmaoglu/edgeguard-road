@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from edgeguard.evaluation.components import label_components
 from edgeguard.rescue.dataset import CITYSCAPES_CLASSES
 
 REGION_CLASS_IDS = (6, 7, 11, 12, 13, 14, 15, 16, 17, 18)
@@ -95,6 +96,13 @@ def _validate_semantic_inputs(
             raise ValueError(f"{name} must be finite and lie in [0,1]")
 
 
+# The deployment path derives perception from stride-8 logits (64x128 = 8192 px). This
+# limit sits well above that and well below any full-resolution frame, so the device keeps
+# the propagation labeller that its measured frame times describe, and off-device callers
+# get the labeller whose cost does not follow component width.
+_PROPAGATION_PIXEL_LIMIT = 65536
+
+
 def _label_components(binary: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
     """Label four-connected components, numbered by raster order of first pixel.
 
@@ -111,7 +119,17 @@ def _label_components(binary: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]
     component's index onto its label (`labels == selected`) and derive `region_id` from
     list position. Pixel order *within* a component is not -- every consumer takes areas,
     extents or means -- so pixels come back in raster order rather than BFS order.
+
+    Propagation needs one pass per unit of component width, which is why it is only used
+    below `_PROPAGATION_PIXEL_LIMIT`. Above it -- `predict.py` and the evaluation drivers
+    derive perception at full image resolution, where a road spans 2048 px and one frame
+    costs 76 s -- the run-based labeller in `evaluation.components` answers instead. The
+    two return identical output (`test_labellers_agree`), so this is a cost decision only,
+    and the limit sits far above every deployment mask so the device keeps the variant its
+    frame times were measured on.
     """
+    if binary.size > _PROPAGATION_PIXEL_LIMIT:
+        return label_components(binary)
     if not binary.any():
         return np.zeros(binary.shape, dtype=np.int32), []
     seeds = np.arange(1, binary.size + 1, dtype=np.int64).reshape(binary.shape)
@@ -166,7 +184,14 @@ def _label_components_by_class(
 
     Ordering matches the per-class calls it replaces: within each class, components are
     numbered by the raster position of their first pixel.
+
+    Above `_PROPAGATION_PIXEL_LIMIT` the single-pass advantage is worth less than what
+    propagation costs at that size, so each class is labelled separately by the run-based
+    labeller instead -- ten passes whose cost does not follow component width, rather than
+    one whose does. See `_label_components` for why the limit exists.
     """
+    if semantic_mask.size > _PROPAGATION_PIXEL_LIMIT:
+        return {class_id: label_components(semantic_mask == class_id)[1] for class_id in class_ids}
     wanted = np.isin(semantic_mask, class_ids)
     if not wanted.any():
         return {class_id: [] for class_id in class_ids}
