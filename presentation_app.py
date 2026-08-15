@@ -261,6 +261,7 @@ def main() -> None:
     open_set = load_group(root / "open_set")
     acdc = load_group(root / "acdc")
     risk = load_group(root / "risk")
+    drivable = load_group(root / "drivable")
     shift = load_json(root / "shift_response.json")
     profiles = load_group(root / "profile")
 
@@ -306,7 +307,7 @@ def main() -> None:
     elif page.startswith("4"):
         render_uncertainty(st, accuracy, open_set, acdc, shift, root)
     elif page.startswith("5"):
-        render_risk(st, risk, root)
+        render_risk(st, risk, drivable, root)
     elif page.startswith("6"):
         render_edge(st, jetson, profiles, root)
     else:
@@ -624,7 +625,7 @@ def render_uncertainty(
         show_image(st, root / "figures" / "pidnet_s" / name, caption)
 
 
-def render_risk(st: Any, risk: dict, root: Path) -> None:
+def render_risk(st: Any, risk: dict, drivable: dict, root: Path) -> None:
     st.title("Bağlamsal risk analizi")
     st.caption(
         "Yedi ağırlıklı özelliğin açıklanabilir füzyonu. Ölçülemeyen özellikler sıfır "
@@ -660,6 +661,7 @@ def render_risk(st: Any, risk: dict, root: Path) -> None:
         "Bu bir operasyonel dikkat sıralamasıdır, fiziksel risk olasılığı değildir — "
         "kayıt `calibrated_physical_risk_probability: false` der."
     )
+    render_drivable(st, drivable)
     show_image(st, root / "qualitative" / "models_same_frame.png", "Aynı karede beş mimari")
     for name, caption in (
         ("overlay.png", "Segmentasyon"),
@@ -668,6 +670,57 @@ def render_risk(st: Any, risk: dict, root: Path) -> None:
         ("attention_map.png", "Operasyonel dikkat"),
     ):
         show_image(st, root / "figures" / "pidnet_s" / name, caption)
+
+
+def render_drivable(st: Any, drivable: dict) -> None:
+    """Put a number next to the corridor picture the claim has rested on until now."""
+    if not drivable:
+        return
+    rows = [drivable[name] for name in MODEL_ORDER if name in drivable]
+    rows.extend(record for name, record in sorted(drivable.items()) if name not in MODEL_ORDER)
+    if not rows:
+        return
+    stride = int(rows[0].get("output_stride", 8))
+    frames = rows[0].get("frames")
+
+    st.markdown("#### Sürülebilir alan — Cityscapes val, ölçülmüş")
+    st.caption(
+        f"{frames} kare, karşılaştırma çerçevesinin geri kalanıyla aynı ONNX grafiklerinden. "
+        "**Yanlış-sürülebilir**, aracın gireceği ama yol olmayan piksellerin oranıdır — "
+        "güvenlik açısından anlamlı olan sayı budur."
+    )
+    st.markdown(
+        _markdown_table(
+            [
+                "Mimari",
+                "Yol IoU",
+                "Koridor IoU",
+                "Sınır F1 (1 px)",
+                f"Sınır F1 ({stride} px)",
+                "Yanlış-sürülebilir",
+            ],
+            [
+                [
+                    MODEL_LABEL.get(record.get("model", ""), record.get("model", "—")),
+                    _number(record.get("road_mask", {}).get("road_iou"), 4),
+                    _number(record.get("ego_corridor", {}).get("road_iou"), 4),
+                    _number(record.get("road_mask", {}).get("road_boundary_f1_tolerance_1px"), 4),
+                    _number(
+                        record.get("road_mask", {}).get(f"road_boundary_f1_tolerance_{stride}px"),
+                        4,
+                    ),
+                    _number(record.get("road_mask", {}).get("false_drivable_rate"), 4),
+                ]
+                for record in rows
+            ],
+        )
+    )
+    st.caption(
+        f"İki tolerans bilerek yan yana: 1 piksel, stride-{stride} logit'ten büyütülmüş bir "
+        f"maskeden çözünürlüğünün izin vermediği bir kesinlik ister; {stride} piksel, "
+        "mimarinin gerçekten sorumlu tutulabileceği soruyu sorar. Aradaki fark modelin "
+        "başarısızlığı değil, kaba tahmin edip büyütmenin bedelidir."
+    )
 
 
 def render_edge(st: Any, jetson: dict, profiles: dict, root: Path) -> None:
