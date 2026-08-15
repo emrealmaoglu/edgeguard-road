@@ -1,5 +1,7 @@
 """Tests for threshold-free pixel-level OOD development metrics."""
 
+import pathlib
+
 import numpy as np
 import pytest
 
@@ -131,3 +133,90 @@ def test_pixel_ood_metrics_rejects_invalid_labels_and_shapes() -> None:
             np.array([0.0], dtype=np.float32),
             np.array([0, 1], dtype=np.uint8),
         )
+
+
+def test_auroc_does_not_depend_on_a_version_specific_numpy_integrator() -> None:
+    """NumPy 2.0 renamed `trapz` to `trapezoid` and later dropped `trapz` entirely, while
+    `pyproject.toml` allows `numpy>=1.24,<3` and the pinned Colab training runtime resolves
+    to 1.26.4, where only `trapz` exists. Naming either one made AUROC raise
+    `AttributeError` on one half of the supported range; it stayed invisible because the
+    only callers fed synthetic logits under a NumPy 2.x venv, and first surfaced on a real
+    anomaly dataset. The module must therefore reference neither name.
+    """
+    source = pathlib.Path("src/edgeguard/evaluation/ood.py").read_text(encoding="utf-8")
+    assert "np.trapezoid" not in source
+    assert "np.trapz" not in source
+
+    # A perfectly separable ranking integrates to exactly 1.0 under the trapezoid rule.
+    perfect = pixel_ood_metrics(
+        np.array([0.9, 0.8, 0.2, 0.1], dtype=np.float32),
+        np.array([1, 1, 0, 0], dtype=np.int64),
+    )
+    assert perfect.auroc == 1.0
+    # An interleaved ranking lands strictly between the extremes rather than erroring.
+    partial = pixel_ood_metrics(
+        np.array([0.9, 0.4, 0.6, 0.1], dtype=np.float32),
+        np.array([1, 1, 0, 0], dtype=np.int64),
+    )
+    assert partial.auroc is not None and 0.0 < partial.auroc < 1.0
+
+
+def _brute_force_threshold_policies(
+    scores: np.ndarray, labels: np.ndarray, *, fixed_threshold: float, risk_budget_fpr: float
+) -> tuple[dict[str, float], dict[str, float]]:
+    """The original per-candidate sweep, kept only as a correctness oracle.
+
+    It scans the whole array once per distinct score, which is O(n^2) and unusable on real
+    data -- that is exactly why the shipped implementation was vectorised. Keeping the
+    naive version here pins the fast path to the semantics it replaced.
+    """
+    valid = labels != 255
+    valid_scores = scores[valid].astype(np.float64)
+    positives = labels[valid] == 1
+    candidates = np.concatenate(
+        (np.unique(valid_scores), [np.nextafter(valid_scores.max(), np.inf)])
+    )
+
+    def rates(threshold: float) -> dict[str, float]:
+        prediction = valid_scores >= threshold
+        true_positive = int(np.count_nonzero(prediction & positives))
+        false_positive = int(np.count_nonzero(prediction & ~positives))
+        false_negative = int(np.count_nonzero(~prediction & positives))
+        denominator = 2 * true_positive + false_positive + false_negative
+        return {
+            "threshold": float(threshold),
+            "tpr": float(true_positive / np.count_nonzero(positives)),
+            "fpr": float(false_positive / np.count_nonzero(~positives)),
+            "f1": float(2 * true_positive / denominator) if denominator else 0.0,
+        }
+
+    evaluated = [rates(float(value)) for value in candidates]
+    development = max(evaluated, key=lambda row: (row["f1"], -row["fpr"], row["threshold"]))
+    budgeted = [row for row in evaluated if row["fpr"] <= risk_budget_fpr]
+    risk_budget = max(budgeted, key=lambda row: (row["tpr"], -row["fpr"], row["threshold"]))
+    return development, risk_budget
+
+
+@pytest.mark.parametrize("seed", [1, 7, 20260728])
+def test_vectorised_threshold_policies_match_the_naive_sweep(seed: int) -> None:
+    """Real anomaly data has ~1.2M distinct scores, where the naive sweep took over an
+    hour; the vectorised sweep must return the identical operating points, ties included.
+    Duplicated scores and both label classes are forced in so the tie-break ordering
+    (f1, then lowest fpr, then highest threshold) is actually exercised.
+    """
+    generator = np.random.default_rng(seed)
+    scores = np.round(generator.normal(size=400), 2).astype(np.float32)
+    labels = generator.integers(0, 2, size=400).astype(np.int64)
+    labels[generator.choice(400, size=40, replace=False)] = 255
+
+    expected_development, expected_budget = _brute_force_threshold_policies(
+        scores, labels, fixed_threshold=0.0, risk_budget_fpr=0.1
+    )
+    actual = threshold_policies(scores, labels, fixed_threshold=0.0, risk_budget_fpr=0.1)
+
+    assert actual["development_optimal_f1"] == expected_development
+    assert {
+        key: value
+        for key, value in actual["risk_budget_operating_point"].items()
+        if key != "maximum_fpr"
+    } == expected_budget

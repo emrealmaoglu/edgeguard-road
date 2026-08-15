@@ -12,6 +12,21 @@ ANOMALY_LABEL = 1
 IGNORE_LABEL = 255
 
 
+def _trapezoid_area(y: npt.NDArray[np.float64], x: npt.NDArray[np.float64]) -> float:
+    """Integrate `y` over `x` by the trapezoid rule, independent of the NumPy version.
+
+    NumPy 2.0 renamed `trapz` to `trapezoid` and later removed `trapz` outright, while
+    `pyproject.toml` allows `numpy>=1.24,<3` and the pinned Colab training runtime
+    resolves to 1.26.4, where only `trapz` exists. Naming either function makes AUROC
+    raise `AttributeError` on one half of the supported range -- invisible until now
+    because the only callers fed synthetic logits under a NumPy 2.x venv. The rule itself
+    is one line, so depend on neither name.
+    """
+    widths = np.diff(x)
+    midpoints = (y[1:] + y[:-1]) / 2.0
+    return float(np.sum(widths * midpoints))
+
+
 @dataclass(frozen=True)
 class OODPixelMetricResult:
     """Threshold-free pixel OOD metrics and evaluated class counts."""
@@ -88,7 +103,7 @@ def pixel_ood_metrics(
         fpr_at_95_tpr = float(false_positives[first_at_target] / negative_count)
         tpr_curve = np.concatenate((np.array([0.0]), true_positives / positive_count))
         fpr_curve = np.concatenate((np.array([0.0]), false_positives / negative_count))
-        auroc = float(np.trapezoid(tpr_curve, fpr_curve))
+        auroc = _trapezoid_area(tpr_curve, fpr_curve)
     return OODPixelMetricResult(
         auroc=auroc,
         average_precision=average_precision,
@@ -188,35 +203,64 @@ def threshold_policies(
     valid_scores, positives, ignored = _validated_pixels(scores, labels, ignore_index=ignore_index)
     if not positives.any() or bool(positives.all()):
         raise ValueError("threshold policies require both ID and anomaly pixels")
-    candidates = np.concatenate(
-        (
-            np.unique(valid_scores),
-            np.asarray([np.nextafter(valid_scores.max(), np.inf)], dtype=np.float64),
-        )
-    )
+    positive_total = int(np.count_nonzero(positives))
+    negative_total = int(positives.size - positive_total)
 
     def rates(threshold: float) -> dict[str, float]:
         prediction = valid_scores >= threshold
         true_positive = np.count_nonzero(prediction & positives)
         false_positive = np.count_nonzero(prediction & ~positives)
         false_negative = np.count_nonzero(~prediction & positives)
-        tpr = true_positive / np.count_nonzero(positives)
-        fpr = false_positive / np.count_nonzero(~positives)
         f1_denominator = 2 * true_positive + false_positive + false_negative
         return {
             "threshold": float(threshold),
-            "tpr": float(tpr),
-            "fpr": float(fpr),
+            "tpr": float(true_positive / positive_total),
+            "fpr": float(false_positive / negative_total),
             "f1": float(2 * true_positive / f1_denominator) if f1_denominator else 0.0,
         }
 
-    evaluated = [rates(float(value)) for value in candidates]
-    development = max(evaluated, key=lambda row: (row["f1"], -row["fpr"], row["threshold"]))
-    within_budget = [row for row in evaluated if row["fpr"] <= risk_budget_fpr]
-    risk_budget = max(
-        within_budget,
-        key=lambda row: (row["tpr"], -row["fpr"], row["threshold"]),
+    # Sweeping every distinct score with a full array pass each is O(n^2): on 1.2M real
+    # anomaly pixels that ran for over an hour, while the synthetic arrays the tests use
+    # hid it entirely. `_ranking_curve` already yields the confusion counts at exactly the
+    # distinct thresholds, in descending score order, so the sweep is a cumulative-count
+    # problem rather than a nested scan.
+    true_positives, false_positives = _ranking_curve(valid_scores, positives)
+    descending = -np.sort(-valid_scores, kind="stable")
+    group_ends = np.concatenate(
+        (np.flatnonzero(np.diff(descending)) + 1, np.array([descending.size], dtype=np.int64))
     )
+    thresholds = descending[group_ends - 1]
+    # The extra candidate above every observed score predicts nothing, matching the
+    # original sweep's open upper end.
+    thresholds = np.concatenate((thresholds, [np.nextafter(valid_scores.max(), np.inf)]))
+    true_positives = np.concatenate((true_positives, [0.0]))
+    false_positives = np.concatenate((false_positives, [0.0]))
+
+    false_negatives = positive_total - true_positives
+    tpr = true_positives / positive_total
+    fpr = false_positives / negative_total
+    f1_denominator = 2 * true_positives + false_positives + false_negatives
+    f1 = np.divide(
+        2 * true_positives,
+        f1_denominator,
+        out=np.zeros_like(true_positives),
+        where=f1_denominator != 0,
+    )
+
+    def _pick(mask: npt.NDArray[np.bool_], primary: npt.NDArray[np.float64]) -> dict[str, float]:
+        indices = np.flatnonzero(mask)
+        # Mirrors `max(key=(primary, -fpr, threshold))` on the original candidate list.
+        order = np.lexsort((thresholds[indices], -fpr[indices], primary[indices]))
+        best = int(indices[order[-1]])
+        return {
+            "threshold": float(thresholds[best]),
+            "tpr": float(tpr[best]),
+            "fpr": float(fpr[best]),
+            "f1": float(f1[best]),
+        }
+
+    development = _pick(np.ones(thresholds.size, dtype=np.bool_), f1)
+    risk_budget = _pick(fpr <= risk_budget_fpr, tpr)
     return {
         "development_optimal_f1": development,
         "fixed_operating_point": rates(fixed_threshold),
