@@ -162,64 +162,81 @@ pratik — kayıt sırasında bir modelin yüklenmesi ya da bir kareye takılmas
 
 *(Not: `app.py` ayrı bir geliştirici arayüzüdür ve sunumda kullanılmaz.)*
 
-### 4a · Önce: Jetson kayıtlarını cihazdan geri al ⚠️
+### 4a · Kayıtların hangisi nerede duruyor
 
-**Bu adım yapılmadan panelin 6. sayfası boş kalır** — sunumun en güçlü slaytı odur.
-`run_all_models.sh` ölçümleri cihazda **tek düz klasöre** yazar ve o klasör bugüne kadar
-hiç Mac'e kopyalanmadı; §7'deki gecikme/güç/joule tablosu şu an yalnızca bu dokümanda
-duruyor, panelde değil.
+İki tür ölçüm var ve **ikisi de zaten olması gereken makinede**:
 
-Mac'te, tek komut:
+| kayıt | nerede üretildi | nerede durur |
+|---|---|---|
+| `jetson/`, `telemetry/`, `profile/` | Jetson | Jetson: `~/results` (düz) ve `~/eg-presentation/` (ayrılmış) |
+| `accuracy/`, `acdc/`, `open_set/`, `risk/`, `drivable/`, `temporal/`, figürler, video | Mac | Mac: `.local/presentation/results` + repo: `reports/measurements/` |
+
+Panel Jetson'da çalıştığı için cihaz kayıtlarını Mac'e çekip geri göndermek **gereksiz bir
+turdur**; onlar yerinde kalır. Taşınması gereken tek yön Mac → Jetson.
+
+> **Cihazdaki `~/eg-presentation` zaten kurulu ve çalışıyor.** Mac'te yeni bir paket kurup
+> onun üzerine yazmayın — cihaz kayıtları Mac'te olmadığı için o paket onları taşımaz ve
+> çalışan bir şeyi bozar. Doğru hareket, eksik olanı üstüne koymaktır (§4b).
+
+### 4b · Yeni ölçümleri cihaza taşı — normal yol
+
+Ölçüm kayıtları küçük (24 KB) ve repoda: `reports/measurements/`. Jetson'da:
 
 ```bash
-scp -r emre@100.102.153.67:~/edgeguard-jetson-runs .local/presentation/jetson-run
+cd ~/edgeguard-road && git pull
+cp -r reports/measurements/drivable reports/measurements/temporal ~/eg-presentation/
 ```
 
-*(Yol farklıysa: `run_all_models.sh`'e üçüncü argüman olarak verdiğin klasör hangisiyse
-odur; cihazda `ls ~/*jetson*` ile bulunur.)*
+İki makine arasında scp/şifre yok. Yeni bir ölçüm eklendiğinde aynı iki komut yeter.
 
-Klasörde model başına şunlar olmalı: `<model>_benchmark.json`,
-`<model>_tegrastats.log`, `<model>_stage_profile.json`. `.plan` motor dosyaları ve
-`_build.json` kayıtları da orada olacak — paketleyici onları **almaz**, gerek yok.
+### 4c · Paketi sıfırdan kur — yalnızca gerekirse
 
-### 4b · Paketi kur (Mac'te)
+Yalnızca cihazda `~/eg-presentation` yoksa ya da baştan kurulacaksa. Cihaz kayıtları
+Jetson'da olduğu için **bu komut Jetson'da koşar**; Mac'ten gelen sonuçlar önce oraya
+gider.
+
+Mac'te — cihaz grupları hariç her şeyi paketle ve gönder:
 
 ```bash
 .venv/bin/python scripts/build_jetson_bundle.py \
   --results .local/presentation/results \
   --figures .local/presentation/figures \
   --video .local/presentation/video \
-  --jetson-run .local/presentation/jetson-run \
   --output .local/presentation/bundle \
   --archive .local/presentation/eg_presentation_bundle.tgz \
+  --require accuracy --require drivable --require open_set
+scp .local/presentation/eg_presentation_bundle.tgz emre@100.102.153.67:~/
+```
+
+Jetson'da — aç, cihaz kayıtlarını içine yerleştir:
+
+```bash
+tar xzf ~/eg_presentation_bundle.tgz -C ~/
+python scripts/build_jetson_bundle.py \
+  --results ~/bundle \
+  --figures ~/bundle/thesis_figures \
+  --video ~/bundle/video \
+  --jetson-run ~/results \
+  --output ~/eg-presentation \
   --require accuracy --require drivable --require open_set \
   --require jetson --require telemetry
 ```
 
-`--jetson-run` düz klasörü panelin okuduğu üç gruba dağıtır: `*_benchmark.json` →
-`jetson/`, `*_stage_profile.json` → `profile/`, `*_tegrastats.log` → `telemetry/`.
+`--jetson-run`, `run_all_models.sh`'in düz çıktı klasörünü panelin okuduğu üç gruba
+dağıtır: `*_benchmark.json` → `jetson/`, `*_stage_profile.json` → `profile/`,
+`*_tegrastats.log` → `telemetry/`. `.plan` motor dosyaları ve `_build.json` kayıtları
+**alınmaz** — panel onları okumaz ve büyükler.
 
 `--require`, sunumun onsuz verilemeyeceği sonuçlar içindir. Sebebi: panel eksik bir gruba
 hata vermez, sadece o tabloyu göstermez — yani unutulan bir ölçüm sessizce kaybolur.
-`--require` o sessizliği hataya çevirir. Paketin içindeki `bundle_manifest.json` neyin
-bulunduğunu ve neyin bulunamadığını ayrı ayrı yazar; kopyalamadan önce ona bakın.
-
-### 4c · Cihaza kopyala
-
-```bash
-scp .local/presentation/eg_presentation_bundle.tgz emre@100.102.153.67:~/
-```
-
-Jetson'da:
-
-```bash
-tar xzf ~/eg_presentation_bundle.tgz -C ~/ && ls ~/bundle
-```
+`--require` o sessizliği hataya çevirir. Bu kapı ilk gerçek koşusunda zaten bir eksik
+yakaladı. Paketin içindeki `bundle_manifest.json` neyin bulunduğunu ve neyin
+bulunamadığını ayrı ayrı yazar.
 
 ### 4d · Paneli çalıştır
 
 ```bash
-EDGEGUARD_RESULTS=~/bundle streamlit run ~/edgeguard-road/presentation_app.py
+EDGEGUARD_RESULTS=~/eg-presentation streamlit run ~/edgeguard-road/presentation_app.py
 ```
 
 Kenar çubuğundaki anlık sıcaklık/güç/RAM cihazın **o andaki** durumudur; asıl telemetri
