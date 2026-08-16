@@ -861,7 +861,7 @@ Hiçbiri "ölçülmüş" gibi sunulmuyor.
 |---|---|
 | Gerçek zaman kapısı | **geçilmedi** — en iyi 12,36 FPS; darboğaz CPU tarafı, model değil |
 | FP16 dağıtım sadakati | ölçüm scripti hazır, koşulmayı bekliyor |
-| Zamansal kalıcılık | 150 karede **ölçüldü**; tek kare üretemez, orada sıfır ağırlıklı |
+| Zamansal kalıcılık — **tek karede** | bir kare üretemez → sıfır ağırlıklı; dizide ölçüldü (s. 5) |
 | Mühürlü final test verisi | **kasıtlı** — yalnızca insan tetikler |
 
 #### Geri çekilen iki iddia
