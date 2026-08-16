@@ -128,6 +128,11 @@ def populated_root(tmp_path: Path) -> Path:
         ' "sweep": {"0": {"across_split_pairs": 0, "within_split_pairs": {"cityscapes_val": 0}},'
         ' "2": {"across_split_pairs": 0, "within_split_pairs": {"cityscapes_val": 0}}}}',
     )
+    _write(
+        tmp_path / "class_distribution.json",
+        '{"imbalance_ratio": 473.0, "correlations": {"pixel_share_vs_iou": 0.68,'
+        ' "pixel_share_vs_ece": -0.52}, "per_class": {"pole": {"pixel_share": 0.0148}}}',
+    )
     _write(tmp_path / "shift_response.json", '{"model": "pidnet_s", "ratio": 1.0}')
     return tmp_path
 
@@ -144,6 +149,7 @@ def _pages(root: Path, groups: dict[str, dict]) -> list[tuple[str, Any]]:
                 groups["jetson"],
                 groups["components"],
                 groups["leakage"],
+                groups["distribution"],
                 root,
             ),
         ),
@@ -188,6 +194,7 @@ def _groups(root: Path) -> dict[str, dict]:
     } | {
         "shift": panel.load_json(root / "shift_response.json"),
         "leakage": panel.load_json(root / "leakage_audit.json"),
+        "distribution": panel.load_json(root / "class_distribution.json"),
     }
 
 
@@ -365,3 +372,17 @@ def test_the_component_table_reports_the_prediction_to_truth_ratio(populated_roo
     text = " ".join(str(value) for _, value in st.calls)
     assert "0.6655" in text
     assert "1.00×" in text
+
+
+def test_the_distribution_block_states_both_correlations(populated_root: Path) -> None:
+    """Rarity is the competing explanation for the failure pattern. Showing only the
+    imbalance ratio would leave a reader assuming it explains everything; showing both
+    correlations is what lets the dissociation argument be made at all.
+    """
+    st = FakeStreamlit()
+
+    panel.render_distribution(st, panel.load_json(populated_root / "class_distribution.json"))
+
+    text = " ".join(str(value) for _, value in st.calls)
+    assert "+0.68" in text and "-0.52" in text
+    assert "473" in text

@@ -263,6 +263,7 @@ def main() -> None:
     calibration = load_group(root / "calibration")
     components = load_group(root / "components")
     leakage = load_json(root / "leakage_audit.json")
+    distribution = load_json(root / "class_distribution.json")
     risk = load_group(root / "risk")
     drivable = load_group(root / "drivable")
     temporal = load_group(root / "temporal")
@@ -305,7 +306,7 @@ def main() -> None:
     if page.startswith("1"):
         render_problem(st, root)
     elif page.startswith("2"):
-        render_comparison(st, accuracy, open_set, jetson, components, leakage, root)
+        render_comparison(st, accuracy, open_set, jetson, components, leakage, distribution, root)
     elif page.startswith("3"):
         render_open_set(st, open_set, root)
     elif page.startswith("4"):
@@ -374,6 +375,7 @@ def render_comparison(
     jetson: dict,
     components: dict,
     leakage: dict | None,
+    distribution: dict | None,
     root: Path,
 ) -> None:
     st.title("Dört eksende model karşılaştırması")
@@ -436,6 +438,7 @@ def render_comparison(
     st.divider()
     render_components(st, components)
     render_leakage(st, leakage)
+    render_distribution(st, distribution)
     st.divider()
     left, right = st.columns(2)
     left.markdown(
@@ -548,6 +551,34 @@ def render_leakage(st: Any, leakage: dict | None) -> None:
         "val kendi içinde de temiz. Ayrıca yöntemsel bir bulgu: aynı yarıçap her görüntüde "
         "aynı şeyi ölçmüyor — ACDC sis 2'den 1.504'e çıkarken Cityscapes 0'dan 16'ya. "
         "Sabit bir algısal-hash eşiği hava koşulları arasında taşınamaz."
+    )
+
+
+def render_distribution(st: Any, distribution: dict | None) -> None:
+    """The competing explanation for where the system fails, measured rather than assumed.
+
+    Four measurements land on the same classes, and output stride is the mechanism offered.
+    But those classes are also rare, which predicts the same victims -- so rarity has to be
+    measured before stride can be claimed. It is real and it is not sufficient, and the
+    dissociation is what shows that.
+    """
+    if not distribution:
+        return
+    correlations = distribution.get("correlations") or {}
+    per_class = distribution.get("per_class") or {}
+    if not correlations or not per_class:
+        return
+    st.markdown("#### Nadirlik mi, incelik mi?")
+    columns = st.columns(3)
+    columns[0].metric("Sınıf dengesizliği", f"{distribution.get('imbalance_ratio', 0):.0f}×")
+    columns[1].metric("ρ(pay, IoU)", f"{correlations.get('pixel_share_vs_iou', 0):+.2f}")
+    columns[2].metric("ρ(pay, ECE)", f"{correlations.get('pixel_share_vs_ece', 0):+.2f}")
+    st.caption(
+        "Nadirlik gerçek bir etken — ama tek etken değil. Ayrışma bunu gösteriyor: "
+        "**`pole` `motorcycle`'dan 18 kat daha sık** ve karelerin %98,2'sinde var, buna "
+        "rağmen PIDNet-S'in kalibrasyon hatası orada 9 kat daha kötü. Eşleşmiş nadirlikte "
+        "de aynı: `truck` ile `traffic light` benzer nadirlikte, ECE'leri 4,3 kat farklı. "
+        "Ayıran şey nadirlik değil **şekil** — ve kaba çıktı ızgarası bunu öngörür."
     )
 
 

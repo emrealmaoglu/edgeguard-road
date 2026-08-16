@@ -107,6 +107,54 @@ diyor; bu bir dedektör kıyaslaması değildir.
 
 ---
 
+## 2b-2 · Rakip açıklama: nadirlik mi, incelik mi?
+
+Bu tezin dört ölçümü aynı sınıflara işaret ediyor — direk, çit, trafik ışığı, insan — ve
+şimdiye kadarki açıklaması **çıktı stride'ı**: kaba ızgara ince yapıyı kötü çözüyor. Bu bir
+mekanizma, ama aynı kurbanları öngören **ikinci bir mekanizma** var ve ölçülmeden
+elenemez: o sınıflar aynı zamanda nadir sınıflardır, model onların daha az pikselini
+görür. Biri iddia edilip diğeri ölçülmeden bırakılamaz.
+
+500 Cityscapes val karesi, 917 milyon etiketli piksel, yalnızca zemin gerçeği
+(`scripts/measure_class_distribution.py`):
+
+**Dengesizlik 473 kat** — `road` %37,65, `motorcycle` %0,080.
+
+| ilişki | Spearman ρ | okuma |
+|---|---|---|
+| piksel payı ↔ sınıf IoU | **+0,68** | nadir sınıf daha kötü segmentleniyor |
+| piksel payı ↔ sınıf ECE | **−0,52** | nadir sınıf daha kötü kalibre |
+
+Yani **nadirlik gerçek bir etken.** Ama tek etken değil, ve bunu gösteren şey sıralamanın
+kendisi değil, içindeki **ayrışma**:
+
+| sınıf | piksel payı | karelerde | ECE (PIDNet-S) | şekil |
+|---|---|---|---|---|
+| `motorcycle` | **%0,080** (en nadir) | %18,6 | **0,0288** (en iyilerden) | kompakt |
+| `train` | %0,113 | %4,4 | 0,0510 | kompakt |
+| `truck` | %0,301 | %16,0 | 0,0345 | kompakt |
+| `traffic light` | %0,197 | %58,2 | **0,1499** | **ince** |
+| `rider` | %0,215 | %50,6 | **0,1711** | **ince** |
+| `pole` | **%1,479** (7. en sık) | **%98,2** | **0,2598** (en kötü) | **ince** |
+
+> **Ayrışma:** `pole`, `motorcycle`'dan **18 kat daha sık** ve karelerin neredeyse
+> tamamında var — buna rağmen PIDNet-S'in kalibrasyon hatası orada **9 kat daha kötü**.
+> Eşleşmiş nadirlikte de aynı: `truck` (%0,301) ile `traffic light` (%0,197) benzer
+> nadirlikte, ama ECE'leri 0,0345'e karşı 0,1499 — **4,3 kat** fark. Ayıran şey nadirlik
+> değil, **şekil**.
+
+**Sonuç — ve bu bir tez cümlesidir:** sınıf dengesizliği başarımı etkiliyor (ρ = +0,68),
+ama bu projedeki başarısızlık örüntüsünü açıklamıyor. İnce ve uzun yapılar, **aynı
+nadirlikteki kompakt sınıflardan sistematik olarak daha kötü** segmentleniyor ve daha kötü
+kalibre ediliyor. Kaba çıktı ızgarası bunu doğrudan öngörür; nadirlik öngörmez.
+
+**Sınır:** bu bir gözlemsel ayrışmadır, kontrollü bir deney değil. "İncelik" burada
+niceliksel bir değişken değil, sınıfların bilinen geometrisidir. Kesin kanıt, aynı sınıfın
+farklı stride'larda ölçülmesi olurdu — §8'de tek mimari için (SegFormer, 2,03 mIoU bedeli)
+yapıldı, beş mimari için yapılmadı.
+
+---
+
 ## 2c · Split sızıntısı — her doğruluk sayısının dayandığı varsayım
 
 Araştırma dokümanı 18 bu konuda net: sürüş görüntüsü 15-30 FPS'te kaydedilir, saniyenin

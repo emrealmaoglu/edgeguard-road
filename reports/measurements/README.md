@@ -20,6 +20,8 @@ Bunlar sürüm kontrolünde, çünkü:
 | `temporal/` | 150 ardışık demoVideo karesi: iz ömürleri, zamansal kalıcılığın risk sıralamasına etkisi | `scripts/measure_temporal_persistence.py` |
 | `calibration/` | 3 mimari × 200 kare: havuzlanmış ve sınıf-bazlı ECE, sınıf kırılımı | `scripts/measure_classwise_calibration.py` |
 | `components/` | 3 mimari × 100 kare: bileşen kapsama, en iyi bileşen IoU, parçalanma | `scripts/evaluate_component_localization.py` |
+| `class_distribution.json` | 500 kare, 917M piksel: sınıf dağılımı + nadirlik↔başarım korelasyonları | `scripts/measure_class_distribution.py` |
+| `literature_audit.json` | 36 tarama dokümanı: PRISMA aşama sayıları (toplandığı doğrulanır) | `scripts/audit_literature_corpus.py` |
 | `leakage_audit.json` | 4 değerlendirme kümesi × 446 kare: yarıçap taramalı algısal yakın-kopya denetimi | `scripts/audit_split_leakage.py` |
 | `paired_comparison.json` | 5 mimari × aynı 500 Cityscapes val karesi: kare-başına mIoU, eşleştirilmiş bootstrap farkları | `scripts/compare_models_paired.py` |
 
@@ -29,7 +31,8 @@ Bunlar sürüm kontrolünde, çünkü:
 cd ~/edgeguard-road && git pull
 cp -r reports/measurements/drivable reports/measurements/temporal \
    reports/measurements/calibration reports/measurements/components ~/eg-presentation/
-cp reports/measurements/paired_comparison.json reports/measurements/leakage_audit.json ~/eg-presentation/
+cp reports/measurements/paired_comparison.json reports/measurements/leakage_audit.json \
+   reports/measurements/class_distribution.json ~/eg-presentation/
 ```
 
 Cihazda üretilen kayıtlar (`jetson/`, `telemetry/`, `profile/`) buraya **kopyalanmaz** —
