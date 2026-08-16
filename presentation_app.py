@@ -1055,9 +1055,24 @@ Hiçbiri "ölçülmüş" gibi sunulmuyor.
 | Eksik | Neden |
 |---|---|
 | Gerçek zaman kapısı | **geçilmedi** — en iyi 12,36 FPS; darboğaz CPU tarafı, model değil |
-| FP16 dağıtım sadakati | ölçüm scripti hazır, koşulmayı bekliyor |
 | Zamansal kalıcılık — **tek karede** | bir kare üretemez → sıfır ağırlıklı; dizide ölçüldü (s. 5) |
 | Mühürlü final test verisi | **kasıtlı** — yalnızca insan tetikler |
+
+#### Kapanan bir bayrak
+
+`build_tensorrt.py` manifesti baştan beri `numerical_equivalence_pending: true` diyordu:
+dağıtılan FP16 motorunun doğruluğu hiç ölçülmemişti. **Ölçüldü.** Üç mimaride de, FP16
+motoru ile FP32 ONNX aynı koşuda aynı 100 karede puanlandığında eşleştirilmiş fark
+sıfırdan ayırt edilemiyor (aralıklar ±0,001'den dar) ve piksel uyumu **%99,97**.
+
+Söylenebilecek cümle: *bu ölçümün algılayabildiği bir doğruluk bedeli yok* — "ikisi
+aynı" değil.
+
+> **Asıl bulgu bu değil.** Aynı kayıt, eşleştirme yapılmasaydı ne yazacağımızı da
+> gösteriyor: FP16'yı başka koşuda ölçülmüş FP32 sayısıyla kıyaslamak DDRNet için
+> **−0,0253**'lük bir ceza veriyordu. Aynı koşudaki FP32 de 0,6597 verdiği için o farkın
+> tamamı **kare alt kümesi**. Eşleştirilmiş biçim olmasaydı tez, var olmayan bir FP16
+> cezasını enerji kazananının üstüne yazacaktı.
 
 #### Geri çekilen iki iddia
 

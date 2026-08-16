@@ -23,6 +23,7 @@ Bunlar sürüm kontrolünde, çünkü:
 | `class_distribution.json` | 500 kare, 917M piksel: sınıf dağılımı + nadirlik↔başarım korelasyonları | `scripts/measure_class_distribution.py` |
 | `literature_audit.json` | 36 tarama dokümanı: PRISMA aşama sayıları (toplandığı doğrulanır) | `scripts/audit_literature_corpus.py` |
 | `leakage_audit.json` | 4 değerlendirme kümesi × 446 kare: yarıçap taramalı algısal yakın-kopya denetimi | `scripts/audit_split_leakage.py` |
+| `*_fp16_accuracy.json` | Jetson'da 3 mimari × 100 kare: FP16 motoru ile FP32 ONNX aynı koşuda eşleştirilmiş | `scripts/jetson/evaluate_engine.py --onnx` |
 | `paired_comparison.json` | 5 mimari × aynı 500 Cityscapes val karesi: kare-başına mIoU, eşleştirilmiş bootstrap farkları | `scripts/compare_models_paired.py` |
 
 ## Panele yerleştirme (Jetson'da)
@@ -39,6 +40,9 @@ Cihazda üretilen kayıtlar (`jetson/`, `telemetry/`, `profile/`) buraya **kopya
 onlar zaten cihazda, `~/eg-presentation` altında durur ve oradan taşınmalarına gerek yok.
 
 ## Burada olmayanlar
+
+*(FP16 sadakat kayıtları istisnadır: cihazda üretildiler ama küçükler ve tezin bir
+iddiasını doğrudan kapattıkları için buradalar.)*
 
 - **Jetson gecikme/güç/telemetri kayıtları** — cihazda üretilir ve cihazda kalır
   (`~/results` ve `~/eg-presentation/{jetson,telemetry,profile}`). Büyükler ve tek bir

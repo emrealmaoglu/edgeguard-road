@@ -54,7 +54,10 @@ def _walk(value: Any, into: set[float]) -> None:
     if isinstance(value, bool):
         return
     if isinstance(value, (int, float)):
-        into.add(round(float(value), 4))
+        # Store full precision, not the rounded form: a document may state the same
+        # measurement as a percentage, and rounding first then scaling loses the
+        # decimals the percentage needs (0.999727... -> 99.9728, not 99.97).
+        into.add(float(value))
     elif isinstance(value, dict):
         for item in value.values():
             _walk(item, into)
@@ -78,9 +81,9 @@ def known_values(records: Path) -> set[float]:
             _walk(json.loads(path.read_text(encoding="utf-8")), values)
         except (OSError, ValueError):
             continue
-    scaled = {round(value * 100, 4) for value in values}
+    scaled = {value * 100 for value in values}
     ratios = {
-        round(left / right, 4)
+        left / right
         for left in values
         for right in values
         if right and abs(right) > 1e-9 and 0.01 < abs(left / right) < 1000

@@ -538,6 +538,65 @@ model değil — bkz. §8.
 
 ---
 
+## 7a · FP16 dağıtım sadakati — ölçüldü, bayrak kapandı
+
+Bu tezdeki bütün doğruluk sayıları **FP32 ONNX'ten** ölçüldü; cihaza giden şey ise
+**TensorRT FP16 motoru.** `build_tensorrt.py` manifestine baştan beri
+`numerical_equivalence_pending: true` yazıyordu ve bunu hiçbir şey çözmemişti. Önemi
+küçük değil: yarım hassasiyet doğruluğa mal oluyorsa, mIoU tablosu **kimsenin dağıtmadığı
+bir modeli** anlatıyor demektir.
+
+Cihazda ölçüldü — 100 Cityscapes val karesi (500 içinden eşit aralıklı), her model için
+FP16 motoru ve FP32 ONNX **aynı koşuda, aynı karelerde**
+(`scripts/jetson/evaluate_engine.py --onnx`):
+
+| mimari | FP16 motor | aynı koşuda FP32 | eşleştirilmiş fark | %95 aralık | piksel uyumu |
+|---|---|---|---|---|---|
+| PIDNet-S | 0,6670 | 0,6670 | +0,000019 | [−0,000925, +0,001016] | %99,9728 |
+| DDRNet-23-slim | 0,6597 | 0,6597 | −0,000005 | [−0,000104, +0,000083] | %99,9712 |
+| SegFormer-B0 | 0,6950 | 0,6951 | −0,0000004 | [−0,000076, +0,000076] | %99,9725 |
+
+> **`numerical_equivalence_pending` kapandı.** Üç mimaride de fark sıfırdan ayırt
+> edilemiyor ve aralıklar ±0,001'den dar. Söylenebilecek cümle şudur: **bu ölçümün
+> algılayabildiği bir doğruluk bedeli yok.** "İkisi aynı" değil — piksellerin %0,03'ü
+> değişiyor, ama değişenler metriği kımıldatmıyor.
+
+### 7a-1 · Asıl bulgu: eşleştirme olmasaydı ne yazacaktık
+
+Aynı kayıt, naif karşılaştırmayı da taşıyor — FP16'yı **başka koşuda, 500 karede** ölçülmüş
+FP32 sayısıyla kıyaslamak:
+
+| mimari | FP16 (100 kare) | FP32 referans (500 kare) | **naif fark** |
+|---|---|---|---|
+| PIDNet-S | 0,6670 | 0,6768 | **−0,0098** |
+| DDRNet-23-slim | 0,6597 | 0,6850 | **−0,0253** |
+| SegFormer-B0 | 0,6950 | 0,6934 | +0,0016 |
+
+Naif okuma: *"FP16 dağıtım DDRNet'e 0,0253 mIoU'ya mal oluyor."* **Bu tamamen yanlış**
+olurdu — çünkü aynı koşudaki FP32 ONNX de tam olarak 0,6597 veriyor. O fark hassasiyet
+değil, **100 karelik alt küme**.
+
+> **Tez cümlesi:** ayrı ölçülmüş iki sayıyı yan yana koymak, ölçtüğünü sandığınız şeyi
+> ölçmez. Bu proje o hatayı yapmanın eşiğinden döndü ve dönüşü ölçümle belgeliyor:
+> eşleştirilmiş biçim olmasaydı, tez var olmayan bir FP16 cezası raporlayacaktı — üstelik
+> **en büyüğünü, enerji kazananının tam üstünde.**
+
+### 7a-2 · Sıralama üçüncü kez değişti
+
+100 karelik alt kümede sıralama: SegFormer-B0 **0,6950** > PIDNet-S **0,6670** >
+DDRNet-23-slim **0,6597**. 500 karede ise: SegFormer-B0 0,6934 > DDRNet 0,6850 >
+PIDNet-S 0,6768.
+
+**DDRNet ikincilikten sonunculuğa düşüyor, PIDNet-S üçüncülükten ikinciliğe çıkıyor** —
+model değişmedi, hassasiyet değişmedi, yalnızca kare alt kümesi değişti. §9a'nın
+"ilk grup ayrışmıyor" bulgusunun bağımsız üçüncü kanıtı budur.
+
+**Sınır:** 100 kare, tek koşu, üç mimari (BiSeNetV2 ve PIDNet-M'in motorları bu turda
+ölçülmedi). Bootstrap örnekleme belirsizliğini ölçer; TensorRT'nin çekirdek seçimi
+donanım/sürücü sürümüne bağlıdır ve bu ölçüm tek bir cihazın tek bir yapılandırmasıdır.
+
+---
+
 ## 8 · Kare bütçesinin nereye gittiği
 
 Aşama profili (PIDNet-S, 60 kare, gerçek cihaz):
