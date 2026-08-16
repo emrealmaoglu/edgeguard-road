@@ -55,7 +55,7 @@ motora hiç dokunulmadan, çıktılar birebir aynı.
 
 | # | iş | değer | durum |
 |---|---|---|---|
-| D1 | FP16 dağıtım sadakati (Jetson'da mIoU) | `numerical_equivalence_pending` kapanır | ⚪ script hazır |
+| D1 | FP16 dağıtım sadakati | eşleştirilmiş FP16↔FP32 aynı koşuda; alt küme hazır (`fp16_subset.tgz`), runbook §5 | 🔵 **sende** — tek scp + tek komut |
 | D2 | 5 modelin ACDC ölçümü (şu an sadece PIDNet-S) | koşul × mimari etkileşimi | ⚪ ~40 dk |
 | D3 | Zamansal kalıcılık (riskin 7. özelliği) | 150 kare: izlerin %50,1'i tek karelik | ✅ |
 | D4 | Sürülebilir alan sayısal metriği | Cityscapes val, 200 kare × 5 mimari | ✅ |

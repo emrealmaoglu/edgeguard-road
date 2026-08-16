@@ -248,6 +248,49 @@ karşılaştırması** → **3 Açık küme** → **4 Belirsizlik ve kalibrasyon
 risk** → **6 Uç cihaz telemetrisi** → **7 Sınırlar**. Toplam 2–3 dakika; kalan 2–3 dakika
 konuşma.
 
+## 5 · FP16 dağıtım sadakati (D1) — ölçüm bekleyen son madde
+
+Bu tezdeki **bütün doğruluk sayıları FP32 ONNX'ten** ölçüldü. Cihaza giden şey ise
+**TensorRT FP16 motoru.** `build_tensorrt.py` manifestine baştan beri
+`numerical_equivalence_pending: true` yazıyor ve bunu bugüne kadar hiçbir şey çözmedi.
+Önemi şu: yarım hassasiyet doğruluğa mal oluyorsa, mIoU tablosu **kimsenin dağıtmadığı bir
+modeli** anlatıyor demektir.
+
+### 5a · Alt kümeyi cihaza gönder (Mac'te)
+
+```bash
+scp .local/presentation/fp16_subset.tgz emre@100.102.153.67:~/
+```
+
+239 MB, 100 kare — 500 val karesinden eşit aralıklı seçildi (ilk 100 değil; ardışık kareler
+tek şehri örnekleyip soruyu değiştirirdi). Görüntü + `labelTrainIds` maskesi içeriyor.
+
+### 5b · Jetson'da aç ve ölç
+
+```bash
+tar xzf ~/fp16_subset.tgz -C ~/
+cd ~/edgeguard-road && python scripts/jetson/evaluate_engine.py \
+  --engine ~/results/pidnet_s_reference.plan \
+  --engine-manifest ~/results/pidnet_s_reference_engine.json \
+  --image-root ~/fp16-subset/leftImg8bit --mask-root ~/fp16-subset/gtFine \
+  --onnx ~/onnx/pidnet_s_reference.onnx \
+  --reference-miou 0.6768 \
+  --output ~/eg-presentation/jetson/pidnet_s_fp16_accuracy.json
+```
+
+FP32 referansları: **pidnet_s 0,6768 · ddrnet_23_slim 0,6850 · segformer_b0 0,6934**.
+`--onnx` yolunu cihazdaki ONNX klasörüne göre düzeltin (`ls ~/*onnx*`).
+
+### 5c · Ne öğreneceğiz
+
+`--onnx` verildiğinde iki hassasiyet **aynı koşuda, aynı karelerde** puanlanır ve
+kare-başına fark bootstrap edilir. Bu, iki mIoU'yu yan yana yazmaktan güçlüdür: ayrı ayrı
+ölçülmüş iki sayı arasındaki 0,003'lük bir fark yarım hassasiyet de olabilir, kare alt
+kümesi de — ikisini yalnızca eşleştirilmiş biçim ayırt eder.
+
+Aralık sıfırı içeriyorsa cevap **"bu ölçümün algılayabildiği bir bedel yok"** olur —
+"ikisi aynı" değil. Manifestteki bayrağın sorduğu soru tam olarak budur.
+
 ## Sunumda söylenmeyecekler
 
 - **Piksel düzeyinde OOD sayısı (AUPR/FPR95) yok.** `evaluation/ood.py::pixel_ood_metrics`
