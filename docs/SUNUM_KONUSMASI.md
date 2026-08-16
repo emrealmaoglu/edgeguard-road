@@ -1,370 +1,237 @@
-# Sunum konuşması — yönetmen metni
+# Sunum konuşması
 
-**Bu bir kayıt, canlı savunma değil.** Takılırsan durur, o cümleyi tekrar alırsın. Kimse
-araya girmeyecek. Ton buna göre: **anlatıyorsun, savunmuyorsun.**
+**Hedef 5 dakika.** Kayıt, canlı savunma değil — takılırsan durur, o cümleyi tekrar
+alırsın.
 
-## Nasıl okunur
+Format basit: **sayfaya geç, oku.** İmleçle bir şey göstermene gerek yok; ekranda zaten
+yazıyor, sen anlat. Ekran kaydı olduğu için hoca isterse durdurup kendisi okur.
 
-| işaret | anlamı |
-|---|---|
-| `> "..."` | **Söyleyeceğin cümle.** Kelimesi kelimesine okuyabilirsin. |
-| **[DUR]** | Bir saniye sus. Nefes al. Bu boşluk kayıtta çok iyi durur. |
-| **kalın** | Sesini hafif yükselt, o kelimenin üstüne bas. |
-| `▸ Ekran:` | O anda ekranda ne olacak. |
-| `▸ Yap:` | Fareyle/klavyeyle ne yapacaksın. |
+- `> "..."` → **söyleyeceğin cümle**, kelimesi kelimesine okuyabilirsin
+- **[DUR]** → bir saniye sus, nefes al
+- **kalın** → o kelimenin üstüne bas
 
-**Omurga — sunum boyunca kaybetme:**
-*"Beş model karşılaştırdık. Asıl bulgu modellerde değil, karşılaştırmanın kendisinde çıktı."*
+**Ölçülen süre:** 715 kelime ≈ **5 dakika 5 saniye** konuşma. Duraklamalar, sayfa
+geçişleri ve görselleri sessiz gösterdiğin süreyle **5 dakika 50 saniye.**
 
-**Uzunluk — ölçüldü, tahmin değil:** 888 kelime + 15 duraklama + 8 sayfa geçişi.
-Dakikada 140 kelimeyle **6 dakika 50 saniye.** Üst sınır 7 dakika olduğu için **payın
-dar** — iki sonucu var:
-
-- **Hızlanma.** Kayıtta herkes hızlanır, sen de hızlanırsan 6 dakikaya iner ve
-  duraklamalar kaybolur. Metnin ritmi onlara göre kuruldu.
-- **Sarkarsan §5'i atla** (Bağlamsal risk, 4:00–4:20). Bu **20 saniye** kazandırır ve
-  seni 6:30'a indirir. Kararı çekim sırasında değil, **şimdi** ver: saatine bakıp
-  5. sayfaya geldiğinde 4 dakikayı geçtiysen atla.
-
-**Ezberle, kâğıda bakma:** `+0,10` · `0,4805` · `17 kat`. Gerisi ekranda zaten yazıyor.
+Tam 5 dakika istiyorsan Sayfa 5'in ilk paragrafını atla ve doğrudan görsellere geç —
+**5:30'a** iner. Daha fazlasını kesmeni önermem; kalanların hepsi bir bulguyu taşıyor.
 
 ---
 
-# ⏱ 0:00 – 0:55 · Açılış
-
-`▸ Ekran:` Sayfa 1, tarayıcı tam ekran (F11).
-`▸ Yap:` Konuşmaya başlamadan önce **iki saniye bekle.** Kayıt otursun.
+## Sayfa 1 · Problem *(0:00 – 0:45)*
 
 > "Bir otoyolda gidiyorsunuz. Önünüzdeki kamyondan bir kasa düşüyor.
 >
 > **[DUR]**
 >
-> İnsan sürücü ne yapar? Ne olduğunu anlamaz — ama bilmediği bir şey olduğunu anlar. Ve
-> yavaşlar.
+> İnsan sürücü ne olduğunu anlamaz — ama bilmediği bir şey olduğunu anlar ve yavaşlar.
 >
-> Peki bir yapay zekâ algı sistemi ne yapar?
->
-> **[DUR]**
->
-> Onu **yol** diye sınıflandırır. Ve bundan yüzde seksen beş **emin** olur.
->
-> Çünkü ona öğretilen on dokuz sınıfın arasında 'düşmüş kasa' diye bir şey yok. Modelin
-> elinde o kutuyu koyacağı bir yer yok — en yakın gördüğü şeye koyuyor. Asfalta.
+> Peki bir segmentasyon modeli ne yapar?
 >
 > **[DUR]**
 >
-> Bu tezin çıkış noktası tam olarak bu. Sorun modelin **yanılması** değil. Sorun,
-> yanıldığını **bilmemesi.**"
+> Onu **yol** diye sınıflandırır, ve bundan yüzde seksen beş **emin** olur. Çünkü
+> öğrendiği on dokuz sınıfın arasında 'düşmüş kasa' yok — en yakın gördüğü şeye koyuyor.
+>
+> Sorun modelin yanılması değil. Sorun, **yanıldığını bilmemesi.**
+>
+> Bu proje tam olarak bunu ölçüyor: doğruluk, **uncertainty**, **open-set** ve uç cihaz
+> maliyeti. Dört eksen."
 
-`▸ Yap:` İmleci sol üstteki canlı değerlere götür, bir saniye bekle.
+*Aşağıdaki sistem mimarisi şemasını göster, birkaç saniye sessiz bekle.*
 
-> "Şu anda gördüğünüz panel, anlattığı cihazın **üzerinde** çalışıyor. Sol üstteki güç ve
-> sıcaklık, Jetson'ın şu andaki gerçek değerleri — bir yerden alınmış ekran görüntüsü
-> değil."
-
-`▸ Yap:` İmleci dört eksen kutusunun üstünde soldan sağa gezdir.
-
-> "Projeyi dört eksende ölçtük: doğruluk, belirsizlik, açık küme ve uç cihaz maliyeti.
-> Sırayla gidelim."
+> "Sistemin akışı bu: kare, TensorRT motoru, sonra CPU tarafında maske, güven haritası
+> ve risk sıralaması. Panel de bu cihazın **üzerinde** çalışıyor — sol üstteki watt ve
+> sıcaklık Jetson'ın şu anki gerçek değerleri."
 
 ---
 
-# ⏱ 0:55 – 1:55 · İlk bulgu (Sayfa 2)
+## Sayfa 2 · Model karşılaştırması *(0:45 – 1:35)*
 
-`▸ Yap:` Sol menüden **"2 · Model karşılaştırması"**. Bir saniye bekle.
-`▸ Ekran:` Beş satırlık büyük tablo.
-
-> "Beş tane gerçek zamanlı segmentasyon mimarisi aldık. Hepsini **aynı protokolle**, aynı
-> veriyle, kendi dağıtım çözünürlüğümüzde ölçtük.
+> "Beş tane real-time segmentasyon mimarisi aldık; hepsini aynı protokolle, aynı veriyle,
+> kendi deployment çözünürlüğümüzde ölçtük.
 >
-> Ve ilk bulgu burada çıktı."
-
-`▸ Yap:` İmleci **"Yayın mIoU"** sütununda yukarıdan aşağı indir, sonra **"Ölçülen mIoU"**
-sütununda aynısını yap. Karşılaştırıyor gibi.
-
-> "Soldaki sütun literatürün yayınladığı doğruluk. Sağdaki bizim ölçtüğümüz.
+> Tabloda soldaki sütun literatürün yayınladığı **mIoU**, sağdaki bizim ölçtüğümüz.
 >
 > **[DUR]**
 >
-> Sıralama **tutmuyor.** İki sütun arasındaki korelasyon artı **sıfır nokta on** — yani
-> pratikte hiçbir ilişki yok.
+> Sıralama **tutmuyor.** Aralarındaki korelasyon artı sıfır nokta on — pratikte ilişki yok.
+> Yayınlanmış sıralamada sonuncu olan SegFormer, bizim ölçümümüzde başa çıkıyor.
 >
-> Bakın: yayınlanmış sıralamada **en sonda** olan SegFormer, bizim ölçümümüzde **en
-> başa** çıkıyor.
+> Yani uç cihaza model seçerken model zoo'daki sayıya bakamazsınız. Kendiniz ölçmek
+> zorundasınız.
 >
 > **[DUR]**
 >
-> Bunun pratik anlamı şu: uç cihaza model seçerken model zoo'daki sayıya bakamazsınız.
-> **Kendiniz ölçmek zorundasınız.** Bu tezin ilk katkısı bu."
+> İkinci bulgu: 'en doğru model hangisi' sorusunun cevabı **yok.** Beş modeli aynı beş yüz
+> karede puanlayıp farkın gerçek mi rastlantı mı olduğunu **bootstrap** ile test ettik.
+> İlk iki model arasındaki fark sıfır çıktı, güven aralığı sıfırı içeriyor.
+>
+> Doğrulukta bir kazanan değil, **ayırt edilemez bir tepe grubu** var. Bu da seçimi
+> otomatik olarak enerjiye ve dayanıklılığa bırakıyor."
 
 ---
 
-# ⏱ 1:55 – 2:40 · İkinci bulgu (Sayfa 2, üst)
+## Sayfa 3 · Open-set *(1:35 – 2:15)*
 
-`▸ Yap:` Sayfanın başına kaydır. Dört metrik kutusu görünsün.
-
-> "İkincisi daha da ilginç. 'En doğru model hangisi' diye sorduk. Cevabı **yok.**"
-
-`▸ Yap:` İmleci **"Doğrulukta — berabere"** kutusunun üstüne koy, orada bırak.
-
-> "Şöyle test ettik: beş modeli de **aynı beş yüz karede** puanladık, sonra aradaki farkın
-> gerçek mi yoksa rastlantı mı olduğunu bootstrap ile ölçtük.
+> "Open-set derken modelin **hiç görmediği** şeyleri kastediyoruz. Altmış karelik, piksel
+> piksel etiketlenmiş gerçek yol tehlikesi verisi kullandık — hiçbir model bununla
+> eğitilmedi.
 >
-> İlk iki model arasındaki fark: **artı sıfır, sıfır, sıfır, sıfır.** Güven aralığı sıfırı
-> içeriyor.
+> Üstteki tabloda dört farklı uncertainty skorunu karşılaştırdık. Sıralama literatürün
+> söylediğiyle aynı çıktı: **energy** en iyisi, **softmax** en kötüsü.
 >
 > **[DUR]**
 >
-> On model çiftinin sekizi ayrışıyor. **İlk ikisi ayrışmıyor.**
+> Asıl bulgu alttaki tabloda. Tehlikeleri türüne göre ayırdığımızda, yola düşmüş yükte
+> **AUROC sıfır nokta kırk sekiz.**
 >
-> Yani doğrulukta bir kazanan yok — **ayırt edilemez bir tepe grubu** var. Ve bu, seçimi
-> otomatik olarak başka eksenlere bırakıyor: enerji ve dayanıklılık."
+> Sıfır nokta elli yazı-tura demek. Yani sistem, yolda duran bir kargoyu yazı-turadan
+> **daha kötü** ayırt ediyor. Açılışta anlattığım kasa — ölçtük, gerçekten fark etmiyor.
+>
+> Bu sayıyı gizlemedik, çünkü güvenlik açısından en önemli sayı bu."
 
 ---
 
-# ⏱ 2:40 – 3:20 · Açık küme (Sayfa 3)
+## Sayfa 4 · Kalibrasyon *(2:15 – 2:50)*
 
-`▸ Yap:` Sol menüden **"3 · Açık küme yol tehlikesi"**.
-
-> "Açık küme derken şunu kastediyoruz: modelin **hiç görmediği** bir şey.
->
-> Altmış karelik, piksel piksel etiketlenmiş gerçek yol tehlikesi verisi kullandık.
-> Hiçbir model bu veriyle eğitilmedi."
-
-`▸ Yap:` Üstteki skor tablosunu göster, **üç saniye**, sonra aşağı kaydır.
-
-> "Dört farklı belirsizlik skorunu karşılaştırdık. Sıralama literatürün söylediğiyle aynı
-> çıktı — bu da uygulamamızın doğru çalıştığının bağımsız bir kanıtı.
->
-> Ama asıl bulgu aşağıda."
-
-`▸ Yap:` İmleci **`lost` satırının** üstüne koy ve orada bırak.
-
-> "Tehlikeleri türüne göre ayırdığımızda: yola düşmüş yükte AUROC **sıfır nokta kırk
-> sekiz.**
+> "**Calibration** şu demek: model 'yüzde doksan eminim' dediğinde gerçekten yüzde doksan
+> haklı mı? Üstteki tabloda görüldüğü gibi, model **kesinlikle yanıldığı** piksellerde
+> bile yüzde yetmiş üç ile seksen dört arası güven veriyor.
 >
 > **[DUR]**
 >
-> Sıfır nokta elli, yazı-tura demek. Yani sistem, yolda duran bir kargoyu **yazı-turadan
-> daha kötü** ayırt ediyor.
->
-> Açılışta anlattığım kasa — ölçtük, gerçekten fark edemiyor.
->
-> Bu sayıyı gizleyebilirdik. Gizlemedik, çünkü güvenlik açısından bu tezin **en önemli
-> sayısı** bu."
+> Alttaki tablo daha önemli. Tek bir **ECE** sayısı yanıltıyor: sahnenin yüzde otuz
+> dokuzu asfalt, model orada hem çok emin hem haklı, ve o kütle küçük sınıflardaki aşırı
+> güveni **yutuyor.** Class-wise hesapladığımızda hata **bir buçuk ile üç kat** büyüyor —
+> her modelde en kötü sınıf aynı: direk ve çit."
 
 ---
 
-# ⏱ 3:20 – 4:00 · Kalibrasyon (Sayfa 4)
-
-`▸ Yap:` Sol menüden **"4 · Belirsizlik ve kalibrasyon"**, sonra aşağı kaydır —
-**"Havuzlanmış ECE neyi saklıyor"** tablosuna kadar.
-
-> "Kalibrasyon şu demek: model 'yüzde doksan eminim' dediğinde, gerçekten yüzde doksan
-> haklı mı?
->
-> Standart ölçüsü ECE. Ama tek bir ECE sayısı **yanıltıyor** — ve bunu ölçtük."
-
-`▸ Yap:` İmleci **"Havuzlanmış ECE"** ile **"Sınıf-bazlı ECE"** sütunları arasında gezdir.
-
-> "Bir sürüş sahnesinin yüzde otuz dokuzu **asfalt.** Model asfaltta hem çok emin, hem de
-> haklı. O büyük kütle, küçük sınıflardaki aşırı güveni **yutuyor.**
->
-> Sınıf bazlı hesapladığımızda hata **bir buçuk ile üç kat** büyüyor.
->
-> **[DUR]**
->
-> Ve her modelde en kötü sınıf aynı çıkıyor: **direk ve çit.** Şuradaki PIDNet, direkte
-> kendi havuzlanmış değerinin **sekiz katı** hata veriyor. Üstelik emin olarak."
-
----
-
-# ⏱ 4:00 – 4:20 · Bağlamsal risk (Sayfa 5) · *sarkarsan bu bölümü atla*
-
-`▸ Yap:` Sol menüden **"5 · Bağlamsal risk"**.
+## Sayfa 5 · Bağlamsal risk ve görseller *(2:50 – 3:35)*
 
 > "Bulunan bölgeler yedi özellikli, **açıklanabilir** bir füzyonla sıralanıyor — kara kutu
-> bir skor değil; hangi etkenin ne kadar katkı verdiği yazılı.
+> bir skor değil. Alttaki sürülebilir alan tablosunda önemli olan sütun
+> **yanlış-sürülebilir**: aracın gireceği ama yol olmayan piksellerin oranı."
+
+*Aşağı kaydır, görselleri sırayla göster. Her birinde 3-4 saniye sessiz bekle.*
+
+> "Şurada aynı karede beş mimarinin çıktısı var.
 >
-> Ölçemediğimiz bir özelliği sıfır **değerle** değil, sıfır **ağırlıkla** dışlıyoruz.
-> Sıfır değer verseydik, ölçülmemiş bir sinyali 'risk yok' gibi gösterirdi.
->
-> Zamansal ölçüm de şunu söylüyor: sistemin işaretlediğinin **yarısı tek kare yaşıyor.**"
+> Bu segmentasyon, bu sürülebilir koridor, bu bulunan bölgeler, bu da operasyonel dikkat
+> haritası — sistemin hangi bölgeye öncelik verdiği."
 
 ---
 
-# ⏱ 4:20 – 5:20 · Uç cihaz ve mekanizma (Sayfa 6)
+## Sayfa 6 · Uç cihaz *(3:35 – 4:25)*
 
-`▸ Yap:` Sol menüden **"6 · Uç cihaz: koşu telemetrisi"**.
-`▸ Ekran:` Üç grafik — güç, RAM, sıcaklık.
-
-> "Uç ölçümlerini gerçek cihazda aldık. Yirmi beş watt modunda, **altı yüz saniye
-> kesintisiz yük** altında.
+> "Uç ölçümleri gerçek cihazda alındı: yirmi beş watt modunda, altı yüz saniye kesintisiz
+> yük altında.
 >
-> Bu eğriler o koşu sırasında kaydedildi. Sıcaklığın düz gitmesi önemli — **termal kısma
-> olmadığını** gösteriyor. Yani bu sayılar cihazın ısınmadan önceki iyi anları değil,
+> Bu eğriler o koşu sırasında kaydedildi. Sıcaklığın düz gitmesi **thermal throttling**
+> olmadığını gösteriyor — yani bu sayılar cihazın ısınmadan önceki iyi anları değil,
 > sürdürebildiği gerçek performans."
 
-`▸ Yap:` Aşağı kaydır, benchmark tablosuna gel.
+*Aşağı kaydır, benchmark tablosuna gel.*
 
-> "Ve burada projenin mühendislik açısından en önemli bulgusu var."
-
-`▸ Yap:` İmleci önce **"Motor"** sütununa, sonra **"Kare"** sütununa götür. İkisi arasında
-bir kez git-gel yap.
-
-> "SegFormer'ın TensorRT motoru, DDRNet'ten sadece **on bir milisaniye** yavaş.
+> "Ve projenin mühendislik açısından en önemli bulgusu burada.
 >
-> Ama uçtan uca karesi **yüz doksan üç milisaniye** yavaş.
+> SegFormer'ın TensorRT motoru DDRNet'ten sadece **on bir milisaniye** yavaş. Ama uçtan uca
+> karesi **yüz doksan üç milisaniye** yavaş.
 >
 > **[DUR]**
 >
 > Motor farkının **on yedi katı.**
 >
-> Sebebi şu: SegFormer çıktısını daha ince bir ızgarada üretiyor. Bu da CPU tarafındaki
-> işleme **dört kat piksel** veriyor. Hızlandırıcı ölçekleniyor, CPU ölçeklenmiyor.
+> Sebebi output **stride**: SegFormer çıktısını daha ince ızgarada üretiyor, bu da CPU
+> tarafına dört kat piksel veriyor. Yani uç cihazda sistem maliyetini FLOP ya da model
+> boyutu değil, segmentasyon başının çıktı stride'ı belirliyor.
 >
-> **[DUR]**
->
-> Yani uç cihazda sistem maliyetini FLOP sayısı ya da model boyutu değil, **segmentasyon
-> başının çıktı stride'ı** belirliyor.
->
-> Ve bu tek parametre, sunum boyunca saydığım bütün başarısızlıkları açıklıyor. İnce
-> yapılar — direk, trafik ışığı, levha, insan — hem kötü segmentleniyor, hem kötü kalibre
-> ediliyor, hem parçalanıyor. **Beş ayrı ölçüm, tek mekanizma.**"
+> Motorun kare bütçesindeki payı zaten sadece yüzde beş. O yüzden optimizasyonu modele
+> değil koda yaptık: kare süresi yüz kırk altı milisaniyeden doksan dörde indi, modele hiç
+> dokunmadan."
 
-`▸ Yap:` Aşağı kaydır, kare bütçesi tablosunu göster.
+*Aşağı kaydır, demo videosunu göster. Oynatıp 5-6 saniye sessiz izlet.*
 
-> "Son olarak: motorun kare bütçesindeki payı sadece **yüzde beş.** O yüzden optimizasyonu
-> modele değil koda yaptık. Kare süresi **yüz kırk altı milisaniyeden doksan dörde** indi —
-> modele hiç dokunmadan, çıktılar birebir aynı kalarak."
+> "Bu da hareketli sahnede sistemin çıktısı — Cityscapes demo videosu, yüz seksen kare,
+> önceden üretildi."
 
 ---
 
-# ⏱ 5:20 – 6:00 · Sınırlar (Sayfa 7)
+## Sayfa 7 · Sınırlar ve kapanış *(4:25 – 5:00)*
 
-`▸ Yap:` Sol menüden **"7 · Sınırlar"**. Bu bölümü **sakin** anlat, acele etme.
-
-> "Sınırlar. Bunları sona sakladım ama gizlemiyorum.
+> "Sınırlar. Real-time hedefini **geçemedik** — en iyi sonuç saniyede on iki buçuk kare,
+> hedef yirmiydi. Ama darboğazın nerede olduğunu ölçtük: model değil, CPU tarafı.
 >
-> Gerçek zaman hedefini **geçemedik.** En iyi sonuç saniyede on iki buçuk kare, hedef
-> yirmiydi. Ama darboğazın nerede olduğunu ölçtük: model değil, CPU tarafı. Yani yol
-> belli, sadece yürünmedi.
+> Bir de bu projede **yanlış çıkan iki sonuç** oldu, ikisi de burada duruyor. Bir ara
+> 'doğruluk arttıkça open-set güvenliği düşüyor' diye çarpıcı bir korelasyon bulmuştuk;
+> **geri çektik.** Çünkü o korelasyon yayınlanmış mIoU ile hesaplanmıştı, kendi
+> ölçtüğümüzle ilişki sıfır çıktı.
 >
 > **[DUR]**
 >
-> Bir de şu var: bu projede **yanlış çıkan iki sonuç** oldu. İkisi de burada duruyor."
-
-`▸ Yap:` **"Geri çekilen iki iddia"** bölümünü göster.
-
-> "Bir ara çok çarpıcı bir korelasyon bulmuştuk — 'doğruluk arttıkça açık küme güvenliği
-> düşüyor.' **Geri çektik.**
+> Toparlayayım. Uç cihaz için model seçimi yayınlanmış doğruluğa bakarak yapılamaz;
+> doğrulukta ilk grup ayrışmadığı için seçim enerjiye kalıyor; ve sistem maliyetini output
+> stride belirliyor.
 >
-> Çünkü o korelasyon **yayınlanmış** doğrulukla hesaplanmıştı. Kendi ölçtüğümüz
-> değerlerle yaptığımızda ilişki sıfır çıktı. Bulduğumuz şey mimarilerin bir özelliği
-> değil, yayınlanmış sıralamanın bizim koşulumuza taşınmamasıydı — yani zaten birinci
-> bulgumuz.
+> Başta bir kasa düşmüştü. Ölçtük — sistem onu fark etmiyor. Bu proje o sorunu **çözmüyor**,
+> ama nerede olduğunu ve neden olduğunu ölçüyor.
 >
-> İkincisini de ölçümle düzelttik.
->
-> **[DUR]**
->
-> Ölçüm yapan bir çalışmanın en zayıf yeri, düzeltmediği hatalardır."
-
----
-
-# ⏱ 6:00 – 6:30 · Kapanış
-
-`▸ Yap:` Sayfa 7'de kal. Konuşma bitince **iki saniye bekle**, sonra kaydı kes.
-
-> "Toparlayayım. Üç cümle.
->
-> **Bir:** uç cihaz için model seçimi, yayınlanmış doğruluğa bakarak yapılamaz.
->
-> **İki:** doğrulukta ilk grup birbirinden ayrışmıyor; o yüzden seçim enerji ve
-> dayanıklılığa kalıyor.
->
-> **Üç:** sistem maliyetini modelin boyutu değil, çıktı stride'ı belirliyor.
->
-> **[DUR]**
->
-> Başta bir kasa düşmüştü, hatırlarsanız. Ölçtük — sistem onu fark etmiyor.
->
-> Bu tez o sorunu **çözmüyor.** Ama nerede olduğunu, ne kadar büyük olduğunu ve **neden**
-> olduğunu ölçüyor.
->
-> Çünkü bir sistemin neyi bilmediğini bilmek, bildiğini sanmaktan iyidir.
->
-> **[DUR]**
->
-> Panelde gördüğünüz her sayı, diskteki bir ölçüm kaydından okunuyor. Panel canlı çıkarım
-> yapmıyor, hiçbir sayı elle yazılmadı.
+> Panelde gördüğünüz her sayı diskteki bir ölçüm kaydından okunuyor; hiçbiri elle yazılmadı.
 >
 > Teşekkür ederim."
 
 ---
 
-# Kayıt notları
+## Kayıt notları
 
-## Çekimden hemen önce
+**Çekimden önce:** tarayıcı tam ekran (F11) · sayfa 1'de bekliyor · telefon sessiz ·
+bildirimler kapalı · mikrofonu bir cümleyle test et.
 
-- [ ] Tarayıcı **tam ekran** (F11), sol menü görünür
-- [ ] Sayfa **1**'de bekliyor
-- [ ] Telefon sessiz, masaüstü bildirimleri kapalı
-- [ ] Mikrofon testi: bir cümle söyle, geri dinle — tıslama, uğultu, yankı var mı
-- [ ] Bu metin **ikinci ekranda** ya da yazdırılmış
+**Konuşurken:**
 
-## Konuşurken
+- Sayfa geçtikten sonra **bir saniye sus**, sonra konuş. En sık atlanan şey bu.
+- **Tabloları okuma.** Sayfa başına bir-iki sayıyı sesli söyle, gerisi ekranda dursun.
+- Görsellerde **sessiz bekle.** Konuşurken geçiştirme — video ve resimler kendi başlarına
+  anlatıyor.
+- Kayıtta herkes hızlanır. Bilerek yavaş konuş.
 
-- **Sayfa geçtikten sonra bir saniye sus.** İzleyicinin gözü yeni sayfaya otursun, sonra
-  konuş. En sık atlanan şey bu — ve kaydı en çok amatör gösteren şey de bu.
-- **İmleci sürekli oynatma.** Bir şeyi gösterirken götür, orada **bırak**, konuş, sonra
-  çek. Titreyen imleç izleyiciyi yorar.
-- **Tabloları okuma.** Tablo arka plan, sen ön plansın. Sayfa başına **bir** sayıyı sesli
-  söyle, gerisi ekranda dursun.
-- **Hızlanma refleksine dikkat.** Kayıtta herkes hızlanır. Bilerek yavaş konuş — fazladan
-  yarım dakika payın var.
-- **[DUR]** işaretlerini atlama. Metnin ritmi onlara göre kuruldu; atlarsan hem hızlanır
-  hem de vurgular kaybolur.
-
-## Bir şeyler ters giderse
+**Ters giderse:**
 
 | durum | ne yap |
 |---|---|
-| Cümleyi bozdun | Dur, **üç saniye** bekle, cümleyi baştan al. Boşluk bırakmak kesmeyi kolaylaştırır. |
-| Panel takıldı | F5 ile yenile, kaldığın sayfaya dön, o bölümü tekrar al. |
-| Süre aşıyor | **§5'i tamamen atla.** Yetmezse §3'teki skor tablosu cümlesini kes, doğrudan `lost` satırına geç. |
-| Süre kısa kaldı | Sayfa 6'daki "Koşu" menüsünden başka model seç, eğrilerin yenilendiğini göster: *"her model için ayrı telemetri kaydı var."* On saniye. |
+| Cümleyi bozdun | Dur, üç saniye bekle, cümleyi baştan al — sonra o kısmı kesersin |
+| Panel takıldı | F5, kaldığın sayfaya dön, o bölümü tekrar al |
+| Süre aşıyor | Sayfa 5'in ilk paragrafını kes, doğrudan görsellere geç |
+| Süre kısa kaldı | Sayfa 6'daki "Koşu" menüsünden başka model seç, eğriler yenilensin |
 
-## Vaktin kalırsa söyleyebileceklerin
+**Ezberle:** `+0,10` · `0,48` · `17 kat`. Gerisi ekranda yazıyor.
 
-Kayıt altı dakikanın altında bittiyse aşağıdakilerden **bir** tanesini ekleyebilirsin.
-Hepsini sıkıştırma.
+---
 
-*(Not: değerlendirme formunda "soruları yanıtlama yetkinliği" diye 7 puanlık bir satır var.
-Dersin bu dönem nasıl işlediğini sen biliyorsun; sözlü bir kısım çıkarsa bunlar hazır
-cevap olarak durur.)*
+## Sorulursa
+
+*(Sözlü bir kısım olursa hazır dursun.)*
 
 **Kendi modelinizi eğitmediniz mi?**
-> Eğittik — Cityscapes ve IDD20K karışımıyla, sınırlı bir bütçede. Ama o modeller
-> yayınlanmış checkpoint'lerin yüzde 0,7'si kadar örnek gördü. O yüzden karşılaştırma
-> temeli olarak resmî referansları kullandık ve ikisini birbirine **karıştırmadık** —
-> tezde ikisi de ayrı bölümlerde.
+> Eğittik, Cityscapes ve IDD20K karışımıyla — ama sınırlı bütçede, yayınlanmış
+> checkpoint'lerin yüzde 0,7'si kadar örnekle. O yüzden karşılaştırma temeli olarak resmî
+> referansları kullandık ve ikisini karıştırmadık.
 
 **n = 5 ile korelasyon konuşulur mu?**
-> Konuşulmaz, ve tezde de öyle yazıyor. Nitekim o eksi 0,90 bulgusunu tam bu yüzden geri
-> çektik. Sayısal iddialarımız korelasyondan değil, **eşleştirilmiş karşılaştırmadan**
-> geliyor — aynı kareler, güven aralığıyla.
+> Konuşulmaz, tezde de öyle yazıyor — nitekim o eksi 0,90 bulgusunu bu yüzden geri çektik.
+> Sayısal iddialarımız korelasyondan değil, aynı karelerde yapılan eşleştirilmiş
+> karşılaştırmadan geliyor.
 
 **FP16'ya çevirince doğruluk kaybettiniz mi?**
-> Ölçtük. Cihazda, FP16 motoruyla FP32'yi **aynı koşuda aynı karelerde** puanladık: fark
-> sıfırdan ayırt edilemiyor, piksel uyumu yüzde 99,97. Eşleştirmeseydik yanlış sonuca
-> varacaktık — ayrı ölçülmüş sayılarla kıyaslayınca sahte bir ceza çıkıyordu.
+> Ölçtük. Cihazda FP16 motorla FP32'yi aynı koşuda aynı karelerde puanladık: fark sıfırdan
+> ayırt edilemiyor, piksel uyumu yüzde 99,97.
 
-**12 FPS gerçek zamanlı sayılır mı?**
-> Sayılmaz, ve demiyoruz da. Sınırlar sayfasında "geçilmedi" yazıyor. Ölçtüğümüz şey
-> darboğazın nerede olduğu: motorun payı yüzde beş, gerisi CPU tarafı.
+**12 FPS real-time sayılır mı?**
+> Sayılmaz, öyle de demiyoruz — sınırlar sayfasında "geçilmedi" yazıyor. Ölçtüğümüz şey
+> darboğazın nerede olduğu.
 
 **Bu bir ürün mü?**
-> Hayır, araştırma prototipi. ISO 26262 kapsamında hiçbir güvenlik seviyesi hedeflenmedi
-> ve tezde bu açıkça yazılı. Ama bulgular ISO 21448 — yani SOTIF — sınıfında: sistem
-> arızalanmadan, sadece algı yetersiz kaldığı için ortaya çıkan tehlikeler.
+> Hayır, araştırma prototipi. ISO 26262 kapsamında bir güvenlik seviyesi hedeflenmedi.
+> Bulgular ISO 21448 — SOTIF — sınıfında: sistem arızalanmadan, sadece algı yetersiz
+> kaldığı için ortaya çıkan tehlikeler.
