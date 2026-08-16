@@ -262,6 +262,7 @@ def main() -> None:
     acdc = load_group(root / "acdc")
     risk = load_group(root / "risk")
     drivable = load_group(root / "drivable")
+    temporal = load_group(root / "temporal")
     shift = load_json(root / "shift_response.json")
     profiles = load_group(root / "profile")
 
@@ -307,7 +308,7 @@ def main() -> None:
     elif page.startswith("4"):
         render_uncertainty(st, accuracy, open_set, acdc, shift, root)
     elif page.startswith("5"):
-        render_risk(st, risk, drivable, root)
+        render_risk(st, risk, drivable, temporal, root)
     elif page.startswith("6"):
         render_edge(st, jetson, profiles, root)
     else:
@@ -625,7 +626,7 @@ def render_uncertainty(
         show_image(st, root / "figures" / "pidnet_s" / name, caption)
 
 
-def render_risk(st: Any, risk: dict, drivable: dict, root: Path) -> None:
+def render_risk(st: Any, risk: dict, drivable: dict, temporal: dict, root: Path) -> None:
     st.title("Bağlamsal risk analizi")
     st.caption(
         "Yedi ağırlıklı özelliğin açıklanabilir füzyonu. Ölçülemeyen özellikler sıfır "
@@ -661,6 +662,7 @@ def render_risk(st: Any, risk: dict, drivable: dict, root: Path) -> None:
         "Bu bir operasyonel dikkat sıralamasıdır, fiziksel risk olasılığı değildir — "
         "kayıt `calibrated_physical_risk_probability: false` der."
     )
+    render_temporal(st, temporal)
     render_drivable(st, drivable)
     show_image(st, root / "qualitative" / "models_same_frame.png", "Aynı karede beş mimari")
     for name, caption in (
@@ -670,6 +672,38 @@ def render_risk(st: Any, risk: dict, drivable: dict, root: Path) -> None:
         ("attention_map.png", "Operasyonel dikkat"),
     ):
         show_image(st, root / "figures" / "pidnet_s" / name, caption)
+
+
+def render_temporal(st: Any, temporal: dict) -> None:
+    """Answer the question the zero-weight notice above provokes.
+
+    The page has just told the reader that `temporal_persistence` was excluded because a
+    single frame cannot supply it. That invites the obvious follow-up -- what is being
+    given up? -- and until this measurement there was no answer. There is one now, and it
+    is not a small one.
+    """
+    if not temporal:
+        return
+    record = next(iter(temporal.values()))
+    st.markdown("#### Peki dışlamanın bedeli ne? — 150 ardışık kare, ölçülmüş")
+    columns = st.columns(3)
+    columns[0].metric("Medyan iz ömrü", f"{record.get('median_track_lifetime_frames', 0):.0f} kare")
+    columns[1].metric("Tek karelik iz", f"%{record.get('transient_track_fraction', 0) * 100:.1f}")
+    columns[2].metric(
+        "1. sırası değişen kare", f"%{record.get('top_region_change_fraction', 0) * 100:.1f}"
+    )
+    st.caption(
+        f"{record.get('frames')} ardışık kare (demoVideo `{record.get('sequence')}`), "
+        f"{record.get('region_observations')} bölge gözlemi, "
+        f"{record.get('tracks_with_a_fair_chance')} adil değerlendirilen iz. "
+        "**Sistemin işaretlediğinin yarısı tek kare yaşıyor** — yani tek-kare dikkat, "
+        "istisna olarak değil baskın davranış olarak titriyor."
+    )
+    st.caption(
+        "Sınır: demoVideo etiketsizdir. Ölçülen şey izlerin **geçici** olduğudur, "
+        "**yanlış** olduğu değil — bir kare görünen yaya ile bir karelik segmentasyon "
+        "gürültüsü bu veriyle ayırt edilemez."
+    )
 
 
 def render_drivable(st: Any, drivable: dict) -> None:
@@ -827,7 +861,7 @@ Hiçbiri "ölçülmüş" gibi sunulmuyor.
 |---|---|
 | Gerçek zaman kapısı | **geçilmedi** — en iyi 12,36 FPS; darboğaz CPU tarafı, model değil |
 | FP16 dağıtım sadakati | ölçüm scripti hazır, koşulmayı bekliyor |
-| Zamansal kalıcılık | riskin 7. özelliği; tek karede sıfır **ağırlıkla** dışlanıyor |
+| Zamansal kalıcılık | 150 karede **ölçüldü**; tek kare üretemez, orada sıfır ağırlıklı |
 | Mühürlü final test verisi | **kasıtlı** — yalnızca insan tetikler |
 
 #### Geri çekilen iki iddia

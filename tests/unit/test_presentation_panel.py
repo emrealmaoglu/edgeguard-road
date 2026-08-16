@@ -37,19 +37,22 @@ panel = _load_panel()
 class FakeStreamlit:
     """Record what a page emitted, and accept the whole surface the pages use."""
 
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, Any]] = []
+    def __init__(self, calls: list[tuple[str, Any]] | None = None) -> None:
+        self.calls: list[tuple[str, Any]] = [] if calls is None else calls
 
     def _record(self, name: str):
         def call(*args: Any, **kwargs: Any) -> Any:
-            self.calls.append((name, args[0] if args else None))
+            self.calls.append((name, args if len(args) != 1 else args[0]))
             return None
 
         return call
 
     def __getattr__(self, name: str) -> Any:
         if name in {"columns"}:
-            return lambda spec, **kwargs: [FakeStreamlit() for _ in range(spec)]
+            # Columns record into the same list as the page: content placed in a column is
+            # still content on the page, and a fake that dropped it would let a metric
+            # disappear without failing anything.
+            return lambda spec, **kwargs: [FakeStreamlit(self.calls) for _ in range(spec)]
         if name in {"selectbox", "radio"}:
             return lambda label, options, **kwargs: list(options)[0]
         if name in {"line_chart", "bar_chart", "area_chart"}:
@@ -101,6 +104,13 @@ def populated_root(tmp_path: Path) -> Path:
         ' "ego_corridor": {"road_iou": 0.9557, "road_boundary_f1_tolerance_1px": 0.1530,'
         ' "road_boundary_f1_tolerance_8px": 0.5388, "false_drivable_rate": 0.0058}}',
     )
+    _write(
+        tmp_path / "temporal" / "pidnet_s.json",
+        '{"model": "pidnet_s", "sequence": "stuttgart_00", "frames": 150,'
+        ' "region_observations": 5208, "tracks_with_a_fair_chance": 1382,'
+        ' "transient_track_fraction": 0.5007, "median_track_lifetime_frames": 1.0,'
+        ' "top_region_change_fraction": 0.2}',
+    )
     _write(tmp_path / "shift_response.json", '{"model": "pidnet_s", "ratio": 1.0}')
     return tmp_path
 
@@ -121,7 +131,12 @@ def _pages(root: Path, groups: dict[str, dict]) -> list[tuple[str, Any]]:
                 st, groups["accuracy"], groups["open_set"], groups["acdc"], groups["shift"], root
             ),
         ),
-        ("risk", lambda st: panel.render_risk(st, groups["risk"], groups["drivable"], root)),
+        (
+            "risk",
+            lambda st: panel.render_risk(
+                st, groups["risk"], groups["drivable"], groups["temporal"], root
+            ),
+        ),
         ("edge", lambda st: panel.render_edge(st, groups["jetson"], {}, root)),
         ("limits", lambda st: panel.render_limits(st)),
     ]
@@ -130,7 +145,7 @@ def _pages(root: Path, groups: dict[str, dict]) -> list[tuple[str, Any]]:
 def _groups(root: Path) -> dict[str, dict]:
     return {
         name: panel.load_group(root / name)
-        for name in ("accuracy", "open_set", "jetson", "acdc", "risk", "drivable")
+        for name in ("accuracy", "open_set", "jetson", "acdc", "risk", "drivable", "temporal")
     } | {"shift": panel.load_json(root / "shift_response.json")}
 
 
@@ -141,7 +156,17 @@ def _groups(root: Path) -> dict[str, dict]:
         for name, _ in _pages(
             Path("/"),
             dict.fromkeys(
-                ("accuracy", "open_set", "jetson", "acdc", "risk", "drivable", "shift"), {}
+                (
+                    "accuracy",
+                    "open_set",
+                    "jetson",
+                    "acdc",
+                    "risk",
+                    "drivable",
+                    "temporal",
+                    "shift",
+                ),
+                {},
             ),
         )
     ],
@@ -163,7 +188,17 @@ def test_every_page_renders_with_records(page: str, populated_root: Path) -> Non
         for name, _ in _pages(
             Path("/"),
             dict.fromkeys(
-                ("accuracy", "open_set", "jetson", "acdc", "risk", "drivable", "shift"), {}
+                (
+                    "accuracy",
+                    "open_set",
+                    "jetson",
+                    "acdc",
+                    "risk",
+                    "drivable",
+                    "temporal",
+                    "shift",
+                ),
+                {},
             ),
         )
     ],
@@ -200,3 +235,19 @@ def test_a_binary_sidecar_next_to_the_records_does_not_take_the_panel_down(
     loaded = panel.load_group(populated_root / "drivable")
 
     assert set(loaded) == {"pidnet_s"}
+
+
+def test_the_risk_page_answers_its_own_zero_weight_notice(populated_root: Path) -> None:
+    """The page tells the reader `temporal_persistence` was excluded for want of a second
+    frame. That invites the follow-up -- what is being given up? -- and the sequence
+    measurement is the answer, so it has to appear on the same page as the question.
+    """
+    st = FakeStreamlit()
+
+    panel.render_temporal(st, panel.load_group(populated_root / "temporal"))
+
+    text = " ".join(str(value) for _, value in st.calls)
+    assert "50.1" in text
+    assert "20.0" in text
+    # The limit travels with the finding: transient is not the same as false.
+    assert "etiketsiz" in text
