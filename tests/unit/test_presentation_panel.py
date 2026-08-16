@@ -111,6 +111,11 @@ def populated_root(tmp_path: Path) -> Path:
         ' "transient_track_fraction": 0.5007, "median_track_lifetime_frames": 1.0,'
         ' "top_region_change_fraction": 0.2}',
     )
+    _write(
+        tmp_path / "calibration" / "pidnet_s.json",
+        '{"model": "pidnet_s", "pooled_ece": 0.0323, "classwise_ece": 0.0776,'
+        ' "worst_class": "pole", "worst_class_ece": 0.2598}',
+    )
     _write(tmp_path / "shift_response.json", '{"model": "pidnet_s", "ratio": 1.0}')
     return tmp_path
 
@@ -128,7 +133,13 @@ def _pages(root: Path, groups: dict[str, dict]) -> list[tuple[str, Any]]:
         (
             "uncertainty",
             lambda st: panel.render_uncertainty(
-                st, groups["accuracy"], groups["open_set"], groups["acdc"], groups["shift"], root
+                st,
+                groups["accuracy"],
+                groups["open_set"],
+                groups["acdc"],
+                groups["shift"],
+                groups["calibration"],
+                root,
             ),
         ),
         (
@@ -145,7 +156,16 @@ def _pages(root: Path, groups: dict[str, dict]) -> list[tuple[str, Any]]:
 def _groups(root: Path) -> dict[str, dict]:
     return {
         name: panel.load_group(root / name)
-        for name in ("accuracy", "open_set", "jetson", "acdc", "risk", "drivable", "temporal")
+        for name in (
+            "accuracy",
+            "open_set",
+            "jetson",
+            "acdc",
+            "risk",
+            "drivable",
+            "temporal",
+            "calibration",
+        )
     } | {"shift": panel.load_json(root / "shift_response.json")}
 
 
@@ -164,6 +184,7 @@ def _groups(root: Path) -> dict[str, dict]:
                     "risk",
                     "drivable",
                     "temporal",
+                    "calibration",
                     "shift",
                 ),
                 {},
@@ -196,6 +217,7 @@ def test_every_page_renders_with_records(page: str, populated_root: Path) -> Non
                     "risk",
                     "drivable",
                     "temporal",
+                    "calibration",
                     "shift",
                 ),
                 {},
@@ -270,6 +292,7 @@ def test_the_adverse_condition_table_says_whose_rows_these_are(populated_root: P
         panel.load_group(populated_root / "open_set"),
         panel.load_group(populated_root / "acdc"),
         panel.load_json(populated_root / "shift_response.json"),
+        panel.load_group(populated_root / "calibration"),
         populated_root,
     )
 
@@ -278,3 +301,17 @@ def test_the_adverse_condition_table_says_whose_rows_these_are(populated_root: P
     assert adverse, "the adverse-condition table did not render"
     assert "DDRNet-23-slim" in adverse[0]
     assert "PIDNet-S" in adverse[0]
+
+
+def test_the_calibration_page_shows_what_the_pooled_number_hides(populated_root: Path) -> None:
+    """Reporting pooled ECE alone lets the page claim calibration it does not have on the
+    classes that matter: road is 39% of pixels and nearly perfect, so it absorbs the thin
+    classes. Both figures have to appear, and the worst class has to be named.
+    """
+    st = FakeStreamlit()
+
+    panel.render_classwise(st, panel.load_group(populated_root / "calibration"))
+
+    text = " ".join(str(value) for _, value in st.calls)
+    assert "0.0323" in text and "0.0776" in text
+    assert "pole" in text

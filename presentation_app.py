@@ -260,6 +260,7 @@ def main() -> None:
     accuracy = load_group(root / "accuracy")
     open_set = load_group(root / "open_set")
     acdc = load_group(root / "acdc")
+    calibration = load_group(root / "calibration")
     risk = load_group(root / "risk")
     drivable = load_group(root / "drivable")
     temporal = load_group(root / "temporal")
@@ -306,7 +307,7 @@ def main() -> None:
     elif page.startswith("3"):
         render_open_set(st, open_set, root)
     elif page.startswith("4"):
-        render_uncertainty(st, accuracy, open_set, acdc, shift, root)
+        render_uncertainty(st, accuracy, open_set, acdc, shift, calibration, root)
     elif page.startswith("5"):
         render_risk(st, risk, drivable, temporal, root)
     elif page.startswith("6"):
@@ -523,8 +524,59 @@ def render_open_set(st: Any, open_set: dict, root: Path) -> None:
         )
 
 
+def render_classwise(st: Any, calibration: dict) -> None:
+    """Show what the pooled ECE above is carrying.
+
+    The table before this one reports one ECE per model over all pixels. Road is 39%
+    of those pixels and is calibrated almost perfectly, so it can absorb severe
+    overconfidence on the thin classes. Reporting only the pooled figure would let the
+    page claim calibration it does not have on the classes that matter.
+    """
+    if not calibration:
+        return
+    rows = [calibration[name] for name in MODEL_ORDER if name in calibration]
+    if not rows:
+        return
+    st.markdown("#### Havuzlanmış ECE neyi saklıyor")
+    st.markdown(
+        _markdown_table(
+            ["Model", "Havuzlanmış ECE", "Sınıf-bazlı ECE", "Oran", "En kötü sınıf"],
+            [
+                [
+                    MODEL_LABEL.get(r.get("model", ""), r.get("model", "—")),
+                    _number(r.get("pooled_ece"), 4),
+                    f"**{_number(r.get('classwise_ece'), 4)}**",
+                    _number(
+                        (r.get("classwise_ece") or 0) / max(r.get("pooled_ece") or 1e-9, 1e-9),
+                        2,
+                        "×",
+                    ),
+                    f"{r.get('worst_class', '—')} {_number(r.get('worst_class_ece'), 4)}",
+                ]
+                for r in rows
+            ],
+        )
+    )
+    st.caption(
+        "Havuzlanmış ECE her modelde **1,5–3 kat iyimser**. Sebebi doğrudan görünüyor: "
+        "`road` piksellerin **%39'unu** kaplıyor ve her modelde en iyi kalibre "
+        "sınıflardan biri. En kötü sınıflar ise her modelde **ince yapılar** — direk ve "
+        "çit; PIDNet-S direkte 0,2598 ECE veriyor, kendi havuzlanmış değerinin 8 katı."
+    )
+    st.caption(
+        "Sıralama da değişiyor: havuzlanmışta PIDNet-S DDRNet'ten iyi görünüyor, "
+        "sınıf-bazlıda tersi. Hangi ECE'yi raporladığınız cevabı değiştiriyor."
+    )
+
+
 def render_uncertainty(
-    st: Any, accuracy: dict, open_set: dict, acdc: dict, shift: dict | None, root: Path
+    st: Any,
+    accuracy: dict,
+    open_set: dict,
+    acdc: dict,
+    shift: dict | None,
+    calibration: dict,
+    root: Path,
 ) -> None:
     st.title("Belirsizlik ve kalibrasyon")
     st.markdown("#### Model, kesin yanıldığı yerlerde ne kadar emin?")
@@ -580,6 +632,7 @@ def render_uncertainty(
             )
         )
     if acdc:
+        render_classwise(st, calibration)
         st.markdown("#### Gerçek olumsuz koşullar (ACDC)")
 
         # Twenty rows of four repeating condition names are unreadable without saying

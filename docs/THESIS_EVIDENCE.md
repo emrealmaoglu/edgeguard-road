@@ -230,6 +230,49 @@ düşüyor. Ciddi aşırı-güven. PIDNet-S en aşırı güvenli, BiSeNetV2 en d
 Bu, MSP'nin neden zayıf bir OOD skoru olduğunu (AUROC 0,569) ve energy'nin neden daha iyi
 olduğunu (0,667) doğrudan açıklıyor.
 
+### Havuzlanmış ECE neyi saklıyor — ölçüldü
+
+Bu projede raporlanan bütün ECE değerleri **bütün pikselleri tek bir güven histogramında
+havuzluyor**. Araştırma notlarımızdan 26 numaralı doküman bunun yetersiz olduğunu ve sınıf
+bazlı ECE'nin zorunlu olduğunu söylüyor; gerekçesi de şu: sürüş sahnesi yol, bina ve
+gökyüzü ile dominedir, model en çok onlarda emin ve haklıdır, dolayısıyla onların iyi
+kalibre kütlesi kritik sınıflardaki aşırı güveni **soğurabilir**.
+
+Bu bir gerekçe. Ölçtük (`scripts/measure_classwise_calibration.py`, 200 Cityscapes val
+karesi, kare başına 20.000 piksel örneklemi, tohum 20260728):
+
+| model | havuzlanmış ECE | **sınıf-bazlı ECE** | oran | en kötü sınıf |
+|---|---|---|---|---|
+| SegFormer-B0 | 0,0148 | **0,0446** | **3,01×** | fence 0,1223 |
+| PIDNet-S | 0,0323 | **0,0776** | **2,40×** | pole **0,2598** |
+| DDRNet-23-slim | 0,0409 | **0,0621** | **1,52×** | pole 0,1744 |
+
+> **Havuzlanmış ECE her modelde iyimser — 1,5 ile 3 kat.** Kaynağı da doğrudan görünüyor:
+> `road` piksellerin **%39'unu** kaplıyor ve her modelde en iyi kalibre sınıflardan biri
+> (SegFormer'da ECE 0,0029). Havuzlanmış sayıyı taşıyan sınıf bu.
+
+**Sıralama da değişiyor.** Havuzlanmış ECE'ye göre kalibrasyon sıralaması SegFormer-B0 →
+PIDNet-S → DDRNet; sınıf-bazlıya göre SegFormer-B0 → **DDRNet → PIDNet-S**. Son iki model
+yer değiştiriyor. Yani hangi ECE'yi raporladığınız, hangi modelin daha iyi kalibre olduğu
+sorusunun cevabını değiştiriyor.
+
+**En kötü sınıflar her modelde ince yapılar:** direk (`pole`) ve çit (`fence`). PIDNet-S
+direkte 0,2598 ECE veriyor — kendi havuzlanmış değerinin **8 katı** — ve aşırı-güven
+işareti pozitif (+0,2598), yani model yanıldığı yerde emin. `person` sınıfı da üç modelde
+de pozitif aşırı-güvenli (+0,027 … +0,064).
+
+> **Tez boyunca tekrar eden iplik.** İnce yapılar — direk, trafik ışığı, levha, çit,
+> insan — üç bağımsız ölçümde de sistemin zayıf noktası: sınıf bazlı IoU'da (§9a),
+> sınır F1'inde (§3a) ve şimdi kalibrasyonda. Ortak nedeni çıktı stride'ıdır: kaba ızgara,
+> ince yapıyı hem yanlış segmentliyor hem de yanlışlığından emin oluyor. Bu, ayrı ayrı
+> ölçülen üç sonucun tek bir mekanizmaya bağlandığı yerdir.
+
+**Tanım sınırı:** buradaki sınıf-bazlı ECE, **her sınıf olarak tahmin edilen** piksellerin
+top-1 güvenini o sınıf içinde binleyip sınıflara eşit ağırlık verir. Literatürdeki
+one-vs-rest classwise-ECE tanımından farklıdır ve kayıt bunu `classwise_definition`
+alanında yazar; iki tanım karıştırılmamalıdır. %1'den az piksel tahmin edilen sınıflar
+raporlanır ama ortalamaya girmez — bin gürültüsü hâkim olurdu.
+
 **Boşluk:** ECE / reliability diyagramı ölçülmedi. Etiketli Cityscapes validasyon verisi
 gerektiriyor; `evaluate.py run --fit-temperature` altyapısı hazır ve rol kapısı
 sağlanabilir durumda, veri temin edilince tek komutla koşar.
