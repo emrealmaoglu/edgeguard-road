@@ -162,7 +162,10 @@ motora dokunulmadan, çıktılar birebir aynı.
 
 ### Tartışma sınırları (dürüstlük)
 
-- n = 5 mimari; Spearman için anlamlılık |ρ| > 0,9 gerektirir.
+- n = 5 mimari; bu ölçekte hiçbir korelasyon kesin kanıt değildir. Nitekim ρ = −0,90
+  bulgusu bu yüzden yanlış okundu ve geri çekildi (bkz. THESIS_EVIDENCE §9).
+- Doğrulukta ilk iki model **kare düzeyinde ayrışmıyor** (+0,0000 [−0,0050, +0,0049],
+  500 eşleştirilmiş kare); "en doğru model" ifadesi kullanılmayacak.
 - Referans checkpoint'ler farklı reçetelerle eğitilmiştir; kontrollü ablasyon değildir.
 - Kendi eğitimimiz yayınların %0,7'si kadar örnek görmüştür.
 - Sentetik bozulmalar algoritmiktir; gerçek ACDC ölçümleri ayrıca verilmiştir.
@@ -209,11 +212,11 @@ SegFormer · BiSeNetV2 · mmsegmentation · TensorRT · enerji tabanlı OOD · k
 | Zorluk derecesi | 5 | ✅ |
 | Etik / intihal / AI beyanı | 5 | ✅ log mevcut |
 | Mühendislik etiği | 5 | ✅ |
-| **Standartlar (ISO/IEEE)** | 5 | ⚠ metne eklenecek |
+| **Standartlar (ISO/IEEE)** | 5 | ✅ THESIS_SECTIONS §C4 |
 | **Proje/risk yönetimi** | 4 | ✅ log + ADR |
-| Girişimcilik | 4 | ⚠ yazılacak |
-| Sürdürülebilirlik | 4 | ✅ joule/kare |
+| Girişimcilik | 4 | ✅ THESIS_SECTIONS §C5 |
+| Sürdürülebilirlik | 4 | ✅ THESIS_SECTIONS §C6, ölçülmüş joule |
 | **Yeniden üretilebilirlik** | 3 | ✅ çok güçlü |
 
-**Açık iki boşluk:** sistematik literatür taraması ve standartlara atıf. İkisi de yazı
-işi, ölçüm gerektirmiyor.
+**Açık kalan tek boşluk:** sistematik literatür taraması (PRISMA). Standartlara atıf,
+girişimcilik, sürdürülebilirlik ve özet/abstract `THESIS_SECTIONS.md`'de yazılmıştır.

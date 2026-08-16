@@ -510,7 +510,7 @@ def render_components(st: Any, components: dict) -> None:
     )
     st.caption(
         "**Stride-4'ün dördüncü izi.** SegFormer-B0 gerçek nesnelerin daha büyük kısmını "
-        "buluyor ama onları **1,52 kat fazla parçaya** bölüyor; DDRNet daha az buluyor, "
+        "buluyor ama onları **1,53 kat fazla parçaya** bölüyor; DDRNet daha az buluyor, "
         "bulduğunu daha bütün buluyor. İnce ızgara ayırıyor, kaba ızgara birleştiriyor. "
         "Bunlar sınıf-bağlantılı bölgelerdir, örnek (instance) değil."
     )

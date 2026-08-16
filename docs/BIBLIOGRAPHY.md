@@ -164,7 +164,7 @@ Materyal ve yöntem bölümünde ayrı listelenir:
 
 | durum | sayı |
 |---|---|
-| ✔ tam künyesiyle doğrulandı | **14** |
+| ✔ tam künyesiyle doğrulandı | **19** (14 bilimsel + 5 standart) |
 | ⏳ doğrulanacak | 0 |
 | hedef | ~45–55 |
 
@@ -174,3 +174,40 @@ Materyal ve yöntem bölümünde ayrı listelenir:
 **İkinci kural:** bir kaynağın var olduğunu doğrulamak, ona atfedilen iddianın doğru
 olduğunu göstermez. Tezde bir kaynağa dayanarak cümle kuruluyorsa, o cümleyi yazan kişi
 kaynağın ilgili bölümünü okumuş olmalıdır.
+
+## F · Standartlar
+
+Standartlar ayrı listelenir: bunlara **uygunluk iddia edilmez**, kavramsal çerçeve olarak
+veya karşılanan/karşılanmayan maddeleri adlandırmak için atıf yapılır (bkz.
+`THESIS_SECTIONS.md` §C4).
+
+**[15]** ISO/IEC 25010:2011. *Systems and software engineering — Systems and software
+Quality Requirements and Evaluation (SQuaRE) — System and software quality models.*
+Cenevre: Uluslararası Standardizasyon Örgütü.
+✔ künye doğrulandı · sekiz kalite karakteristiği; bu projede dördü ölçüldü, dördü
+ölçülmedi ve hangisinin hangisi olduğu §C4.1'de tablo hâlinde
+
+**[16]** ISO/IEC/IEEE 29119-3:2021. *Software and systems engineering — Software testing —
+Part 3: Test documentation.* https://www.iso.org/standard/79429.html
+✔ doğrulandı · **IEEE 829-2008'in yerini alan standart** (önce 29119-3:2013, sonra
+2021 revizyonu). Tezde IEEE 829'a atıf yapılmayacaktır — yaygın ama artık yanlış bir
+alışkanlıktır.
+
+**[17]** ISO 21448:2022. *Road vehicles — Safety of the intended functionality (SOTIF).*
+Cenevre: Uluslararası Standardizasyon Örgütü.
+✔ künye doğrulandı · **bu tezin problem tanımıyla doğrudan örtüşen standart**: sistem
+arızalanmadan, yalnızca algı yetersiz kaldığı için ortaya çıkan tehlikeler. Kayıp yük
+AUROC 0,4805 ve gece %10,4 dayanıklılık bulguları SOTIF sınıfı bulgulardır.
+
+> **Sınır — mutlaka yazılmalı:** proje SOTIF *sürecini* uygulamamıştır. Standart burada
+> ölçülen olguları adlandıran kavramsal çerçevedir; "SOTIF uyumlu" iddiası yoktur.
+
+**[18]** ISO 26262:2018. *Road vehicles — Functional safety.* Cenevre: Uluslararası
+Standardizasyon Örgütü.
+✔ künye doğrulandı · **kapsam dışı olduğu için anılıyor.** Donanım/yazılım arızalarını ele
+alır; ASIL seviyesi, süreç ve doğrulama kampanyası gerektirir. Bu projede hiçbir ASIL
+hedeflenmemiştir. Kapsam dışılığın açıkça yazılması, standardı anmaktan daha değerlidir.
+
+**[19]** ISO 690:2021. *Information and documentation — Guidelines for information sources
+and citations.* Cenevre: Uluslararası Standardizasyon Örgütü.
+✔ künye doğrulandı · bu kaynakçanın biçim kuralı

@@ -87,13 +87,13 @@ yazılmıştı — testli, çağrısız (`drivable_metrics` ve `paired_compariso
 
 | mimari | bileşen kapsama | en iyi bileşen IoU | tahmin/GT bileşen | yorum |
 |---|---|---|---|---|
-| SegFormer-B0 | **0,6780** | 0,4351 | 42,5 / 27,9 = **1,52×** | daha çok buluyor, daha çok parçalıyor |
-| PIDNet-S | 0,6655 | 0,4456 | 27,8 / 27,9 = 1,00× | sayıca denk |
-| DDRNet-23-slim | 0,6428 | **0,4630** | 23,9 / 27,9 = **0,86×** | daha az buluyor, bulduğunu daha bütün buluyor |
+| SegFormer-B0 | **0,6780** | 0,4351 | 42,50 / 27,86 = **1,53×** | daha çok buluyor, daha çok parçalıyor |
+| PIDNet-S | 0,6655 | 0,4456 | 27,81 / 27,86 = 1,00× | sayıca denk |
+| DDRNet-23-slim | 0,6428 | **0,4630** | 23,94 / 27,86 = **0,86×** | daha az buluyor, bulduğunu daha bütün buluyor |
 
 > **Stride-4 hikâyesinin dördüncü kanıtı.** SegFormer gerçek nesnelerin daha büyük bir
-> kısmını buluyor (kapsama 0,678'e karşı 0,643) ama onları **1,52 kat fazla parçaya**
-> bölüyor. DDRNet'inki tersi: daha az nesne buluyor, ama bulduğunun bileşen IoU'su en
+> kısmını buluyor (kapsama 0,678'e karşı 0,643) ama onları **1,53 kat fazla parçaya**
+> bölüyor (1,5255×). DDRNet'inki tersi: daha az nesne buluyor, ama bulduğunun bileşen IoU'su en
 > yüksek (0,463). İnce ızgara ayırıyor, kaba ızgara birleştiriyor.
 
 **Bu neden sadece bir metrik değil.** Zamansal izleyici ve risk sıralaması **bileşenler
