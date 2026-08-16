@@ -605,7 +605,7 @@ Kare-başına ortalama mIoU: SegFormer-B0 **0,5468**, DDRNet-23-slim **0,5468**.
 
 > **Birinci diye bir şey yok.** Doğrulukta bir kazanan değil, **ayırt edilemez bir
 > tepe grubu** var. Sekiz çiftin sekizi ayrışıyor, ama ilk ikisi ayrışmıyor — ve tez şu
-> ana kadar o ikisi arasındaki 0,0084'lük farkı sıralama diye sunuyordu.
+> ana kadar o ikisi arasındaki 0,0085'lik farkı sıralama diye sunuyordu.
 
 **İki istatistik neden farklı söylüyor?** Veri kümesi mIoU'su 19 sınıfın ortalamasıdır ve
 her sınıfa, kaç karede göründüğünden bağımsız olarak eşit ağırlık verir. Kare-başına mIoU
@@ -622,7 +622,9 @@ ise her kareye eşit ağırlık verir. Sınıf kırılımı farkı açıklıyor:
 SegFormer 19 sınıfın **14'ünü** kazanıyor ve kazandıkları ağırlıklı olarak **ince
 yapılar**: direk, trafik ışığı, trafik levhası, insan. DDRNet'in kazandığı 5 sınıf ise
 ağırlıklı olarak **büyük araçlar**: otobüs, tren. Sınıf-eşit ortalama, 14 küçük tutarlı
-kazancı toplayıp +0,0085 veriyor; kare-eşit ortalama ise ikisini başabaş buluyor.
+kazancı toplayıp **+0,0085** veriyor (kayıtlardan 0,008491; iki mimarinin veri kümesi
+mIoU farkı ile sınıf farklarının ortalaması birbirinin aynısıdır, çünkü mIoU zaten
+sınıf ortalamasıdır); kare-eşit ortalama ise ikisini başabaş buluyor.
 
 > **Stride-4 hikâyesinin üçüncü bağımsız kanıtı.** SegFormer'ın kazandığı sınıflar —
 > direk, trafik ışığı, levha, insan — ince ve uzun yapılardır; kaba ızgarada en çok kaybı
