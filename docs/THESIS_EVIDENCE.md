@@ -454,6 +454,67 @@ yok. En doğru yayınlanan model (PIDNet-M, 80,22) ölçümde üçüncü; en dü
 > ve aktarılabilir sanmak sahte bir "doğruluk–güvenlik ödünleşimi" üretir. Bunu bir hata
 > olarak yaşadık ve düzelttik; §9'un önceki hâli o hatanın kendisidir.
 
+### 9a · "En doğru model" iddiası testi geçmiyor — ve geçmemesi daha ilginç
+
+Yukarıdaki tablo beş modeli sıralıyor ve SegFormer-B0'ı doğrulukta birinci gösteriyor
+(0,6934'e karşı 0,6850). Bu sıralama bugüne kadar **hiç test edilmemişti**: toplu kayıtlar
+yalnızca veri kümesi düzeyindeki sayıyı tutuyordu, dolayısıyla test edilebilecek bir şey
+yoktu. `evaluation/statistics.py` bu iş için `paired_comparison` ve
+`deterministic_bootstrap_interval`'ı baştan beri taşıyordu — tam, testli, çağrısız.
+
+Eksik olan kare-başına skorlardı. Beş model **aynı** 500 Cityscapes val karesinde
+puanlandı, farklar eşleştirilmiş bootstrap ile ölçüldü
+(`scripts/compare_models_paired.py`, `results/paired_comparison.json`):
+
+| karşılaştırma | ortalama fark | %95 aralık | sonuç |
+|---|---|---|---|
+| **SegFormer-B0 − DDRNet-23-slim** | **+0,0000** | **[−0,0050, +0,0049]** | **ayırt edilemez** |
+| PIDNet-M − BiSeNetV2 | +0,0050 | [−0,0001, +0,0108] | ayırt edilemez |
+| SegFormer-B0 − PIDNet-M | +0,0063 | [+0,0012, +0,0120] | ayrışıyor |
+| PIDNet-M − DDRNet-23-slim | −0,0063 | [−0,0112, −0,0012] | ayrışıyor |
+| SegFormer-B0 − PIDNet-S | +0,0195 | [+0,0147, +0,0244] | ayrışıyor |
+| PIDNet-S − DDRNet-23-slim | −0,0195 | [−0,0240, −0,0149] | ayrışıyor |
+
+Kare-başına ortalama mIoU: SegFormer-B0 **0,5468**, DDRNet-23-slim **0,5468**. Aynı sayı.
+
+> **Birinci diye bir şey yok.** Doğrulukta bir kazanan değil, **ayırt edilemez bir
+> tepe grubu** var. Sekiz çiftin sekizi ayrışıyor, ama ilk ikisi ayrışmıyor — ve tez şu
+> ana kadar o ikisi arasındaki 0,0084'lük farkı sıralama diye sunuyordu.
+
+**İki istatistik neden farklı söylüyor?** Veri kümesi mIoU'su 19 sınıfın ortalamasıdır ve
+her sınıfa, kaç karede göründüğünden bağımsız olarak eşit ağırlık verir. Kare-başına mIoU
+ise her kareye eşit ağırlık verir. Sınıf kırılımı farkı açıklıyor:
+
+| SegFormer lehine | fark | | DDRNet lehine | fark |
+|---|---|---|---|---|
+| pole | +0,0574 | | bus | −0,0577 |
+| terrain | +0,0422 | | train | −0,0448 |
+| traffic light | +0,0354 | | fence | −0,0239 |
+| person | +0,0325 | | motorcycle | −0,0227 |
+| traffic sign | +0,0317 | | rider | −0,0128 |
+
+SegFormer 19 sınıfın **14'ünü** kazanıyor ve kazandıkları ağırlıklı olarak **ince
+yapılar**: direk, trafik ışığı, trafik levhası, insan. DDRNet'in kazandığı 5 sınıf ise
+ağırlıklı olarak **büyük araçlar**: otobüs, tren. Sınıf-eşit ortalama, 14 küçük tutarlı
+kazancı toplayıp +0,0085 veriyor; kare-eşit ortalama ise ikisini başabaş buluyor.
+
+> **Stride-4 hikâyesinin üçüncü bağımsız kanıtı.** SegFormer'ın kazandığı sınıflar —
+> direk, trafik ışığı, levha, insan — ince ve uzun yapılardır; kaba ızgarada en çok kaybı
+> onlar verir. Aynı mimari tercih §3a'da sınır F1'inde (%36–48 önde), §8'de post-processing
+> maliyetinde (3,98×) ve burada sınıf kırılımında görünüyor. Üç farklı ölçüm, tek mekanizma.
+
+**Tezde kurulacak cümle:** *"SegFormer-B0 en doğru modeldir"* değil, *"ilk üç model
+kare düzeyinde ayırt edilemez; SegFormer-B0'ın sınıf-ortalamalı üstünlüğü ince yapılardan
+gelir ve kare başına 3,53 kat enerjiye mal olur."* İkincisi hem doğru hem daha güçlü:
+seçimi doğruluğa değil, enerji ve dayanıklılığa bırakıyor.
+
+**Sınır:** bunlar aynı yayınlanmış checkpoint'lerdir, tek koşudur; bootstrap örnekleme
+belirsizliğini ölçer, eğitim tohumu belirsizliğini değil. `significance_claim: false` —
+kayıt hiçbir yerde "istatistiksel olarak anlamlı" demiyor, aralığın sıfırı içerip
+içermediğini söylüyor.
+
+---
+
 ### Kalan gerçek ödünleşim
 
 Doğruluk ile açık küme arasında ilişki yok, ama **enerji** ile açık küme arasında var:

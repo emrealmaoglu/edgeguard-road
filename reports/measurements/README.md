@@ -18,12 +18,14 @@ Bunlar sürüm kontrolünde, çünkü:
 |---|---|---|
 | `drivable/` | 5 mimari × 200 Cityscapes val karesi: yol IoU, iki toleransta sınır F1, yanlış-sürülebilir oranı, parçalanma | `scripts/evaluate_drivable_area.py` |
 | `temporal/` | 150 ardışık demoVideo karesi: iz ömürleri, zamansal kalıcılığın risk sıralamasına etkisi | `scripts/measure_temporal_persistence.py` |
+| `paired_comparison.json` | 5 mimari × aynı 500 Cityscapes val karesi: kare-başına mIoU, eşleştirilmiş bootstrap farkları | `scripts/compare_models_paired.py` |
 
 ## Panele yerleştirme (Jetson'da)
 
 ```bash
 cd ~/edgeguard-road && git pull
 cp -r reports/measurements/drivable reports/measurements/temporal ~/eg-presentation/
+cp reports/measurements/paired_comparison.json ~/eg-presentation/
 ```
 
 Cihazda üretilen kayıtlar (`jetson/`, `telemetry/`, `profile/`) buraya **kopyalanmaz** —

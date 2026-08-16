@@ -371,13 +371,15 @@ def render_comparison(st: Any, accuracy: dict, open_set: dict, jetson: dict, roo
         "Nano Super'de 25 W'ta, 600 saniye sürdürülen yük altında ölçülmüştür."
     )
     columns = st.columns(4)
-    columns[0].metric("Doğrulukta birinci", "SegFormer-B0", "69,34 mIoU")
+    columns[0].metric("Doğrulukta", "berabere", "SegFormer = DDRNet")
     columns[1].metric("Açık kümede birinci", "SegFormer-B0", "AP 0,347")
     columns[2].metric("Enerjide birinci", "DDRNet-23-slim", "0,630 J/kare")
     columns[3].metric("Gecede en dayanıklı", "SegFormer-B0", "%29,7 korunan")
     st.caption(
-        "Dört eksenin üçünü aynı model kazanıyor; enerjiyi kazanan model gecede "
-        "işlevsiz kalıyor (7,12 mIoU)."
+        "**Doğrulukta kazanan yok:** aynı 500 karede eşleştirilmiş karşılaştırma "
+        "SegFormer-B0 ile DDRNet-23-slim arasında **+0,0000** fark buluyor "
+        "(%95 aralık [−0,0050, +0,0049]). Kalan üç eksen ayrışıyor — ve enerjiyi "
+        "kazanan model gecede işlevsiz kalıyor (7,12 mIoU)."
     )
     rows = []
     for model in MODEL_ORDER:
@@ -426,9 +428,15 @@ def render_comparison(st: Any, accuracy: dict, open_set: dict, jetson: dict, roo
         """
 #### Bulgu 1 · Yayın sıralaması dağıtımı öngörmüyor
 
-**Spearman ρ = +0,10** (n=5). Dağıtım çözünürlüğünde SegFormer-B0 birinci; yayınlanmış
-sıralamada sonuncuydu. Her mimari çözünürlük düşüşünden farklı etkileniyor (−%9,4 ile
-−%14,7 arası).
+**Spearman ρ = +0,10** (n=5). Dağıtım çözünürlüğünde SegFormer-B0 sınıf-ortalamalı
+mIoU'da öne geçiyor; yayınlanmış sıralamada sonuncuydu. Her mimari çözünürlük düşüşünden
+farklı etkileniyor (−%9,4 ile −%14,7 arası).
+
+Ama "öne geçiyor" sıralama demek değil: kare düzeyinde SegFormer-B0 ile DDRNet-23-slim
+**ayırt edilemiyor** (+0,0000 [−0,0050, +0,0049], 500 eşleştirilmiş kare). Sınıf-ortalamalı
+0,0085'lik fark, 19 sınıfın 14'ünde — çoğu **ince yapı**: direk +0,057, trafik ışığı
++0,035, insan +0,033 — biriken küçük kazançlardan geliyor. Stride-4 çıktısının aynı izi
+sınır F1'inde ve post-processing maliyetinde de görünüyor.
 
 **Sonuç:** uç cihaz için model seçimi yayınlanmış mIoU'ya bakarak yapılamaz.
 """
