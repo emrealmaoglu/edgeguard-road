@@ -573,18 +573,32 @@ def render_uncertainty(
         )
     if acdc:
         st.markdown("#### Gerçek olumsuz koşullar (ACDC)")
+
+        # Twenty rows of four repeating condition names are unreadable without saying
+        # whose they are, so the model leads each row and the rows follow MODEL_ORDER
+        # rather than alphabetical filenames.
+        def _rank(item: tuple[str, dict]) -> tuple[int, int]:
+            model = str(item[1].get("model", ""))
+            condition = item[0].split("_")[-1]
+            order = ("fog", "night", "rain", "snow")
+            return (
+                MODEL_ORDER.index(model) if model in MODEL_ORDER else len(MODEL_ORDER),
+                order.index(condition) if condition in order else len(order),
+            )
+
         st.markdown(
             _markdown_table(
-                ["Koşul", "mIoU", "ECE", "Ort. güven", "Aşırı-güven"],
+                ["Model", "Koşul", "mIoU", "ECE", "Ort. güven", "Aşırı-güven"],
                 [
                     [
+                        MODEL_LABEL.get(str(v.get("model", "")), str(v.get("model", "—"))),
                         key.split("_")[-1],
                         _number(v.get("mIoU")),
                         _number(v.get("expected_calibration_error"), 4),
                         _number(v.get("mean_confidence"), 4),
                         _number(v.get("confidence_minus_accuracy"), 4),
                     ]
-                    for key, v in sorted(acdc.items())
+                    for key, v in sorted(acdc.items(), key=_rank)
                 ],
             )
         )

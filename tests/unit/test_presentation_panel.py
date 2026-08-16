@@ -251,3 +251,30 @@ def test_the_risk_page_answers_its_own_zero_weight_notice(populated_root: Path) 
     assert "20.0" in text
     # The limit travels with the finding: transient is not the same as false.
     assert "etiketsiz" in text
+
+
+def test_the_adverse_condition_table_says_whose_rows_these_are(populated_root: Path) -> None:
+    """Five models times four conditions is twenty rows. Without a model column they read
+    as `fog, night, rain, snow` repeating four times, and nobody watching a recording can
+    tell which block belongs to which architecture.
+    """
+    _write(
+        populated_root / "acdc" / "ddrnet_23_slim_fog.json",
+        '{"model": "ddrnet_23_slim", "mIoU": 0.57, "expected_calibration_error": 0.033}',
+    )
+    st = FakeStreamlit()
+
+    panel.render_uncertainty(
+        st,
+        panel.load_group(populated_root / "accuracy"),
+        panel.load_group(populated_root / "open_set"),
+        panel.load_group(populated_root / "acdc"),
+        panel.load_json(populated_root / "shift_response.json"),
+        populated_root,
+    )
+
+    tables = [value for name, value in st.calls if name == "markdown" and isinstance(value, str)]
+    adverse = [table for table in tables if "Aşırı-güven" in table]
+    assert adverse, "the adverse-condition table did not render"
+    assert "DDRNet-23-slim" in adverse[0]
+    assert "PIDNet-S" in adverse[0]
