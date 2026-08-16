@@ -149,16 +149,33 @@ motora dokunulmadan, çıktılar birebir aynı.
 ### Ana bulgular
 
 1. **Yayınlanmış sıralama dağıtımı öngörmüyor** (ρ = +0,10, n=5). Dağıtım
-   çözünürlüğünde SegFormer-B0 birinci, yayında sonuncuydu.
-2. **SegFormer-B0 üç kalite ekseninde de birinci**: mIoU 69,34 · ECE 0,0117 · açık küme
-   AP 0,347. Tek kaybı enerji, sebebi stride-4 çıktısının CPU tarafına 4× piksel
-   vermesi. **Bu maliyet giderilemez:** logitleri stride-8'e indirmek post-processing'i
-   3,98× hızlandırıyor ama 2,03 mIoU'ya mal oluyor ve modeli dördüncülüğe düşürüyor.
-3. **Gecede sessiz başarısızlık**: mIoU 0,1497, piksel doğruluğu %45,2, ortalama güven
+   çözünürlüğünde SegFormer-B0 sınıf-ortalamalı mIoU'da öne geçiyor, yayında sonuncuydu.
+2. **Doğrulukta kazanan yok.** Aynı 500 karede eşleştirilmiş karşılaştırma ilk iki modeli
+   **ayırt edemiyor** (+0,0000 [−0,0050, +0,0049]); on çiftin sekizi ayrışıyor, ilk ikisi
+   ayrışmıyor. SegFormer-B0'ın sınıf-ortalamalı 0,0085'lik üstünlüğü 19 sınıfın 14'ünde
+   biriken küçük kazançlardan, çoğu **ince yapıdan** geliyor (direk +0,057, trafik ışığı
+   +0,035, insan +0,033). *(§9a)*
+3. **Çıktı stride'ı beş ayrı ölçümde aynı yere çıkıyor** — sınıf bazlı IoU, sınır F1,
+   sınıf-bazlı ECE, bileşen parçalanması ve sürülebilir alan. Bedeli **giderilemez**:
+   logitleri stride-8'e indirmek post-processing'i 3,98× hızlandırıyor ama 2,03 mIoU'ya
+   mal oluyor. *(§2b, §3a, §4, §8)*
+4. **Rakip açıklama ölçüldü ve elendi.** Nadirlik gerçek bir etken (ρ(pay, IoU) = +0,68)
+   ama yeterli değil: `pole`, `motorcycle`'dan 18 kat daha sık olmasına rağmen kalibrasyon
+   hatası 9 kat kötü. Ayıran şey nadirlik değil **şekil**. *(§2b-2)*
+5. **Gecede sessiz başarısızlık**: mIoU 0,1497, piksel doğruluğu %45,2, ortalama güven
    %71,9, ECE 0,2694 (en iyi koşulun 8,7 katı). Model en çok yanıldığı koşulda
-   yanıldığını bilmiyor.
-4. **Kayıp yük körlüğü**: açık küme AUROC 0,4805 — rastgeleden kötü.
-5. **Motor kare bütçesinin %5,4'ü**; gerçek zamanlılık CPU tarafında kazanılıyor.
+   yanıldığını bilmiyor. *(§6a)*
+6. **Kayıp yük körlüğü**: açık küme AUROC 0,4805 — rastgeleden kötü. *(§5)*
+7. **Havuzlanmış ECE yanıltıyor**: sınıf-bazlı hesapta hata **1,5–3 kat** büyüyor; `road`
+   piksellerin %39'u ve havuzlanmış sayıyı o taşıyor. *(§4)*
+8. **Motor kare bütçesinin %5,4'ü**; gerçek zamanlılık CPU tarafında kazanılıyor. *(§8)*
+9. **FP16 dağıtımın ölçülebilir bedeli yok** (eşleştirilmiş fark sıfırdan ayırt edilemiyor,
+   piksel uyumu %99,97) — ve eşleştirme yapılmasaydı DDRNet için **var olmayan** bir
+   −0,0253 cezası raporlanacaktı. *(§7a)*
+10. **Sürülebilir alanda ego koridoru adımının karşılığı ölçüldü**: yanlış-sürülebilir
+    piksellerin %18,8–26,2'si eleniyor, ~0,55 puan IoU karşılığında. *(§3a)*
+11. **Tek-kare dikkat baskın davranış olarak titriyor**: izlerin %50,1'i tek kare yaşıyor,
+    medyan iz ömrü 1 kare. *(§3b)*
 
 ### Tartışma sınırları (dürüstlük)
 

@@ -54,6 +54,24 @@ kendiliğinden gelir ve araya bölüm eklersen hepsi güncellenir.
 Başlıkların sonunda **nokta var** — `Şekil 2.1. Sistem mimarisi.` Şablon böyle, sen de öyle
 yap.
 
+### Atıf biçimi — şablonun açık kuralı
+
+Şablon şunu **kesin** söylüyor:
+
+> *"Kaynakları metin içerisinde göstermede, **numara ile kaynak gösterimi
+> kullanılmalıdır**."*
+
+Yani metin içinde `[1]`, `[2]` — yazar-yıl değil. Şablonun kendi KAYNAKLAR listesi de
+numaralı: `[1] B. Lu, F. Wu, ve S. W. Kim, "..."`.
+
+**Rubrikle çelişmiyor.** Rubrik "ISO 690 uygun kaynak gösterimi" istiyor ve ISO 690 hem
+numaralı hem yazar-tarih sistemini tanır. Bizim yapacağımız: **ISO 690'ın numaralı
+sistemi** — künye biçimi ISO 690, metin içi atıf numaralı. `BIBLIOGRAPHY.md` zaten
+[1]–[19] diye numaralı, uyumlu.
+
+Mendeley **tavsiye ediliyor, zorunlu değil.** 19 kaynak için elle yazmak daha hızlı ve
+kontrollü; Mendeley'in otomatik biçimi ISO 690 vermeyebilir.
+
 ### Çapraz başvuru
 
 Şekil/çizelge/denklem numaralarını metne **elle yazma.** Word'de
@@ -116,7 +134,8 @@ Elindeki dokümanların hepsi hazır; iş onları şablonun bölümlerine dağı
 | Girişimcilik | `THESIS_SECTIONS.md` §C5 | 4 puan. |
 | Sürdürülebilirlik | `THESIS_SECTIONS.md` §C6 | 4 puan. |
 | **KAYNAKLAR** | `BIBLIOGRAPHY.md` | ISO 690, 19 kaynak, hepsi doğrulanmış. |
-| **EKLER** | — | EK 1: ölçüm kayıtları, EK 2: AI kullanım logu, EK 3: yeniden üretim talimatı. |
+| **EKLER** | — | Şablon **EK 1 / EK 2 / EK 3: BAŞLIK ADI** yapısını veriyor. Ek şekilleri `Şekil 10.1` diye numaralanır (ekler 10. bölüm sayılıyor). |
+| **ÖZGEÇMİŞ** | sen | Şablonun **son sayfası**: kişisel bilgiler, öğrenim durumu, yayınlar. Atlanmamalı. |
 
 ### Şekil ve çizelge listesi
 
@@ -154,6 +173,18 @@ yapıştırabilirsin.
 
 ---
 
+## 4b · Şablonun zorunlu tuttukları
+
+Şablon iki bölümü **zorunlu** işaretliyor, gerisi serbest:
+
+- **GİRİŞ** — *"(GİRİŞ BÖLÜMÜ ZORUNLUDUR)"*
+- **SONUÇLAR VE ÖNERİLER** — *"(SONUÇ BÖLÜMÜ ZORUNLUDUR)"*
+
+"MATERYAL VE YÖNTEM" ve "BULGULAR VE TARTIŞMA" başlıklarının yanında açıkça
+*"(BU BAŞLIK ZORUNLU DEĞİL)"* yazıyor. Yani aradaki bölümleri projeye göre
+adlandırabilirsin — biz yine de bu iki standart adı kullanacağız, çünkü rubrik
+"materyal ve metot" ve "bulgular" diye ayrı ayrı puanlıyor.
+
 ## 5 · Teslimden önce son kontrol
 
 - [ ] İçindekiler güncellendi mi? (Word'de tabloya sağ tık → **Alanı güncelleştir**)
@@ -165,5 +196,7 @@ yapıştırabilirsin.
 - [ ] AI beyanı **dürüst** mü?
 - [ ] Kaynakçadaki her kaynağa metinde atıf var mı, metindeki her atıf kaynakçada mı?
 - [ ] Sayfa numaraları kesintisiz mi? (ön kısım romen, gövde arap rakamı)
+- [ ] Metin içi atıflar **numaralı** mı (`[1]`), yazar-yıl değil mi?
+- [ ] ÖZGEÇMİŞ dolduruldu mu?
 - [ ] Baştan sona bir kez PDF'e çevirip **göz gezdirdin mi**? Kayan tablo, taşan şekil,
       yarım kalan başlık en çok burada yakalanır.
