@@ -42,27 +42,35 @@ sayının veya sonucun doğru olduğunu göstermez.
 
 ---
 
-## 2 · PRISMA akışı (Şekil 1.1 olarak çizilecek)
+## 2 · PRISMA akışı (Şekil 1.1)
+
+**Sayılar elle yazılmaz.** `scripts/audit_literature_corpus.py` korpusu tarar, aşamaları
+hesaplar, **toplandıklarını doğrular** ve kaydı yazar; şema (`D5_prisma_flow`) o kayıttan
+okur. Bunun sebebi somut: bu akışın önceki hâli elle yazılmıştı ve toplanmıyordu
+(912 − 34 − 661 = 217 iken kutuda 251 yazıyordu), ayrıca kaynakçada olandan fazla "dahil
+edilen" kaynak iddia ediyordu. Okuyucunun yapacağı aritmetiği yazarın yapmaması, bir
+inceleme akışında en kolay yakalanan hatadır.
+
+Ölçülen akış (2026-08-16, `reports/measurements/literature_audit.json`):
 
 ```
-Tanımlama
-  36 yapılandırılmış tarama dokümanı
-  912 benzersiz kayıt tanımlandı
-        │
-        ▼
-Tarama
-  konu dışı alanlar elendi (su, tarım, biyomedikal…)      −34
-  kod deposu / forum / ürün sayfası ayrıldı              −661
-        │
-        ▼
-Uygunluk
-  251 akademik yayın tam metin/özet düzeyinde tarandı
-  tez bölümlerine göre konu başlıklarına ayrıldı
-        │
-        ▼
-Dahil edilen
-  ~45–55 kaynak · her biri özeti okunarak doğrulandı
+Tanımlama    36 yapılandırılmış tarama dokümanı → 1.480 benzersiz kayıt
+Tarama       −331 araç/doküman  −119 akademik olmayan  −459 sınıflandırılamayan
+Uygunluk     571 akademik yayın
+Dahil edilen 19 kaynak (kaynakçadan okunur; 14 bilimsel + 5 standart)
 ```
+
+1.480 − 331 − 119 − 459 = **571** ✓
+
+**Sınıflandırmanın sınırı yazılmalıdır:** ayrım yayın *yerine* göre yapılır, kaba bir
+ölçüttür. "Akademik yayın" demek, bağlantının araştırma yayınlayan bir mecraya işaret
+ettiği anlamına gelir; hakemli veya konuyla ilgili olduğu anlamına gelmez. Asıl eleme
+**uygunluk** aşamasındadır ve elle yapılır: `BIBLIOGRAPHY.md`'ye yalnızca birincil
+kaynağından açılıp künyesi doğrulanmış kayıt girer.
+
+**571'den 19'a düşüşün anlamı:** bu tez 571 yayını taramamıştır ve taradığını iddia etmez.
+19, *doğrulanmış* kaynak sayısıdır. Aradaki fark, tezin bir sınırıdır — literatür taraması
+sistematik biçimde *tanımlanmış* ama kapsamlı biçimde *okunmamıştır*.
 
 **Not:** kod depoları ve resmî dokümanlar (mmsegmentation, TensorRT, JetPack, Cityscapes
 şartları) akademik kaynak sayılmaz ama **materyal ve yöntem** bölümünde araç/veri atfı

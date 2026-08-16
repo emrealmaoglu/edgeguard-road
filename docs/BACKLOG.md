@@ -42,13 +42,13 @@ motora hiç dokunulmadan, çıktılar birebir aynı.
 
 | # | iş | rubrik puanı | durum |
 |---|---|---|---|
-| C1 | PRISMA akış şeması (Şekil 1.1) | 5 | 🔵 |
+| C1 | PRISMA akış şeması (Şekil 1.1) | 5 | ✅ sayılar türetiliyor ve toplanıyor |
 | C2 | ~50 kaynağın doğrulanması + ISO 690 listesi | 5 | 🔵 14 doğrulandı, bekleyen yok |
 | C3 | Konu dışı 34 kaydın elenmesi | — | 🔵 |
-| C4 | Standartlara atıf (ISO/IEC 25010, IEEE 829, ISO 690) | 5 | ⚪ |
-| C5 | Girişimcilik/yenilikçilik bölümü | 4 | ⚪ |
-| C6 | Sürdürülebilirlik bölümü (joule/kare üzerinden) | 4 | ⚪ |
-| C7 | ÖZET + ABSTRACT | — | ⚪ |
+| C4 | Standartlara atıf (ISO/IEC 25010, 29119, 21448, 690) | 5 | ✅ |
+| C5 | Girişimcilik/yenilikçilik bölümü | 4 | ✅ |
+| C6 | Sürdürülebilirlik bölümü (joule/kare üzerinden) | 4 | ✅ |
+| C7 | ÖZET + ABSTRACT | — | ✅ |
 | C8 | Beyan + AI kullanım beyanı | — | ⚪ sen imzalayacaksın |
 
 ## D · Tez — ek ölçümler (varsa zaman)

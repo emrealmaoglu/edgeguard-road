@@ -204,7 +204,7 @@ SegFormer · BiSeNetV2 · mmsegmentation · TensorRT · enerji tabanlı OOD · k
 | kriter | puan | durum |
 |---|---|---|
 | Problem tanımı | 5 | ✅ |
-| **Literatür taraması (PRISMA)** | 5 | ❌ **yapılacak** |
+| **Literatür taraması (PRISMA)** | 5 | ✅ Şekil 1.1, sayılar türetilir |
 | **Blok şeması** | 5 | ✅ D1 |
 | Materyal ve metot | 5 | ✅ |
 | **FAIR veri yönetimi** | 5 | ✅ güçlü |
@@ -218,5 +218,6 @@ SegFormer · BiSeNetV2 · mmsegmentation · TensorRT · enerji tabanlı OOD · k
 | Sürdürülebilirlik | 4 | ✅ THESIS_SECTIONS §C6, ölçülmüş joule |
 | **Yeniden üretilebilirlik** | 3 | ✅ çok güçlü |
 
-**Açık kalan tek boşluk:** sistematik literatür taraması (PRISMA). Standartlara atıf,
-girişimcilik, sürdürülebilirlik ve özet/abstract `THESIS_SECTIONS.md`'de yazılmıştır.
+**Rubrikte açık kalan boşluk yok.** PRISMA akışı Şekil 1.1'dir ve sayıları
+`audit_literature_corpus.py` türetir; standartlara atıf, girişimcilik, sürdürülebilirlik
+ve özet/abstract `THESIS_SECTIONS.md`'dedir.

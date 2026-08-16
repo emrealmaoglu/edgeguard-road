@@ -485,8 +485,18 @@ def diagram_frame_budget(output: Path, written: list[str]) -> None:
     save(figure, output, "D4_frame_budget_flow", written)
 
 
-def diagram_prisma(output: Path, written: list[str]) -> None:
-    """The literature screening, drawn as the review flow it actually was."""
+def diagram_prisma(output: Path, written: list[str], audit: dict | None = None) -> None:
+    """The literature screening, drawn from counts the audit derived.
+
+    The numbers are not typed here. An earlier version of this figure carried
+    hand-written stages that did not subtract to their own total and claimed more
+    included sources than the bibliography held; a review flow that fails the
+    arithmetic a reader will do is worse than no figure. `audit_literature_corpus.py`
+    computes the stages, checks they balance, and reads the included count from the
+    bibliography itself so the two cannot drift apart.
+    """
+    audit = audit or {}
+    removed = audit.get("screening_removed", {})
     figure, axis = blank(7.5, 6.2)
     axis.text(
         0.5,
@@ -499,10 +509,33 @@ def diagram_prisma(output: Path, written: list[str]) -> None:
     )
 
     stages = [
-        (0.80, "Tanımlama", "36 yapılandırılmış tarama dokümanı\n**912 benzersiz kayıt**", BLUE),
-        (0.60, "Tarama", "konu dışı alanlar elendi  −34\nkod/forum/ürün ayrıldı  −661", EDGE),
-        (0.40, "Uygunluk", "**251 akademik yayın**\nbaşlık ve özet düzeyinde tarandı", EDGE),
-        (0.20, "Dahil edilen", "**~50 kaynak**\nher biri açılıp doğrulandı", GREEN),
+        (
+            0.80,
+            "Tanımlama",
+            f"{audit.get('search_documents', 36)} yapılandırılmış tarama dokümanı\n"
+            f"{audit.get('identification', 0)} benzersiz kayıt",
+            BLUE,
+        ),
+        (
+            0.60,
+            "Tarama",
+            f"araç/doküman  −{removed.get('tool_or_documentation', 0)}\n"
+            f"akademik olmayan  −{removed.get('non_scholarly', 0)}\n"
+            f"sınıflandırılamayan  −{removed.get('unclassified', 0)}",
+            EDGE,
+        ),
+        (
+            0.40,
+            "Uygunluk",
+            f"{audit.get('eligibility', 0)} akademik yayın\nyayın yerine göre ayrıldı",
+            EDGE,
+        ),
+        (
+            0.20,
+            "Dahil edilen",
+            f"{audit.get('included', 0)} kaynak\nher biri açılıp künyesi doğrulandı",
+            GREEN,
+        ),
     ]
     for y, title, body, colour in stages:
         box(
@@ -520,17 +553,18 @@ def diagram_prisma(output: Path, written: list[str]) -> None:
             arrow(axis, (0.50, y), (0.50, y - 0.055), colour=colour)
 
     for y, text in (
-        (0.665, "konu dışı: su, tarım, biyomedikal"),
-        (0.465, "kod deposu, forum, ürün sayfası"),
-        (0.265, "bölümlere göre konu ayrımı"),
+        (0.665, "36 doküman, sınıflandırma yayın yerine göre"),
+        (0.465, "araç atfı ayrı listede tutulur"),
+        (0.265, "uygunluk elemesi elle yapılır"),
     ):
         axis.text(0.83, y, text, ha="left", va="center", fontsize=7, color=EDGE, style="italic")
 
     axis.text(
         0.5,
         0.075,
-        "Kod depoları ve resmî dokümanlar akademik kaynak sayılmaz;\n"
-        "materyal ve yöntem bölümünde araç/veri atfı olarak ayrı listelenir.",
+        "Sayılar `audit_literature_corpus.py` tarafından türetilir ve toplanır.\n"
+        "Kod depoları ve resmî dokümanlar akademik kaynak sayılmaz; materyal ve\n"
+        "yöntem bölümünde araç/veri atfı olarak ayrı listelenir.",
         ha="center",
         fontsize=7.6,
         color=EDGE,
@@ -538,9 +572,29 @@ def diagram_prisma(output: Path, written: list[str]) -> None:
     save(figure, output, "D5_prisma_flow", written)
 
 
+def load_literature_audit(path: Path | None) -> dict:
+    """Read the derived counts, or return nothing so the figure renders empty stages
+    rather than stale ones. A blank box is a visible problem; a wrong number is not.
+    """
+    if path is None or not path.is_file():
+        return {}
+    import json
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--literature-audit",
+        type=Path,
+        help="record from `audit_literature_corpus.py`; the PRISMA figure reads its "
+        "stage counts from here instead of carrying them in code",
+    )
     return parser
 
 
@@ -553,7 +607,7 @@ def main() -> int:
     diagram_protocol(output, written)
     diagram_three_axes(output, written)
     diagram_frame_budget(output, written)
-    diagram_prisma(output, written)
+    diagram_prisma(output, written, load_literature_audit(args.literature_audit))
     for name in written:
         print(f"  {name}.png / .pdf")
     print(f"\n{len(written)} şema -> {output}")
