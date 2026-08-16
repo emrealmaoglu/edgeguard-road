@@ -13,12 +13,19 @@ would make the attribution describe a pipeline nobody runs.
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
+
+# Running this as `python scripts/jetson/<name>.py` puts *this directory* on the import
+# path, not the repository root, so the shared runner below is not importable. The runbook
+# documents exactly that invocation, so the script makes it work rather than asking the
+# reader to know about PYTHONPATH.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from edgeguard.rescue.inference import preprocess_image
 from edgeguard.rescue.perception import derive_perception
