@@ -73,6 +73,80 @@ Kanıt: `predict.py --emit-regions` çıktıları, `results/figures/`.
 
 ---
 
+## 2b · Nesne düzeyinde konumlandırma — piksellerin göremediği
+
+**İddia:** *"sürülebilir alan ve potansiyel risk bölgelerini belirlemesi"* — belirlemek,
+piksel saymaktan farklı bir iştir. mIoU büyük bir engelin üçte birini bulan modelle,
+aynı engeli üç ayrı parça olarak bulan modeli aynı puanlar; küçük ama ölümcül bir engeli
+tamamen kaçıranı da neredeyse cezalandırmaz. Araştırma dokümanı 26 bunu söylüyor ve
+bileşen düzeyinde metrik istiyor. `component_localization_metrics` tam bunun için
+yazılmıştı — testli, çağrısız (`drivable_metrics` ve `paired_comparison` ile aynı örüntü).
+
+100 Cityscapes val karesi, on dikkat sınıfı, minimum 64 piksel
+(`scripts/evaluate_component_localization.py`):
+
+| mimari | bileşen kapsama | en iyi bileşen IoU | tahmin/GT bileşen | yorum |
+|---|---|---|---|---|
+| SegFormer-B0 | **0,6780** | 0,4351 | 42,5 / 27,9 = **1,52×** | daha çok buluyor, daha çok parçalıyor |
+| PIDNet-S | 0,6655 | 0,4456 | 27,8 / 27,9 = 1,00× | sayıca denk |
+| DDRNet-23-slim | 0,6428 | **0,4630** | 23,9 / 27,9 = **0,86×** | daha az buluyor, bulduğunu daha bütün buluyor |
+
+> **Stride-4 hikâyesinin dördüncü kanıtı.** SegFormer gerçek nesnelerin daha büyük bir
+> kısmını buluyor (kapsama 0,678'e karşı 0,643) ama onları **1,52 kat fazla parçaya**
+> bölüyor. DDRNet'inki tersi: daha az nesne buluyor, ama bulduğunun bileşen IoU'su en
+> yüksek (0,463). İnce ızgara ayırıyor, kaba ızgara birleştiriyor.
+
+**Bu neden sadece bir metrik değil.** Zamansal izleyici ve risk sıralaması **bileşenler
+üzerinde** çalışır. İkiye bölünmüş bir nesne, dikkat için yarışan iki izdir — yani
+parçalanma aşağı akışta doğrudan §3b'deki titremeye dönüşür. SegFormer'ın sürülebilir alan
+ölçümünde de en parçalı yol maskesini vermesi (8,62'ye karşı 4,54) aynı olgudur.
+
+**Sınır:** bunlar sınıf-bağlantılı bölgelerdir, **örnek (instance) değildir** — yan yana
+duran aynı sınıftan iki araba burada tek bileşendir. Kayıt `instance_detection: false`
+diyor; bu bir dedektör kıyaslaması değildir.
+
+---
+
+## 2c · Split sızıntısı — her doğruluk sayısının dayandığı varsayım
+
+Araştırma dokümanı 18 bu konuda net: sürüş görüntüsü 15-30 FPS'te kaydedilir, saniyenin
+üçte biri arayla iki kare neredeyse aynıdır, ve rastgele bölme birini eğitime diğerini
+doğrulamaya atarsa model segmentlemeyi değil ezberlediği arka planı tanımayı öğrenir.
+Bu tezdeki her doğruluk sayısı, bunun olmadığı varsayımına dayanıyor —
+**ve varsayım bugüne kadar test edilmemişti.** `bounded_perceptual_duplicate_pairs` bu iş
+için yazılmış, çağrılmamıştı.
+
+446 kare, dört değerlendirme kümesi, 64-bit ortalama-hash
+(`scripts/audit_split_leakage.py`):
+
+| yarıçap | **splitler arası** | cityscapes_val | demo_video | acdc_night | acdc_fog |
+|---|---|---|---|---|---|
+| d ≤ 0 | **0** | 0 | 36 | 0 | 2 |
+| d ≤ 2 | **0** | 0 | 127 | 1 | 88 |
+| d ≤ 4 | 7 | 2 | 293 | 12 | 581 |
+| d ≤ 6 | 90 | 16 | 516 | 80 | 1.504 |
+
+> **Sızıntı yok.** Splitler arası yakın-kopya sayısı d≤2'de **sıfır**. Gerçek bir kopya
+> d=0'da görünür ve yarıçap büyüdükçe orada kalır; buradaki sayı 0 → 0 → 7 → 90 diye
+> *sadece yarıçapla* büyüyor, ki bu kopya değil, hash'in sinyali tükenmesidir.
+> Cityscapes val kendi içinde de temiz: 120 eşit aralıklı karede d≤2'de **sıfır**
+> yakın-kopya. Manşet doğruluk sayıları tekrar eden sahnelerden şişmiş değil.
+
+**Yöntemsel bulgu — dokümanın öngörmediği.** Aynı yarıçap her görüntüde aynı şeyi
+ölçmüyor. ACDC sis kümesi d=0'da 2 çiftten d=6'da 1.504'e çıkıyor (**752 kat**), Cityscapes
+val ise 0'dan 16'ya. Sis kontrastı yok ediyor, ortalama-hash ayırt etme gücünü kaybediyor.
+**Sabit bir algısal-hash eşiği hava koşulları arasında taşınamaz** — olumsuz koşul
+verisinde dedup yapan bir çalışma bunu hesaba katmak zorundadır. Araştırma dokümanı 18
+algısal dedup öneriyor ama bu sınırı belirtmiyor; biz ölçtük.
+
+demo_video'nun d=0'da bile 36 çift vermesi **beklenen ve doğru**: o bitişik bir video
+dizisidir, ardışık kareler gerçekten yakın-kopyadır.
+
+**Sınır:** algısal hash kimlik kanıtı değildir (`identity_proof: false`). İki karenin
+farklı sahneler olduğunu kanıtlamaz, yalnızca bu yarıçapta yakın-kopya olmadıklarını.
+
+---
+
 ## 3 · Sürülebilir alan ve risk bölgeleri
 
 **İddia:** *"sürülebilir alan ve potansiyel risk bölgelerini belirlemesi"*
@@ -165,6 +239,9 @@ yaklaşımı değil, gerçek izleyici.
 | ortalama iz ömrü | 3,68 kare |
 | **medyan iz ömrü** | **1 kare** |
 | 1. sıradaki bölgesi değişen kare | 30 / 150 — **%20,0** |
+| 3+ kare yaşayan iz | 471 |
+| **titreyen iz** (kategori ≥2 kez değişen) | **89 — %18,9** |
+| kararlı iz başına ort. kategori değişimi | 0,79 |
 | high → daha düşük gözlem | 140 |
 | daha düşük → high gözlem | 162 |
 
@@ -174,6 +251,12 @@ Kayıt: `results/temporal/pidnet_s.json`.
 > karedir**. Yani tek-kare operasyonel dikkat, baskın davranışı olarak titriyor. Zamansal
 > kalıcılık bu tabloda "olsa iyi olur" bir özellik değil, birincil hata kipine denk gelen
 > özelliktir.
+
+**İkinci bir bozulma kipi: titreme.** İz ömrü ile titreme aynı şey değildir ve
+araştırma dokümanı 26 bunları ayrı tanımlar — haklı olarak. Üç kareden uzun yaşayan 471
+izin **%18,9'u** risk kategorisini en az iki kez değiştiriyor. Bu, tek karelik izden farklı
+ve tartışmalı biçimde daha kötü bir hata: kaybolan bir uyarı değil, **kendini sürekli
+yalanlayan kalıcı bir uyarı**. Sürücü güvenini en çok sarsan kip budur.
 
 **Mekanizma — neden gerçek bir değişiklik.** İki skorlama farklı ağırlık toplamlarıyla
 normalize ediliyor: kalıcılık olmadan 0,90, kalıcılıkla 0,95. Bir kez görülmüş bölge payda

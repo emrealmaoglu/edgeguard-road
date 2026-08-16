@@ -261,6 +261,8 @@ def main() -> None:
     open_set = load_group(root / "open_set")
     acdc = load_group(root / "acdc")
     calibration = load_group(root / "calibration")
+    components = load_group(root / "components")
+    leakage = load_json(root / "leakage_audit.json")
     risk = load_group(root / "risk")
     drivable = load_group(root / "drivable")
     temporal = load_group(root / "temporal")
@@ -303,7 +305,7 @@ def main() -> None:
     if page.startswith("1"):
         render_problem(st, root)
     elif page.startswith("2"):
-        render_comparison(st, accuracy, open_set, jetson, root)
+        render_comparison(st, accuracy, open_set, jetson, components, leakage, root)
     elif page.startswith("3"):
         render_open_set(st, open_set, root)
     elif page.startswith("4"):
@@ -365,7 +367,15 @@ canlı üretilmez.
     )
 
 
-def render_comparison(st: Any, accuracy: dict, open_set: dict, jetson: dict, root: Path) -> None:
+def render_comparison(
+    st: Any,
+    accuracy: dict,
+    open_set: dict,
+    jetson: dict,
+    components: dict,
+    leakage: dict | None,
+    root: Path,
+) -> None:
     st.title("Dört eksende model karşılaştırması")
     st.caption(
         "Doğruluk, kalibrasyon ve açık küme donanımdan bağımsızdır; maliyet Jetson Orin "
@@ -424,6 +434,9 @@ def render_comparison(st: Any, accuracy: dict, open_set: dict, jetson: dict, roo
     show_figure(st, root, "02_per_class_iou", "Sınıf bazlı IoU · dağıtım çözünürlüğü")
     show_figure(st, root, "06_pareto", "Doğruluk ↔ enerji ve açık küme ↔ gecikme")
     st.divider()
+    render_components(st, components)
+    render_leakage(st, leakage)
+    st.divider()
     left, right = st.columns(2)
     left.markdown(
         """
@@ -459,6 +472,82 @@ taşıyor.
         "(77,43 ms) ve en verimli (0,630 J/kare) model; gecede doğruluğunun yalnızca "
         "%10,4'ünü koruyor (7,12 mIoU) ve kalibrasyonu 14 kat bozuluyor. Aynı testte "
         "SegFormer-B0 %29,7 koruyor."
+    )
+
+
+def render_components(st: Any, components: dict) -> None:
+    """Object-level scores, which pixel metrics can flatter and punish in equal measure.
+
+    mIoU scores a model that finds a third of one obstacle the same as one that finds it
+    in three pieces, and barely penalises missing a small object outright. It matters
+    downstream too: the tracker and the risk ranking both run on components, so an object
+    split in two is two tracks competing for attention.
+    """
+    if not components:
+        return
+    rows = [components[name] for name in MODEL_ORDER if name in components]
+    if not rows:
+        return
+    st.markdown("#### Nesne düzeyinde konumlandırma")
+    st.markdown(
+        _markdown_table(
+            ["Mimari", "Bileşen kapsama", "En iyi bileşen IoU", "Tahmin/GT bileşen"],
+            [
+                [
+                    MODEL_LABEL.get(r.get("model", ""), r.get("model", "—")),
+                    _number(r.get("component_coverage"), 4),
+                    _number(r.get("mean_best_component_iou"), 4),
+                    _number(
+                        (r.get("predicted_component_count") or 0)
+                        / max(r.get("ground_truth_component_count") or 1e-9, 1e-9),
+                        2,
+                        "×",
+                    ),
+                ]
+                for r in rows
+            ],
+        )
+    )
+    st.caption(
+        "**Stride-4'ün dördüncü izi.** SegFormer-B0 gerçek nesnelerin daha büyük kısmını "
+        "buluyor ama onları **1,52 kat fazla parçaya** bölüyor; DDRNet daha az buluyor, "
+        "bulduğunu daha bütün buluyor. İnce ızgara ayırıyor, kaba ızgara birleştiriyor. "
+        "Bunlar sınıf-bağlantılı bölgelerdir, örnek (instance) değil."
+    )
+
+
+def render_leakage(st: Any, leakage: dict | None) -> None:
+    """The assumption every accuracy number above rests on, tested."""
+    if not leakage:
+        return
+    sweep = leakage.get("sweep") or {}
+    if not sweep:
+        return
+    st.markdown("#### Splitler arası sızıntı var mı?")
+    order = sorted(sweep, key=int)
+    names = list(leakage.get("splits", {}))
+    st.markdown(
+        _markdown_table(
+            ["Yarıçap", "**Splitler arası**", *names],
+            [
+                [
+                    f"d ≤ {radius}",
+                    f"**{sweep[radius].get('across_split_pairs')}**",
+                    *[
+                        str((sweep[radius].get("within_split_pairs") or {}).get(name, "—"))
+                        for name in names
+                    ],
+                ]
+                for radius in order
+            ],
+        )
+    )
+    st.caption(
+        "**Sızıntı yok.** Gerçek bir kopya d=0'da görünür ve kalır; buradaki sayı yalnızca "
+        "yarıçapla büyüyor, ki bu kopya değil hash'in sinyalinin tükenmesidir. Cityscapes "
+        "val kendi içinde de temiz. Ayrıca yöntemsel bir bulgu: aynı yarıçap her görüntüde "
+        "aynı şeyi ölçmüyor — ACDC sis 2'den 1.504'e çıkarken Cityscapes 0'dan 16'ya. "
+        "Sabit bir algısal-hash eşiği hava koşulları arasında taşınamaz."
     )
 
 

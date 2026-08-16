@@ -104,6 +104,11 @@ def main() -> int:
 
     lifetimes: dict[int, int] = {}
     first_seen: dict[int, int] = {}
+    # Research document 26 separates flicker from fragmentation, and it is right to:
+    # a track that survives twenty frames while its category oscillates is a different
+    # failure from one that vanishes after a single frame, and arguably a worse one --
+    # it is a sustained alert that keeps contradicting itself.
+    categories: dict[int, list[str]] = {}
     rows: list[dict[str, Any]] = []
     for index, image_path in enumerate(images):
         with Image.open(image_path) as opened:
@@ -185,6 +190,7 @@ def main() -> int:
                     "category_with": informed["risk_category"],
                 }
             )
+            categories.setdefault(track_id, []).append(str(baseline["risk_category"]))
         if (index + 1) % 25 == 0:
             print(f"  {index + 1}/{len(images)}", flush=True)
 
@@ -203,6 +209,13 @@ def main() -> int:
         with_leader = max(frame_rows, key=lambda r: r["risk_with_persistence"])["track_id"]
         leader_changes += int(without_leader != with_leader)
 
+    # A flip is a category change between consecutive observations of the same track.
+    flips = {
+        track: sum(1 for a, b in zip(series, series[1:], strict=False) if a != b)
+        for track, series in categories.items()
+    }
+    stable = [track for track in judged if lifetimes[track] >= 3]
+    flickering = [track for track in stable if flips.get(track, 0) >= 2]
     demoted = [
         row for row in rows if row["category_without"] == "high" and row["category_with"] != "high"
     ]
@@ -231,6 +244,17 @@ def main() -> int:
             float(np.median([lifetimes[t] for t in judged])) if judged else 0.0
         ),
         "persistence_saturation_frames": args.persistence_saturation,
+        "tracks_surviving_three_frames": len(stable),
+        "flickering_tracks": len(flickering),
+        "flickering_track_fraction": len(flickering) / max(1, len(stable)),
+        "mean_category_flips_per_stable_track": (
+            float(np.mean([flips.get(track, 0) for track in stable])) if stable else 0.0
+        ),
+        "flicker_definition": (
+            "risk-category changes between consecutive observations of one track; "
+            "a track is counted as flickering when it survives at least three frames "
+            "and changes category at least twice"
+        ),
         "frames_whose_top_region_changed": leader_changes,
         "top_region_change_fraction": leader_changes / max(1, len(by_frame)),
         "high_to_lower_observations": len(demoted),
@@ -256,6 +280,12 @@ def main() -> int:
     print(
         f"  1. sırası değişen kare {leader_changes} "
         f"({record['top_region_change_fraction'] * 100:.1f}%)"
+    )
+    print(
+        f"  titreyen iz           {record['flickering_tracks']}"
+        f"/{record['tracks_surviving_three_frames']}"
+        f" (%{record['flickering_track_fraction'] * 100:.1f}), "
+        f"ort. {record['mean_category_flips_per_stable_track']:.2f} değişim"
     )
     print(f"  high -> daha düşük     {len(demoted)}")
     print(f"  daha düşük -> high     {len(promoted)}")

@@ -60,6 +60,11 @@ motora hiç dokunulmadan, çıktılar birebir aynı.
 | D3 | Zamansal kalıcılık (riskin 7. özelliği) | 150 kare: izlerin %50,1'i tek karelik | ✅ |
 | D4 | Sürülebilir alan sayısal metriği | Cityscapes val, 200 kare × 5 mimari | ✅ |
 | D5 | Kendi modellerimizin ACDC/RoadAnomaly ölçümü | referansla karşılaştırma | ⚪ |
+| D7 | Eşleştirilmiş model karşılaştırması | ilk iki model ayrışmıyor | ✅ |
+| D8 | Sınıf-bazlı ECE | havuzlanmış 1,5–3× iyimser | ✅ |
+| D9 | Bileşen düzeyinde konumlandırma | SegFormer 1,52× parçalıyor | ✅ |
+| D10 | Split sızıntı denetimi | d≤2'de sıfır; sis hash'i bozuyor | ✅ |
+| D11 | Titreme (flicker) metriği | kararlı izlerin %18,9'u titriyor | ✅ |
 | D6 | Veri seti dağılım figürleri | rubrik: FAIR | ⚪ |
 
 ## E · Araştırma dokümanlarından çıkan, henüz değerlendirilmemiş fikirler

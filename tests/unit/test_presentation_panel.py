@@ -116,6 +116,18 @@ def populated_root(tmp_path: Path) -> Path:
         '{"model": "pidnet_s", "pooled_ece": 0.0323, "classwise_ece": 0.0776,'
         ' "worst_class": "pole", "worst_class_ece": 0.2598}',
     )
+    _write(
+        tmp_path / "components" / "pidnet_s.json",
+        '{"model": "pidnet_s", "component_coverage": 0.6655,'
+        ' "mean_best_component_iou": 0.4456, "predicted_component_count": 27.8,'
+        ' "ground_truth_component_count": 27.9}',
+    )
+    _write(
+        tmp_path / "leakage_audit.json",
+        '{"splits": {"cityscapes_val": {"sampled": 120}},'
+        ' "sweep": {"0": {"across_split_pairs": 0, "within_split_pairs": {"cityscapes_val": 0}},'
+        ' "2": {"across_split_pairs": 0, "within_split_pairs": {"cityscapes_val": 0}}}}',
+    )
     _write(tmp_path / "shift_response.json", '{"model": "pidnet_s", "ratio": 1.0}')
     return tmp_path
 
@@ -126,7 +138,13 @@ def _pages(root: Path, groups: dict[str, dict]) -> list[tuple[str, Any]]:
         (
             "comparison",
             lambda st: panel.render_comparison(
-                st, groups["accuracy"], groups["open_set"], groups["jetson"], root
+                st,
+                groups["accuracy"],
+                groups["open_set"],
+                groups["jetson"],
+                groups["components"],
+                groups["leakage"],
+                root,
             ),
         ),
         ("open_set", lambda st: panel.render_open_set(st, groups["open_set"], root)),
@@ -165,8 +183,12 @@ def _groups(root: Path) -> dict[str, dict]:
             "drivable",
             "temporal",
             "calibration",
+            "components",
         )
-    } | {"shift": panel.load_json(root / "shift_response.json")}
+    } | {
+        "shift": panel.load_json(root / "shift_response.json"),
+        "leakage": panel.load_json(root / "leakage_audit.json"),
+    }
 
 
 @pytest.mark.parametrize(
@@ -185,6 +207,7 @@ def _groups(root: Path) -> dict[str, dict]:
                     "drivable",
                     "temporal",
                     "calibration",
+                    "components",
                     "shift",
                 ),
                 {},
@@ -218,6 +241,7 @@ def test_every_page_renders_with_records(page: str, populated_root: Path) -> Non
                     "drivable",
                     "temporal",
                     "calibration",
+                    "components",
                     "shift",
                 ),
                 {},
@@ -315,3 +339,29 @@ def test_the_calibration_page_shows_what_the_pooled_number_hides(populated_root:
     text = " ".join(str(value) for _, value in st.calls)
     assert "0.0323" in text and "0.0776" in text
     assert "pole" in text
+
+
+def test_the_leakage_table_reports_the_whole_radius_sweep(populated_root: Path) -> None:
+    """One radius cannot be read on its own: a real duplicate shows at zero and stays,
+    while a count that only grows with the radius is the hash running out of signal. The
+    page has to show the curve or the reader cannot tell those apart.
+    """
+    st = FakeStreamlit()
+
+    panel.render_leakage(st, panel.load_json(populated_root / "leakage_audit.json"))
+
+    text = " ".join(str(value) for _, value in st.calls)
+    assert "d ≤ 0" in text and "d ≤ 2" in text
+
+
+def test_the_component_table_reports_the_prediction_to_truth_ratio(populated_root: Path) -> None:
+    """Coverage alone hides fragmentation: a model can find every object and still split
+    each one in two. The ratio is what exposes that, so it has to be on the page.
+    """
+    st = FakeStreamlit()
+
+    panel.render_components(st, panel.load_group(populated_root / "components"))
+
+    text = " ".join(str(value) for _, value in st.calls)
+    assert "0.6655" in text
+    assert "1.00×" in text
