@@ -1,5 +1,8 @@
 # Sunum konuşması — 6 dakika, panelle senkron
 
+**Bu bir kayıt, canlı savunma değil.** Yani takılırsan durup baştan alabilirsin, ve
+kimse araya girip soru sormayacak. Ton buna göre: anlatıyorsun, savunmuyorsun.
+
 **Kurulum:** panel Jetson'da açık, tarayıcı tam ekran, 1. sayfada bekliyor. Kenar
 çubuğundaki canlı watt/sıcaklık görünür durumda — bunu bir kez sözle işaretle, sonra
 unut.
@@ -141,7 +144,7 @@ parmakla/imleçle işaretle.**
 
 ## 5:00 – 5:40 · Sınırlar ve geri çekmeler (Sayfa 7)
 
-**Sayfa 7'ye geç.** Bu bölümü **savunarak değil, sahiplenerek** anlat.
+**Sayfa 7'ye geç.** Bu bölümü sakin anlat — kimse itiraz etmeyecek, sen söylüyorsun.
 
 > "Sınırlar. Gerçek zaman hedefini **geçemedik** — en iyi 12,4 FPS, hedef 20. Darboğazın
 > model değil CPU tarafı olduğunu ölçtük, yani yol açık ama yürünmedi.
@@ -171,29 +174,36 @@ parmakla/imleçle işaretle.**
 
 ---
 
-## Jüri sorabilir — hazır cevaplar
+## Vaktin kalırsa söyleyebileceklerin
 
-**"Neden kendi modelinizi eğitmediniz?"**
+Kayıt 6 dakikanın altında bittiyse aşağıdakilerden bir-ikisini ekleyebilirsin. Hepsini
+sıkıştırma — biri yeter, ve hiçbiri zorunlu değil.
+
+*(Not: değerlendirme formunda "soruları yanıtlama yetkinliği" diye 7 puanlık bir satır
+var. Dersin bu dönem nasıl işlediğini sen biliyorsun; sözlü bir kısım çıkarsa bu
+başlıklar hazır cevap olarak durur.)*
+
+**Kendi modelinizi eğitmediniz mi?**
 > Eğittik — Cityscapes+IDD20K karışımıyla, sınırlı bütçede. Ama o modeller yayınların
 > yüzde 0,7'si kadar örnek gördü, o yüzden karşılaştırma temeli olarak resmî referans
 > checkpoint'leri kullandık ve ikisini **ayrı** tuttuk. Tezde ikisi de var, karıştırılmadı.
 
-**"n=5 ile korelasyon konuşulur mu?"**
+**n = 5 ile korelasyon konuşulur mu?**
 > Konuşulmaz, ve tezde de öyle yazıyor. Nitekim eksi 0,90 bulgusunu tam bu yüzden geri
 > çektik. Sayısal iddialarımız korelasyondan değil, **eşleştirilmiş karşılaştırmadan**
 > geliyor — aynı karelerde, güven aralığıyla.
 
-**"FP16'ya çevirince doğruluk kaybetmediniz mi?"**
+**FP16'ya çevirince doğruluk kaybettiniz mi?**
 > Ölçtük. Cihazda, FP16 motoru ile FP32'yi **aynı koşuda aynı karelerde** puanladık: fark
 > sıfırdan ayırt edilemiyor, piksel uyumu %99,97. Eşleştirmeseydik yanlış bir sonuç
 > bulacaktık — ayrı ölçülmüş sayılarla kıyaslayınca DDRNet'te 0,025'lik sahte bir ceza
 > çıkıyordu, ki tamamı kare alt kümesinden geliyordu.
 
-**"12 FPS ile gerçek zamanlı denebilir mi?"**
+**12 FPS gerçek zamanlı sayılır mı?**
 > Denemez, ve demiyoruz. Sınırlar sayfasında **geçilmedi** yazıyor. Ölçtüğümüz şey
 > darboğazın nerede olduğu: motorun payı %5, geri kalanı CPU tarafı.
 
-**"Bu bir ürün mü?"**
+**Bu bir ürün mü?**
 > Hayır, araştırma prototipi. ISO 26262 kapsamında hiçbir güvenlik seviyesi hedeflenmedi
 > ve tezde bu açıkça yazılı. Ama bulgular **ISO 21448 / SOTIF** sınıfında: sistem
 > arızalanmadan, sadece algı yetersiz kaldığı için ortaya çıkan tehlikeler.
@@ -202,6 +212,8 @@ parmakla/imleçle işaretle.**
 
 ## Prova notları
 
+- **Kayıt olduğu için:** cümleyi bozarsan durup o cümleyi tekrar al, sonra kes. Tek
+  seferde mükemmel çekmeye çalışma.
 - **En sık yapılan hata:** her sayfada durup her tabloyu okumak. Tablolar arka plan,
   konuşma ön planda. Sayfa başına **bir** sayıyı sesli söyle, gerisi ekranda dursun.
 - Sayfa geçişlerinde 1 saniye bekle — izleyicinin gözü yeni sayfaya otursun.
