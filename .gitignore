@@ -61,3 +61,7 @@ artifacts/**
 .config/
 drive/
 colab_tmp/
+
+# Delivery package: assembled from tracked sources, and contains a copy of the
+# repository itself, so committing it would nest the tree inside its own history.
+TESLIM_CD/

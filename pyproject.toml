@@ -46,6 +46,9 @@ colab = [
   "streamlit>=1.40,<2",
 ]
 jetson = []
+# Only needed to render the CD/flash delivery documents to PDF
+# (scripts/render_delivery_docs.py); not required to run or test the project.
+delivery = ["reportlab>=4,<6"]
 
 [project.scripts]
 edgeguard = "edgeguard.cli:main"
