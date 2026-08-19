@@ -1,4 +1,4 @@
-"""Explicit filesystem contract for compatibility and readiness execution."""
+"""Explicit filesystem contract for hermetic Colab and readiness execution."""
 
 from __future__ import annotations
 
@@ -11,8 +11,7 @@ from typing import Any
 class RuntimePathContract:
     """All mutable runtime roots supplied by a wrapper instead of inferred by platform."""
 
-    runtime_current_root: Path
-    runtime_py311_root: Path
+    runtime_root: Path
     checkout_root: Path
     evidence_root: Path
     log_root: Path
@@ -24,8 +23,7 @@ class RuntimePathContract:
         """Build the deterministic local layout beneath one caller-selected workspace."""
         root = workspace_root.resolve()
         return cls(
-            runtime_current_root=root / "runtime-current",
-            runtime_py311_root=root / "runtime-py311",
+            runtime_root=root / "runtime",
             checkout_root=root / "checkouts",
             evidence_root=root / "evidence",
             log_root=root / "logs",
@@ -44,8 +42,7 @@ class RuntimePathContract:
             if forbid_content and (value == Path("/content") or Path("/content") in value.parents):
                 raise ValueError("local readiness paths cannot point to /content")
         return RuntimePathContract(
-            runtime_current_root=values["runtime_current_root"],
-            runtime_py311_root=values["runtime_py311_root"],
+            runtime_root=values["runtime_root"],
             checkout_root=values["checkout_root"],
             evidence_root=values["evidence_root"],
             log_root=values["log_root"],
@@ -56,8 +53,7 @@ class RuntimePathContract:
     def as_dict(self) -> dict[str, Path]:
         """Return named paths without platform-specific interpretation."""
         return {
-            "runtime_current_root": self.runtime_current_root,
-            "runtime_py311_root": self.runtime_py311_root,
+            "runtime_root": self.runtime_root,
             "checkout_root": self.checkout_root,
             "evidence_root": self.evidence_root,
             "log_root": self.log_root,

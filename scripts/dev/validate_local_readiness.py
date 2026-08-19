@@ -31,8 +31,7 @@ from scripts.stage_cityscapes_training import stage_cityscapes_training  # noqa:
 from scripts.train.install_semantic_stack import (  # noqa: E402
     BootstrapError,
     _resolve_uv_executable,
-    build_path_a_commands,
-    build_path_b_commands,
+    build_hermetic_commands,
 )
 from scripts.train.train_semantic import run_stack_probe, validate_configs  # noqa: E402
 
@@ -200,6 +199,14 @@ def run_uv_bootstrap_simulations(root: Path) -> dict[str, Any]:
         version_probe=lambda _path: "uv 0.8.8",
     )
     passed.append("absent_then_installed")
+    replacement = root / "replacement-scripts"
+    _resolve_uv_executable(
+        _SimulationRunner(replacement),  # type: ignore[arg-type]
+        which=lambda _name: str(existing),
+        scripts_directory=replacement,
+        version_probe=lambda path: "uv 9.9.9" if path == existing else "uv 0.8.8",
+    )
+    passed.append("unexpected_host_version_replaced")
     cases = (
         (
             "install_command_failure",
@@ -220,10 +227,11 @@ def run_uv_bootstrap_simulations(root: Path) -> dict[str, Any]:
             "uv_executable_not_found",
         ),
         (
-            "unexpected_version",
+            "private_version_mismatch",
             lambda: _resolve_uv_executable(
-                _SimulationRunner(scripts),  # type: ignore[arg-type]
-                which=lambda _name: str(existing),
+                _SimulationRunner(root / "wrong-private"),  # type: ignore[arg-type]
+                which=lambda _name: None,
+                scripts_directory=root / "wrong-private",
                 version_probe=lambda _path: "uv 9.9.9",
             ),
             "uv_version_mismatch",
@@ -240,17 +248,14 @@ def run_uv_bootstrap_simulations(root: Path) -> dict[str, Any]:
             raise AssertionError(f"bootstrap simulation did not fail: {name}")
     invalid = root / "non-executable-uv"
     invalid.write_text("simulated", encoding="utf-8")
-    try:
-        _resolve_uv_executable(
-            _SimulationRunner(scripts),  # type: ignore[arg-type]
-            which=lambda _name: str(invalid),
-        )
-    except BootstrapError as error:
-        if error.classification != "uv_executable_invalid":
-            raise
-        passed.append("non_executable")
-    else:
-        raise AssertionError("non-executable uv simulation did not fail")
+    non_executable_replacement = root / "non-executable-replacement"
+    _resolve_uv_executable(
+        _SimulationRunner(non_executable_replacement),  # type: ignore[arg-type]
+        which=lambda _name: str(invalid),
+        scripts_directory=non_executable_replacement,
+        version_probe=lambda _path: "uv 0.8.8",
+    )
+    passed.append("non_executable_host_replaced")
     return {"status": "passed", "cases": passed}
 
 
@@ -439,25 +444,14 @@ def validate_local_readiness(
             ).load_semantic_framework_config(config_root / "framework_mmseg.yaml")
             uv = Path("uv-resolved-at-runtime")
             return {
-                "path_a": [
+                "hermetic_runtime": [
                     list(command)
-                    for command in build_path_a_commands(
+                    for command in build_hermetic_commands(
                         framework,
-                        paths.checkout_root / "mmseg-path-a",
-                        uv_executable=uv,
-                        hosted_python=Path("python3.12"),
-                        project_root=project_root,
-                        runtime_root=paths.runtime_current_root,
-                    )
-                ],
-                "path_b": [
-                    list(command)
-                    for command in build_path_b_commands(
-                        framework,
-                        paths.checkout_root / "mmseg-path-b",
+                        paths.checkout_root / "mmsegmentation",
                         uv_executable=uv,
                         project_root=project_root,
-                        runtime_root=paths.runtime_py311_root,
+                        runtime_root=paths.runtime_root,
                     )
                 ],
             }

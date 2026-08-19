@@ -1,3 +1,9 @@
+# Fast local CPU sanity-check config (metric_grid: resized_model_input).
+# Evaluates at the reduced 512x1024 model-input grid, not the official
+# 1024x2048 label grid, purely because a CPU-only development machine cannot
+# afford full-resolution evaluation. mIoU/OOD scores from this config are NOT
+# numerically comparable to cityscapes_eval_colab.yaml and must never be
+# reported as, or compared against, an official/thesis metric.
 schema_version: "1.0"
 project_name: edgeguard-road
 contract_version: "1.0"

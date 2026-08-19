@@ -13,9 +13,16 @@ from typing import Any, BinaryIO, cast
 import yaml
 
 from edgeguard.config import UniqueKeySafeLoader
+from edgeguard.rescue import stall_guard as _stall_guard_module
+from edgeguard.rescue.stall_guard import DEFAULT_STALL_TIMEOUT_SECONDS
 from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
 
+_StallTimeout = _stall_guard_module.StallTimeout  # re-exported for existing test imports
+_stall_guard = _stall_guard_module.stall_guard
+
 GIB = 1024**3
+
+
 SOURCE_DATASETS = ("cityscapes", "bdd100k", "idd20k")
 STORAGE_DIRECTORIES = {
     "datasets": "dataset_directory",
@@ -313,17 +320,20 @@ class _HashingProgressReader:
         label: str,
         phase: str,
         interval_bytes: int = 256 * 1024**2,
+        stall_timeout_seconds: int | None = DEFAULT_STALL_TIMEOUT_SECONDS,
     ):
         self.stream = stream
         self.label = label
         self.phase = phase
         self.interval_bytes = interval_bytes
+        self.stall_timeout_seconds = stall_timeout_seconds
         self.bytes_read = 0
         self._next_report = interval_bytes
         self._sha256 = hashlib.sha256()
 
     def read(self, size: int = -1) -> bytes:
-        payload = self.stream.read(size)
+        with _stall_guard(self.stall_timeout_seconds):
+            payload = self.stream.read(size)
         if payload:
             self._sha256.update(payload)
             self.bytes_read += len(payload)
@@ -346,7 +356,13 @@ class _HashingProgressReader:
         return self._sha256.hexdigest()
 
 
-def copy_archive_to_local(source: Path, destination: Path, *, attempts: int = 3) -> dict[str, Any]:
+def copy_archive_to_local(
+    source: Path,
+    destination: Path,
+    *,
+    attempts: int = 3,
+    stall_timeout_seconds: int | None = DEFAULT_STALL_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     """Copy one mounted-Drive archive with bounded retries and an atomic destination."""
     if attempts <= 0:
         raise ValueError("archive copy attempts must be positive")
@@ -365,6 +381,7 @@ def copy_archive_to_local(source: Path, destination: Path, *, attempts: int = 3)
                     input_stream,
                     label=source.name,
                     phase="archive-copy",
+                    stall_timeout_seconds=stall_timeout_seconds,
                 )
                 shutil.copyfileobj(progress, output_stream, length=8 * 1024**2)
             if partial.stat().st_size != source.stat().st_size:
@@ -693,7 +710,7 @@ def create_dataset_bundle(
         "source_bytes": source_bytes,
         "file_count": file_count,
         "sha256": bundle_sha256,
-        "plan_sha256": sha256_payload(plan),
+        "plan_sha256": sha256_payload(plan["datasets"][dataset_id]),
         "required_paths": plan["datasets"][dataset_id]["required_paths"],
         "source_profile": source_profile,
         "scientific_eligible": scientific_eligible,
@@ -882,8 +899,9 @@ def _canonical_bundle_receipt(
         if expected_receipt_hash != sha256_payload(receipt):
             raise ValueError(f"{dataset_id} bundle receipt hash mismatch")
         receipt["receipt_sha256"] = expected_receipt_hash
-        if receipt.get("dataset_id") != dataset_id or receipt.get("plan_sha256") != sha256_payload(
-            plan
+        if (
+            receipt.get("dataset_id") != dataset_id
+            or receipt.get("required_paths") != plan["datasets"][dataset_id]["required_paths"]
         ):
             raise ValueError(f"{dataset_id} bundle identity mismatch")
         if bundle.stat().st_size != int(receipt["byte_size"]):

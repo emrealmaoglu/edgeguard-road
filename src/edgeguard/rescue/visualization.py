@@ -118,6 +118,29 @@ def save_result(
     }
 
 
+_REGION_ATTENTION_COLORS = {"low": (0, 200, 0), "medium": (255, 180, 0), "high": (230, 0, 0)}
+
+
+def render_regions_overlay(image: Image.Image, perception: Any) -> Image.Image:
+    """Draw region bounding boxes and attention scores onto one in-memory image.
+
+    Pure (no file I/O), so it can be reused per video frame as well as by the
+    single-image ``save_perception_result`` below.
+    """
+    overlay = image.convert("RGB").copy()
+    drawer = ImageDraw.Draw(overlay)
+    for region in perception.regions:
+        color = _REGION_ATTENTION_COLORS[region.attention_level]
+        x1, y1, x2, y2 = region.bbox_xyxy
+        drawer.rectangle((x1, y1, max(x1, x2 - 1), max(y1, y2 - 1)), outline=color, width=2)
+        drawer.text(
+            (x1, max(0, y1 - 12)),
+            f"{region.class_name} {region.attention_score:.2f}",
+            fill=color,
+        )
+    return overlay
+
+
 def save_perception_result(
     image: Image.Image,
     perception: Any,
@@ -150,23 +173,12 @@ def save_perception_result(
     Image.fromarray(
         np.clip(perception.attention_map * 255, 0, 255).astype(np.uint8), mode="L"
     ).save(paths["attention_map"])
-    overlay = image.convert("RGB").copy()
-    drawer = ImageDraw.Draw(overlay)
-    colors = {"low": (0, 200, 0), "medium": (255, 180, 0), "high": (230, 0, 0)}
     region_root = output_dir / "regions"
     region_root.mkdir()
     records: list[dict[str, Any]] = []
     for region in perception.regions:
         mask_name = f"region-{region.region_id:04d}-{region.class_name.replace(' ', '_')}.png"
         Image.fromarray(region.mask.astype(np.uint8) * 255, mode="L").save(region_root / mask_name)
-        color = colors[region.attention_level]
-        x1, y1, x2, y2 = region.bbox_xyxy
-        drawer.rectangle((x1, y1, max(x1, x2 - 1), max(y1, y2 - 1)), outline=color, width=2)
-        drawer.text(
-            (x1, max(0, y1 - 12)),
-            f"{region.class_name} {region.attention_score:.2f}",
-            fill=color,
-        )
         records.append(region.to_dict(mask_path=f"regions/{mask_name}"))
-    overlay.save(paths["regions_overlay"])
+    render_regions_overlay(image, perception).save(paths["regions_overlay"])
     return ({key: path.name for key, path in paths.items()}, records)

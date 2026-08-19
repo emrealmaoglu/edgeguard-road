@@ -1,0 +1,50 @@
+================================================================================
+BU DOSYA TESLİMDEN ÖNCE SİLİNECEK
+================================================================================
+
+Bu klasörde şu dosya EKSİKTİR ve teslimden önce buraya konulmalıdır:
+
+    BM498_Mezuniyet_Tezi_Yunus_Emre_Almaoglu.pdf
+
+--------------------------------------------------------------------------------
+NASIL ÜRETİLİR
+--------------------------------------------------------------------------------
+
+1. Word'de şu dosyayı açın:
+
+       tez_rapor/EdgeGuard_BM498_tez_DUZELTILMIS.docx
+
+2. Belgedeki 17 adet [DOLDURULACAK: ...] yerini doldurun. Aramak için Word'de
+   Ctrl+F ile "DOLDURULACAK" yazın. Doldurulacaklar:
+
+       - Kapak: akademik yıl, güz/bahar dönemi, ders sorumlusu, adınız,
+         öğrenci numaranız
+       - TEŞEKKÜR: serbest metin
+       - ÖZET ve ABSTRACT: adınız, danışman, ay-yıl, SAYFA SAYISI
+       - ÖZGEÇMİŞ: kişisel bilgiler, öğrenim durumu, yayınlar
+       - Her iki beyan sayfası: teslim tarihi
+
+3. İKİ BEYANI İMZALAYIN:
+
+       - BEYAN (intihal beyanı)
+       - ÜRETKEN YAPAY ZEKA KULLANIM BEYANI
+
+   İkincisi şablonda ham hâlde durmaktadır ("...programlarından destek
+   aldığımı/almadığımı beyan ederim"). Bu projede üretken yapay zekâ yoğun
+   biçimde kullanılmıştır; beyanı buna göre DÜRÜSTÇE doldurun. Dayanağınız
+   docs/AI_USAGE_LOG.md dosyasıdır ve tezin EK 2 bölümü bunu anlatmaktadır.
+   Şablon bu beyanın arkasına yaptırım maddesi koymaktadır.
+
+4. Ctrl+A sonra F9 tuşlayın. Bu, içindekiler tablosunu, şekil ve çizelge
+   listelerini, şekil/çizelge numaralarını ve çapraz başvuruları günceller.
+
+   NOT: Şekil ve çizelge numaraları Word'de doğru çıkar. LibreOffice ve Google
+   Docs bu alanı desteklemediği için oralarda "Çizelge BULGULAR VE TARTIŞMA.8"
+   gibi görünür. Bu bir hata değildir; PDF'i MUTLAKA Word'den alın.
+
+5. Baştan sona bir kez göz gezdirin: kayan tablo, taşan şekil, sayfa sonunda
+   tek kalmış başlık.
+
+6. Word'den "PDF olarak kaydet" ile bu klasöre kaydedin ve BU DOSYAYI SİLİN.
+
+================================================================================

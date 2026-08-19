@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +12,7 @@ from edgeguard.rescue.colab_recovery import (
     latest_checkpoint,
     publish_recovery_file,
     restore_recovery_file,
+    supersede_stale_evidence,
 )
 from edgeguard.rescue.config import RescueConfig
 from edgeguard.rescue.ledger import append_run_ledger
@@ -59,12 +60,31 @@ def select_hpo_models(
             selected.append(winner[2])
         remaining = [item for item in remaining if item[2] != winner[2]]
     if len(selected) < 2:
-        raise ValueError("HPO requires two interpretable screening candidates")
+        # The candidate table records why each trained model was dropped; without it this
+        # message sends the reader back through hours of screening logs looking for a
+        # crash that never happened.
+        rejected = payload.get("rejected")
+        detail = ""
+        if isinstance(rejected, list) and rejected:
+            detail = "; rejected: " + ", ".join(
+                f"{entry.get('model')} ({entry.get('reason')})"
+                for entry in rejected
+                if isinstance(entry, dict)
+            )
+        raise ValueError(
+            f"HPO requires two interpretable screening candidates, found {len(selected)} "
+            f"among {len(candidates)} table entries{detail}"
+        )
     return selected[0], selected[1]
 
 
-def hpo_search_space(protocol: RescueConfig) -> dict[str, Any]:
-    """Expose the frozen search space for preregistration and tests."""
+def hpo_search_space(protocol: RescueConfig, *, initialization: str = "random") -> dict[str, Any]:
+    """Expose the frozen search space for preregistration and tests.
+
+    `initialization` is not searched over -- it is recorded here so the study's
+    preregistered fixed-parameter block states which initialisation the trials actually
+    used, rather than asserting a default that may not be true.
+    """
     return {
         "learning_rate": list(protocol.hpo.learning_rate),
         "weight_decay": list(protocol.hpo.weight_decay),
@@ -73,10 +93,42 @@ def hpo_search_space(protocol: RescueConfig) -> dict[str, Any]:
         "fixed": {
             "resolution": list(protocol.crop_size),
             "loss": "ce",
-            "initialization": "random",
+            "initialization": initialization,
             "domain_sampling": "uniform",
         },
     }
+
+
+def complete_trials_within_budget(
+    study: Any,
+    objective: Callable[[Any], float],
+    *,
+    target_trials: int,
+    attempt_budget: int,
+    on_attempt: Callable[[], None] | None = None,
+) -> list[Any]:
+    """Run `objective` until `target_trials` trials reach COMPLETE, or the budget runs out.
+
+    A trial that is pruned (deliberately, by `SuccessiveHalvingPruner`, or as a detected
+    duplicate of an earlier trial's params) is terminal but carries no usable `.value` --
+    ranking a study needs COMPLETE trials specifically. Stopping as soon as enough
+    *terminal* trials exist, which this used to do, means a run where the first
+    `target_trials` attempts all happen to get pruned stops before ever spending the rest
+    of its own `attempt_budget` looking for a trial that actually finishes. That is
+    exactly what a real screening-informed pidnet_s study did on 2026-08-14: two
+    consecutive attempts were pruned at the first rung, the terminal count reached
+    `target_trials` immediately, and the study gave up with zero COMPLETE trials despite
+    `attempt_budget` allowing further tries that were never spent.
+    """
+    attempts = 0
+    complete = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
+    while len(complete) < target_trials and attempts < attempt_budget:
+        study.optimize(objective, n_trials=1, catch=(RuntimeError, ValueError, OSError))
+        attempts += 1
+        complete = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
+        if on_attempt is not None:
+            on_attempt()
+    return complete
 
 
 def _metric(metrics: dict[str, Any], name: str) -> float:
@@ -126,8 +178,10 @@ def run_hpo_study(
     device_batch: int | None = None,
     workers: int | None = None,
     precision: str = "auto",
+    acceptance_test: bool = False,
+    pretrained_manifest: Path | None = None,
 ) -> dict[str, Any]:
-    """Run/resume one 12-trial TPE study with 1.5k/3k successive-halving rungs."""
+    """Run/resume one TPE study with 1.5k/3k successive-halving rungs."""
     try:
         optuna = __import__("optuna")
     except ModuleNotFoundError as error:
@@ -158,17 +212,25 @@ def run_hpo_study(
         except ValueError:
             pass
     storage = f"sqlite:///{database_path}"
+    pruning_steps = (1,) if acceptance_test else protocol.hpo.pruning_steps
+    maximum_steps = 2 if acceptance_test else protocol.hpo.max_steps
+    target_trials = 1 if acceptance_test else protocol.hpo.trials_per_model
     study = optuna.create_study(
         study_name=f"edgeguard-{model}-multidomain-v1",
         storage=storage,
         direction="maximize",
         sampler=optuna.samplers.TPESampler(seed=protocol.hpo.sampler_seed),
         pruner=optuna.pruners.SuccessiveHalvingPruner(
-            min_resource=protocol.hpo.pruning_steps[0], reduction_factor=2
+            min_resource=pruning_steps[0], reduction_factor=2
         ),
         load_if_exists=True,
     )
-    study.set_user_attr("search_space", hpo_search_space(protocol))
+    study.set_user_attr(
+        "search_space",
+        hpo_search_space(
+            protocol, initialization=("pretrained" if pretrained_manifest else "random")
+        ),
+    )
     study.set_user_attr("dataset_manifest_sha256s", [sha256_file(path) for path in manifests])
     for stale in [trial for trial in study.trials if trial.state.name == "RUNNING"]:
         if stale.params:
@@ -220,7 +282,7 @@ def run_hpo_study(
             raise optuna.TrialPruned(f"duplicate of trial {duplicate.number}")
         run_number = int(resumed_trial) if resumed_trial is not None else trial.number
         run_name = f"trial-{run_number:03d}"
-        rungs = (*protocol.hpo.pruning_steps, protocol.hpo.max_steps)
+        rungs = (*pruning_steps, maximum_steps)
         last_macro = 0.0
         for rung_index, rung in enumerate(rungs):
             previous = study.trials[int(resumed_trial)] if resumed_trial is not None else None
@@ -249,13 +311,15 @@ def run_hpo_study(
                 warmup_ratio=float(warmup_ratio),
                 run_name=run_name,
                 max_steps_override=rung,
-                scheduler_steps_override=protocol.hpo.max_steps,
+                scheduler_steps_override=maximum_steps,
                 recovery_root=recovery_root,
                 campaign_id=campaign_id,
                 project_commit=project_commit,
                 device_batch=device_batch,
                 workers=workers,
                 precision=precision,
+                initialization=("pretrained" if pretrained_manifest else "random"),
+                pretrained_manifest=pretrained_manifest,
             )
             run_dir = output_root / "hpo" / model / run_name
             checkpoint = latest_checkpoint(run_dir)
@@ -264,6 +328,19 @@ def run_hpo_study(
             for manifest, payload in zip(manifests, manifest_payloads, strict=True):
                 evaluation_dir = (
                     study_root / "evaluations" / run_name / str(rung) / str(payload["dataset_id"])
+                )
+                # A rung is only recorded as done once *every* domain has been evaluated
+                # (`domain_scores_{rung}` below), so an interruption between the two
+                # domains leaves a finished directory that the resumed trial must rebuild.
+                # `evaluate_model` refuses to write into an existing directory, and that
+                # FileExistsError is an OSError, which `study.optimize(catch=...)` swallows
+                # into a failed trial -- so without this the resumed study would burn its
+                # whole attempt budget re-failing on the same directory and end with
+                # "HPO exhausted N attempts", needing a hand-deleted path to recover.
+                supersede_stale_evidence(
+                    evaluation_dir,
+                    f"trial {run_name} rung {rung} was interrupted before every domain "
+                    "was scored, so this partial evaluation is being rebuilt",
                 )
                 result = evaluate_model(
                     protocol,
@@ -278,11 +355,10 @@ def run_hpo_study(
                     fit_calibrator=False,
                     temperature_file=None,
                     max_reliability_pixels=1,
-                    rare_classes_file=(
-                        rare_classes_file if rung == protocol.hpo.max_steps else None
-                    ),
+                    rare_classes_file=(rare_classes_file if rung == maximum_steps else None),
                     dataset_manifest=manifest,
-                    collect_classwise=rung == protocol.hpo.max_steps,
+                    collect_classwise=rung == maximum_steps,
+                    collect_frame_uncertainty=False,
                 )
                 domain_scores.append(_metric(result["metrics"], "mIoU"))
                 if result["rare_class_mIoU"] is not None:
@@ -294,35 +370,33 @@ def run_hpo_study(
             trial.report(last_macro, step=rung)
             _snapshot(study, study_root / "trials.snapshot.json", model=model, manifests=manifests)
             backup_study()
-            if rung != protocol.hpo.max_steps and trial.should_prune():
+            if rung != maximum_steps and trial.should_prune():
                 raise optuna.TrialPruned(f"pruned at {rung} optimizer steps")
         return last_macro
 
-    target_trials = protocol.hpo.trials_per_model
-    attempt_budget = target_trials * 2
-    attempts = 0
-    terminal = [trial for trial in study.trials if trial.state.name in {"COMPLETE", "PRUNED"}]
-    while len(terminal) < target_trials and attempts < attempt_budget:
-        study.optimize(objective, n_trials=1, catch=(RuntimeError, ValueError, OSError))
-        attempts += 1
-        terminal = [trial for trial in study.trials if trial.state.name in {"COMPLETE", "PRUNED"}]
+    def checkpoint_progress() -> None:
         _snapshot(study, study_root / "trials.snapshot.json", model=model, manifests=manifests)
         backup_study()
-    if len(terminal) < target_trials:
-        raise RuntimeError(
-            f"HPO exhausted {attempt_budget} attempts before {target_trials} terminal trials"
-        )
-    _snapshot(study, study_root / "trials.snapshot.json", model=model, manifests=manifests)
-    backup_study()
-    complete = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
+
+    attempt_budget = target_trials * 2
+    complete = complete_trials_within_budget(
+        study,
+        objective,
+        target_trials=target_trials,
+        attempt_budget=attempt_budget,
+        on_attempt=checkpoint_progress,
+    )
     if not complete:
-        raise RuntimeError("HPO finished without a complete trial")
+        raise RuntimeError(
+            f"HPO exhausted {attempt_budget} attempts without a single complete trial "
+            "(every attempt was pruned or failed)"
+        )
     best_macro = max(float(trial.value) for trial in complete)
     tied = [trial for trial in complete if best_macro - float(trial.value) <= 0.002]
     best = sorted(
         tied,
         key=lambda trial: (
-            -float(trial.user_attrs.get(f"rare_macro_{protocol.hpo.max_steps}", -1.0)),
+            -float(trial.user_attrs.get(f"rare_macro_{maximum_steps}", -1.0)),
             -float(trial.value),
             trial.number,
         ),
@@ -336,7 +410,9 @@ def run_hpo_study(
         "best_trial": best.number,
         "best_domain_macro_mIoU": float(best.value),
         "best_params": best.params,
-        "human_config_freeze_required": True,
+        "human_config_freeze_required": False,
+        "execution_mode": "acceptance" if acceptance_test else "production",
+        "scientific_evidence": not acceptance_test,
     }
     (study_root / "result.json").write_text(canonical_json(result) + "\n", encoding="utf-8")
     append_run_ledger(output_root / "run_ledger.jsonl", operation="semantic_hpo", result=result)

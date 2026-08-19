@@ -1,0 +1,51 @@
+# Ölçüm kayıtları
+
+Tezdeki sayıların arkasındaki **ham kayıtlar**. Buradaki her dosya gerçekten koşmuş bir
+ölçümün çıktısıdır; hiçbiri elle yazılmadı, düzenlenmedi veya beklenen değerle
+doldurulmadı. Her kayıt kendi `model_sha256`'sını taşır, yani hangi ağırlıklarla
+ölçüldüğü dosyanın kendisinden doğrulanabilir.
+
+Bunlar sürüm kontrolünde, çünkü:
+
+1. Tezde geçen bir sayı ile onu üreten kayıt arasındaki bağın kaybolmaması gerekir.
+2. Toplam 24 KB — saklamamak için bir sebep yok.
+3. Sunum paneli bunları okuyor ve panel Jetson'da çalışıyor; `git pull` iki makine
+   arasında dosya taşımaktan basit.
+
+## İçindekiler
+
+| klasör | ne | üreten |
+|---|---|---|
+| `drivable/` | 5 mimari × 200 Cityscapes val karesi: yol IoU, iki toleransta sınır F1, yanlış-sürülebilir oranı, parçalanma | `scripts/evaluate_drivable_area.py` |
+| `temporal/` | 150 ardışık demoVideo karesi: iz ömürleri, zamansal kalıcılığın risk sıralamasına etkisi | `scripts/measure_temporal_persistence.py` |
+| `calibration/` | 3 mimari × 200 kare: havuzlanmış ve sınıf-bazlı ECE, sınıf kırılımı | `scripts/measure_classwise_calibration.py` |
+| `components/` | 3 mimari × 100 kare: bileşen kapsama, en iyi bileşen IoU, parçalanma | `scripts/evaluate_component_localization.py` |
+| `class_distribution.json` | 500 kare, 917M piksel: sınıf dağılımı + nadirlik↔başarım korelasyonları | `scripts/measure_class_distribution.py` |
+| `literature_audit.json` | 36 tarama dokümanı: PRISMA aşama sayıları (toplandığı doğrulanır) | `scripts/audit_literature_corpus.py` |
+| `leakage_audit.json` | 4 değerlendirme kümesi × 446 kare: yarıçap taramalı algısal yakın-kopya denetimi | `scripts/audit_split_leakage.py` |
+| `*_fp16_accuracy.json` | Jetson'da 3 mimari × 100 kare: FP16 motoru ile FP32 ONNX aynı koşuda eşleştirilmiş | `scripts/jetson/evaluate_engine.py --onnx` |
+| `paired_comparison.json` | 5 mimari × aynı 500 Cityscapes val karesi: kare-başına mIoU, eşleştirilmiş bootstrap farkları | `scripts/compare_models_paired.py` |
+
+## Panele yerleştirme (Jetson'da)
+
+```bash
+cd ~/edgeguard-road && git pull
+cp -r reports/measurements/drivable reports/measurements/temporal \
+   reports/measurements/calibration reports/measurements/components ~/eg-presentation/
+cp reports/measurements/paired_comparison.json reports/measurements/leakage_audit.json \
+   reports/measurements/class_distribution.json ~/eg-presentation/
+```
+
+Cihazda üretilen kayıtlar (`jetson/`, `telemetry/`, `profile/`) buraya **kopyalanmaz** —
+onlar zaten cihazda, `~/eg-presentation` altında durur ve oradan taşınmalarına gerek yok.
+
+## Burada olmayanlar
+
+*(FP16 sadakat kayıtları istisnadır: cihazda üretildiler ama küçükler ve tezin bir
+iddiasını doğrudan kapattıkları için buradalar.)*
+
+- **Jetson gecikme/güç/telemetri kayıtları** — cihazda üretilir ve cihazda kalır
+  (`~/results` ve `~/eg-presentation/{jetson,telemetry,profile}`). Büyükler ve tek bir
+  makinede anlamlılar.
+- **Mühürlü final test verisi üzerinde hiçbir ölçüm.** O kapı yalnızca insan tarafından
+  açılır (`docs/adr/0005`) ve açılmadı.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from edgeguard.demo.accepted_bundle import discover_accepted_demo_models
 from edgeguard.rescue.dataset import CITYSCAPES_CLASSES
 from edgeguard.rescue.inference import discover_demo_models, predict_mmseg, predict_onnx
 from edgeguard.rescue.mmseg_runtime import CITYSCAPES_PALETTE
@@ -39,19 +41,120 @@ def main() -> None:
     st.caption(
         "Bu arayüz bilimsel değerlendirme yerine tek görüntü inference ve görsel inceleme içindir."
     )
-    default_root = Path(os.environ.get("EDGEGUARD_RUN_ROOT", "runs"))
-    run_root = Path(st.sidebar.text_input("Run root", str(default_root))).expanduser()
-    records = discover_demo_models(run_root)
+    default_root = Path(os.environ.get("EDGEGUARD_ACCEPTED_BUNDLE_ROOT", "accepted_artifacts"))
+    bundle_root = Path(
+        st.sidebar.text_input("Accepted bundle root", str(default_root))
+    ).expanduser()
+
+    @st.cache_data(show_spinner=False)
+    def accepted_records(root: str) -> list[dict[str, str]]:
+        return discover_accepted_demo_models(Path(root))
+
+    @st.cache_data(show_spinner=False)
+    def csv_records(path: str) -> list[dict[str, str]]:
+        with Path(path).open(encoding="utf-8", newline="") as stream:
+            return list(csv.DictReader(stream))
+
+    records = accepted_records(str(bundle_root.resolve()))
+    developer_mode = False
     if not records:
         st.warning(
-            "Doğrulanmış model bulunamadı. Bir ONNX dosyasını run root altına koyun veya "
-            "resolved.py ile checkpoint üretin."
+            "Accepted ve hash-doğrulanmış demo bundle bulunamadı. Yarım kalmış veya yalnızca "
+            "en yeni run otomatik seçilmez."
         )
-        return
+        developer_mode = st.sidebar.checkbox("Unaccepted local developer mode", value=False)
+        if not developer_mode:
+            return
+        run_root = Path(
+            st.sidebar.text_input(
+                "Developer run root",
+                str(Path(os.environ.get("EDGEGUARD_RUN_ROOT", "runs"))),
+            )
+        ).expanduser()
+        records = discover_demo_models(run_root)
+        if not records:
+            st.error("Developer run root altında eksiksiz bir model bulunamadı.")
+            return
+    page = st.sidebar.radio(
+        "Page",
+        (
+            "Project & data",
+            "Model comparison",
+            "Image inference",
+            "Calibration & failures",
+            "Jetson benchmark",
+        ),
+        index=2,
+    )
+    st.sidebar.caption(
+        "Artifact mode: " + ("UNACCEPTED DEVELOPER" if developer_mode else "ACCEPTED REVIEW")
+    )
     labels = [record["label"] for record in records]
     selected = records[labels.index(st.sidebar.selectbox("Model", labels))]
     st.sidebar.caption(f"Eğitim domainleri: {selected.get('datasets', 'artifact metadata yok')}")
+    bundle_manifest = Path(selected["bundle_manifest"]) if "bundle_manifest" in selected else None
+    if page != "Image inference":
+        search_root = (
+            bundle_manifest.parent
+            if bundle_manifest is not None
+            else Path(selected["model"]).parent
+        )
+        if page == "Project & data":
+            st.header("Project and data provenance")
+            if bundle_manifest is not None:
+                st.json(json.loads(bundle_manifest.read_text(encoding="utf-8")))
+            else:
+                st.info("Developer mode has no accepted release manifest.")
+        elif page == "Model comparison":
+            st.header("Accepted model comparison")
+            tables = sorted(search_root.glob("**/metrics_table.csv")) + sorted(
+                search_root.glob("**/resource.csv")
+            )
+            if not tables:
+                st.info("Accepted bundle contains no comparison table.")
+            for table in tables:
+                st.caption(table.name)
+                st.dataframe(csv_records(str(table)), use_container_width=True)
+        elif page == "Calibration & failures":
+            st.header("Calibration, domain shift, and failure evidence")
+            evidence = sorted(search_root.glob("**/*calibration*.json")) + sorted(
+                search_root.glob("**/failure*.json")
+            )
+            if not evidence:
+                st.info("Accepted bundle contains no calibration or failure evidence.")
+            for path in evidence:
+                with st.expander(path.name):
+                    st.json(json.loads(path.read_text(encoding="utf-8")))
+        else:
+            st.header("Jetson benchmark")
+            benchmarks = sorted(search_root.glob("**/*benchmark*.json"))
+            if not benchmarks:
+                st.info("Headless Jetson acceptance evidence has not been attached.")
+            for path in benchmarks:
+                st.subheader(path.name)
+                st.json(json.loads(path.read_text(encoding="utf-8")))
+        return
+
+    @st.cache_resource(show_spinner=False)
+    def onnx_session(model_path: str) -> object:
+        ort = __import__("onnxruntime")
+        return ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+
+    @st.cache_resource(show_spinner=False)
+    def mmseg_model(config_path: str, checkpoint_path: str, active_device: str) -> object:
+        apis = __import__("mmseg.apis", fromlist=["init_model"])
+        return apis.init_model(config_path, checkpoint_path, device=active_device)
+
     device = st.sidebar.selectbox("Device", ("cpu", "cuda"), index=0)
+    resource_identity = (
+        selected["backend"],
+        selected["model"],
+        selected.get("config"),
+        device,
+    )
+    if st.session_state.get("active_resource_identity") != resource_identity:
+        st.cache_resource.clear()
+        st.session_state["active_resource_identity"] = resource_identity
     opacity = st.sidebar.slider("Overlay opacity", 0.0, 1.0, 0.55, 0.05)
     confidence_threshold = st.sidebar.slider("Confidence threshold", 0.0, 1.0, 0.5, 0.05)
     entropy_threshold = st.sidebar.slider("Entropy threshold", 0.0, 1.0, 0.5, 0.05)
@@ -69,7 +172,11 @@ def main() -> None:
     if st.button("Inference", type="primary"):
         with st.spinner("Model çalışıyor..."):
             if selected["backend"] == "onnx":
-                result = predict_onnx(image, Path(selected["model"]))
+                result = predict_onnx(
+                    image,
+                    Path(selected["model"]),
+                    session=onnx_session(selected["model"]),
+                )
             else:
                 active_device = device
                 if device == "cuda":
@@ -86,6 +193,7 @@ def main() -> None:
                     Path(selected["config"]),
                     Path(selected["model"]),
                     device=active_device,
+                    model=mmseg_model(selected["config"], selected["model"], active_device),
                 )
         calibration_status = "raw"
         if calibration_file is not None:

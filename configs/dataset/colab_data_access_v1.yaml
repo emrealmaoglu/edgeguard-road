@@ -133,7 +133,16 @@ datasets:
     access_method: registered_manual_approval
     official_url: https://www.wilddash.cc/submit
     instructions: Register with an academic email at least one week early; use the official resumable downloader only after the sealed release gate.
-    packages: []
+    packages:
+      - filename: wd_both_02.zip
+        purpose: sealed benchmark submission images (812 frames, no ground truth); predictions are packaged and scored externally after the sealed release gate
+        published_size: 427 MB
+    engineering_packages:
+      - filename: wd_public_v2p0.zip
+        purpose: public GT release (4256 images with panoptic ground truth) for visual/diagnostic inspection only; the ontology already declares wilddash2 mask_encoding as server_only, so this GT must never be decoded into a scientific metric or it silently breaks the sealed claim on the wd_both_02.zip submission
+        source_profile: wilddash_public_release
+        scientific_eligible: false
+        published_size: 2.99 GB
     prepared_subdirectory: wilddash2
     required_paths: []
   muses:
@@ -171,3 +180,7 @@ excluded_sources:
     reason: Account access and a version-frozen Cityscapes19 mapping are not ready; retain only as a future catalog candidate.
   - source_id: a2d2_phase_one
     reason: Publicly downloadable but outside the approved first Colab campaign because its lossy RGB ontology mapping needs a separate ablation.
+  - source_id: wilddash_add_pickupvan_ontology_extension
+    reason: wd_add_pickupvan.zip adds pickup/van/autorickshaw classes to MVD/Cityscapes/IDD; the current ontology deliberately ignores autorickshaw for IDD20K under ADR-0009, and applying this mid-campaign would invalidate every already-computed manifest/split hash. Retained only as a future v2-ontology ablation candidate, not applied now.
+  - source_id: railsem19
+    reason: Primary content is rail-scene imagery (tracks/switches), off-domain for a road-scene Jetson deployment project; its bundled road-segmentation labels are an explicitly weakly-supervised byproduct, not Cityscapes-quality. Not added to any manifest or ontology. Optionally usable later, at zero training cost, purely as an out-of-distribution stress input to the existing uncertainty/OOD evaluation stack — not as training or mIoU-eval data.

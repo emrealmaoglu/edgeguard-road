@@ -1,5 +1,13 @@
 # Data Catalog, Storage Contract, Access Gates, and Ontology
 
+> **Status note:** this catalog reflects the original WP-01 planning scope (the broad
+> detection/OOD/temporal dataset set). The active scientific campaign was narrowed to
+> Cityscapes Fine + official IDD20K by ADR-0008/ADR-0009; IDD20K has no row below because
+> this document predates that decision. For current, live acquisition/staging status
+> (including IDD20K), treat `docs/PROJECT_STATE.md` and `docs/DRIVE_LAYOUT_AUDIT_2026-07-30.md`
+> as authoritative over the per-row "Next task / status" cells here, which are not kept in
+> sync with every Colab run.
+
 ## Gate status and existing conventions
 
 This document is a planning and validation contract; it does not authorize or perform

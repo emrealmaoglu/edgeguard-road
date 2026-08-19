@@ -16,7 +16,9 @@ from edgeguard.rescue.multidomain import (
     audit_evaluation_dataset,
     audit_training_dataset,
     build_cityscapes_dataset_manifest,
+    build_cityscapes_official_validation_manifest,
     freeze_candidate_manifest,
+    freeze_candidate_manifest_by_policy,
     write_multidomain_statistics,
 )
 from edgeguard.serialization import canonical_json
@@ -75,6 +77,18 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="freeze the reviewed --split-manifest instead of auditing data",
     )
+    parser.add_argument(
+        "--review-receipt",
+        type=Path,
+        help="hash-bound human approval required by --freeze-approved",
+    )
+    parser.add_argument(
+        "--authorization-policy",
+        type=Path,
+        help="owner-preauthorized exact-source/post-release validation policy",
+    )
+    parser.add_argument("--campaign-id", default="semantic-cs-idd-v2")
+    parser.add_argument("--project-commit")
     return parser
 
 
@@ -90,8 +104,29 @@ def main() -> int:
     if args.freeze_approved:
         if args.split_manifest is None:
             raise ValueError("manifest freeze requires --split-manifest")
+        if args.project_commit is None:
+            raise PermissionError("manifest freeze requires --project-commit")
         destination = args.output_root.resolve() / f"{args.dataset}.frozen.json"
-        result = freeze_candidate_manifest(args.split_manifest.resolve(), destination)
+        if args.authorization_policy is not None:
+            if args.review_receipt is not None:
+                raise ValueError("choose review receipt or authorization policy, not both")
+            result = freeze_candidate_manifest_by_policy(
+                args.split_manifest.resolve(),
+                destination,
+                policy_path=args.authorization_policy.resolve(),
+                campaign_id=args.campaign_id,
+                project_commit=args.project_commit,
+            )
+        else:
+            if args.review_receipt is None:
+                raise PermissionError("manifest freeze requires --review-receipt")
+            result = freeze_candidate_manifest(
+                args.split_manifest.resolve(),
+                destination,
+                review_receipt_path=args.review_receipt.resolve(),
+                campaign_id=args.campaign_id,
+                project_commit=args.project_commit,
+            )
         print(canonical_json(result))
         return 0
     if args.dataset_root is None:
@@ -130,7 +165,28 @@ def main() -> int:
         )
         print(canonical_json(result))
         return 0 if result["audit_passed"] else 2
-    summary = audit_cityscapes(args.dataset_root.resolve(), args.output_root.resolve())
+    summary = audit_cityscapes(
+        args.dataset_root.resolve(),
+        args.output_root.resolve(),
+        split=args.source_split,
+    )
+    if args.source_split == "val":
+        if not args.source_manifest:
+            raise ValueError("Cityscapes official validation requires frozen source manifests")
+        candidate = build_cityscapes_official_validation_manifest(
+            args.dataset_root.resolve(),
+            summary,
+            args.output_root.resolve() / "dataset_audit/dataset_manifest.candidate.json",
+            source_manifests=tuple(path.resolve() for path in args.source_manifest),
+            strict_count=not args.allow_fixture_count,
+        )
+        result = {
+            **{key: value for key, value in summary.items() if key != "samples"},
+            "manifest_sha256": candidate["manifest_sha256"],
+            "scientific_eligible": candidate["scientific_eligible"],
+        }
+        print(canonical_json(result))
+        return 0 if result["audit_passed"] else 2
     samples = [SemanticSample(**record) for record in summary.pop("samples")]
     split_result: dict[str, object] | None = None
     role_statistics: dict[str, Any] | None = None

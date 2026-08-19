@@ -28,7 +28,7 @@ def test_failure_report_is_redacted_hashed_and_downloadable(tmp_path: Path) -> N
     )
     reporter = ColabFailureReporter(
         tmp_path / "failures",
-        notebook="EdgeGuard_Road_Colab.ipynb",
+        notebook="EdgeGuard_Master_Colab.ipynb",
         project_commit="a" * 40,
         context={"api_key": "api_key=never-store-this", "stage_kind": "fixture"},
     )

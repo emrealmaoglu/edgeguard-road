@@ -2,39 +2,37 @@
 
 from __future__ import annotations
 
-from collections import deque
 from typing import Any
 
 import numpy as np
 
+from edgeguard.evaluation.components import label_components
 from edgeguard.rescue.perception import REGION_CLASS_IDS
 
 
+def _component_sizes(mask: np.ndarray) -> list[int]:
+    """Return each four-connected component's pixel count, without materialising masks.
+
+    The per-pixel search this replaces allocated a full-size boolean array *per component*
+    and walked the image in Python. On a 2048x1024 road mask that is minutes per frame,
+    which is why the drivable metrics had no caller. Callers that only need areas should
+    ask for areas.
+    """
+    _, components = label_components(mask)
+    return [int(component.shape[0]) for component in components]
+
+
 def _components(mask: np.ndarray) -> list[np.ndarray]:
-    visited = np.zeros(mask.shape, dtype=np.bool_)
+    """Return each four-connected component as its own boolean mask.
+
+    Kept for callers that genuinely need the masks (component matching intersects them),
+    but the labelling itself is run-based rather than a per-pixel Python search.
+    """
+    _, components = label_components(mask)
     result: list[np.ndarray] = []
-    height, width = mask.shape
-    for start_y, start_x in zip(*np.nonzero(mask), strict=True):
-        if visited[start_y, start_x]:
-            continue
-        visited[start_y, start_x] = True
-        queue: deque[tuple[int, int]] = deque([(int(start_y), int(start_x))])
-        pixels: list[tuple[int, int]] = []
-        while queue:
-            y, x = queue.popleft()
-            pixels.append((y, x))
-            for next_y, next_x in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-                if (
-                    0 <= next_y < height
-                    and 0 <= next_x < width
-                    and mask[next_y, next_x]
-                    and not visited[next_y, next_x]
-                ):
-                    visited[next_y, next_x] = True
-                    queue.append((next_y, next_x))
+    for pixels in components:
         component = np.zeros(mask.shape, dtype=np.bool_)
-        coordinates = np.asarray(pixels, dtype=np.int32)
-        component[coordinates[:, 0], coordinates[:, 1]] = True
+        component[pixels[:, 0], pixels[:, 1]] = True
         result.append(component)
     return result
 
@@ -57,12 +55,44 @@ def _dilate(mask: np.ndarray) -> np.ndarray:
     return result
 
 
-def drivable_metrics(prediction: np.ndarray, target_semantics: np.ndarray) -> dict[str, Any]:
-    """Measure road mask accuracy without treating ignore pixels as non-road."""
+def _widen(mask: np.ndarray, tolerance: int) -> np.ndarray:
+    for _ in range(tolerance):
+        mask = _dilate(mask)
+    return mask
+
+
+def _boundary_f1(prediction: np.ndarray, target: np.ndarray, tolerance: int) -> float:
+    pred_total = int(np.count_nonzero(prediction))
+    target_total = int(np.count_nonzero(target))
+    if not pred_total or not target_total:
+        return 0.0
+    precision = int(np.count_nonzero(prediction & _widen(target, tolerance))) / pred_total
+    recall = int(np.count_nonzero(target & _widen(prediction, tolerance))) / target_total
+    return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+
+
+def drivable_metrics(
+    prediction: np.ndarray, target_semantics: np.ndarray, *, output_stride: int = 8
+) -> dict[str, Any]:
+    """Measure road mask accuracy without treating ignore pixels as non-road.
+
+    Boundary agreement is reported at two tolerances because one alone misleads. At 1 px
+    it asks for pixel-exact edges from a mask upsampled from coarse logits, which no
+    amount of training could deliver -- the answer is bounded by the output resolution,
+    not by the model, and reported alone it reads as a failure. At `output_stride` it
+    asks a question the prediction's resolution can answer. Both are measured; the gap
+    between them is the cost of predicting coarsely and upsampling.
+
+    `output_stride` is a property of the comparison, not of the model: hold it fixed
+    across architectures, or a model that predicts on a finer grid gets a looser
+    tolerance and its advantage disappears into the metric.
+    """
     if prediction.shape != target_semantics.shape or prediction.dtype != np.bool_:
         raise ValueError("drivable prediction must be bool and match target geometry")
     if not np.issubdtype(target_semantics.dtype, np.integer):
         raise ValueError("target semantics must use integer IDs")
+    if output_stride < 1:
+        raise ValueError("output stride must be positive")
     valid = target_semantics != 255
     target = target_semantics == 0
     intersection = int(np.count_nonzero(prediction & target & valid))
@@ -71,19 +101,17 @@ def drivable_metrics(prediction: np.ndarray, target_semantics: np.ndarray) -> di
     false_drivable = int(np.count_nonzero(prediction & (~target) & valid))
     pred_boundary = _boundary(prediction) & valid
     target_boundary = _boundary(target) & valid
-    pred_matches = int(np.count_nonzero(pred_boundary & _dilate(target_boundary)))
-    target_matches = int(np.count_nonzero(target_boundary & _dilate(pred_boundary)))
-    precision = pred_matches / max(1, int(np.count_nonzero(pred_boundary)))
-    recall = target_matches / max(1, int(np.count_nonzero(target_boundary)))
-    boundary_f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    components = _components(prediction & valid)
-    component_areas = [int(np.count_nonzero(component)) for component in components]
+    boundary_f1 = _boundary_f1(pred_boundary, target_boundary, 1)
+    component_areas = _component_sizes(prediction & valid)
     total_area = sum(component_areas)
     return {
         "road_iou": intersection / union if union else 1.0,
         "road_boundary_f1_tolerance_1px": boundary_f1,
+        f"road_boundary_f1_tolerance_{output_stride}px": _boundary_f1(
+            pred_boundary, target_boundary, output_stride
+        ),
         "false_drivable_rate": false_drivable / nonroad if nonroad else 0.0,
-        "predicted_component_count": len(components),
+        "predicted_component_count": len(component_areas),
         "largest_component_fraction": max(component_areas, default=0) / max(1, total_area),
         "ignore_pixels_excluded": True,
     }

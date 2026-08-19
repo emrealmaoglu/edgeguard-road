@@ -2,11 +2,25 @@
 
 ## Status boundary
 
-This document defines the approved target architecture. Only the existing PIDNet-S
-single-image/Cityscapes path, four uncertainty scores, semantic metrics, Fishyscapes
-adapter foundation, and AP/FPR95 metrics are implemented. Detection, training,
-calibration, trainable OOD, context, temporal, depth, fusion, deployment, and UI
-components remain planned.
+This document's data-flow diagram and component table describe the original,
+broader target architecture (detection, temporal persistence, depth, risk fusion).
+ADR-0008 and ADR-0009 later narrowed the active delivery-critical path to
+semantic-first, multi-domain (Cityscapes + IDD20K) segmentation; detection, temporal,
+anomaly-head, tracking, and INT8 material are demoted to experimental/legacy and are
+not part of current thesis-critical progress (see `docs/TASKS.md`, `DET-01`). This
+diagram has not been redrawn to reflect that narrowing and should not be read as the
+current target.
+
+For current *implementation* state (as opposed to the diagram's target scope):
+training (`src/edgeguard/rescue/`, `src/edgeguard/training/`), calibration
+(`src/edgeguard/calibration/`), semantic evaluation, ONNX export
+(`src/edgeguard/export/`), Jetson deployment packaging
+(`src/edgeguard/deployment/`), and a Streamlit demo (`app.py`,
+`src/edgeguard/demo/`) are all implemented and covered by tests using random-weight
+or fixture data. What remains external/unmeasured is real GPU training output:
+no project-trained checkpoint, real ONNX export from a trained model, official
+validation result, or Jetson benchmark exists yet (see `docs/PROJECT_STATE.md` and
+`docs/TASKS.md` for the authoritative per-item status).
 
 ## Target data flow
 

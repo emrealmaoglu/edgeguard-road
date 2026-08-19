@@ -15,13 +15,7 @@ import numpy as np
 from edgeguard.deployment.package import build_deployment_package, verify_deployment_package
 from edgeguard.serialization import canonical_json, sha256_file, sha256_payload
 
-CANONICAL_NOTEBOOKS = (
-    "00_campaign_control.ipynb",
-    "10_semantic_campaign.ipynb",
-    "20_ood_calibration_risk.ipynb",
-    "30_detection_temporal_fusion.ipynb",
-    "40_export_and_reporting.ipynb",
-)
+CANONICAL_NOTEBOOKS = ("EdgeGuard_Master_Colab.ipynb",)
 DEPRECATED_MARKER = "DEPRECATED — NON-CANONICAL"
 PACKAGE_FIXTURE_PREFERENCE = (
     "fast_scnn",
@@ -51,7 +45,7 @@ def _git(repository: Path, *args: str) -> str:
 def active_campaign_notebooks(repository: Path) -> tuple[str, ...]:
     """Return notebooks not explicitly marked deprecated in their first Markdown cell."""
     active: list[str] = []
-    for path in sorted((repository / "notebooks" / "colab").glob("*.ipynb")):
+    for path in sorted((repository / "notebooks").glob("*.ipynb")):
         notebook = _json(path)
         first = next(
             (cell for cell in notebook.get("cells", []) if cell.get("cell_type") == "markdown"),

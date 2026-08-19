@@ -74,6 +74,16 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--max-reliability-pixels", type=int, default=100_000)
     run.add_argument("--rare-classes-file", type=Path)
     run.add_argument("--save-calibration-evidence", type=Path)
+    run.add_argument(
+        "--skip-frame-uncertainty",
+        action="store_true",
+        help=(
+            "skip the per-frame MSP/entropy/energy summaries. They dominate evaluation "
+            "wall clock (~0.42 s/image measured on an L4) and nothing downstream reads "
+            "them, so screening, HPO and selection passes omit them; the record then "
+            "states frames were not collected rather than reporting an empty list."
+        ),
+    )
     global_calibration = commands.add_parser(
         "calibrate-global", help="fit one equal-domain source calibration temperature"
     )
@@ -269,6 +279,7 @@ def main() -> int:
         calibration_evidence_output=(
             args.save_calibration_evidence.resolve() if args.save_calibration_evidence else None
         ),
+        collect_frame_uncertainty=not args.skip_frame_uncertainty,
     )
     print(canonical_json(result))
     return 0

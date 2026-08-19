@@ -33,6 +33,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--rare-classes-file", type=Path)
     parser.add_argument("--initialization", choices=("random", "pretrained"), default="random")
     parser.add_argument("--pretrained-manifest", type=Path)
+    parser.add_argument(
+        "--pretrained-manifest-root",
+        type=Path,
+        help=(
+            "directory of committed per-model initialisation manifests; the HPO stage "
+            "selects its own two models, so it resolves <root>/<model>.json itself"
+        ),
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--device-batch", type=int)
     parser.add_argument("--workers", type=int)
@@ -44,12 +52,32 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--weight-decay", type=float)
     parser.add_argument("--scheduler", choices=("poly", "cosine"), default="poly")
     parser.add_argument("--warmup-ratio", type=float, choices=(0.01, 0.03, 0.05), default=0.03)
+    parser.add_argument("--run-name")
+    parser.add_argument("--max-steps", type=int)
+    parser.add_argument("--crop-height", type=int)
+    parser.add_argument("--crop-width", type=int)
+    parser.add_argument("--intentional-interrupt-step", type=int)
+    parser.add_argument("--acceptance-test", action="store_true")
     return parser
+
+
+def _hpo_pretrained_manifest(root: Path | None, model: str) -> Path | None:
+    """Resolve one model's initialisation manifest, or None when it has none.
+
+    Absence is legitimate: only models whose upstream MMSeg config declares an
+    `init_cfg` of type `Pretrained` have a classification checkpoint to transfer.
+    """
+    if root is None:
+        return None
+    manifest = (root / f"{model}.json").resolve()
+    return manifest if manifest.is_file() else None
 
 
 def main() -> int:
     """Resolve the shared protocol and execute a bounded training stage."""
     args = _parser().parse_args()
+    if (args.crop_height is None) != (args.crop_width is None):
+        raise ValueError("crop override requires both --crop-height and --crop-width")
     protocol = load_rescue_config(args.config.resolve())
     manifests = tuple(path.resolve() for path in args.data_manifest)
     if args.stage == "hpo":
@@ -71,6 +99,8 @@ def main() -> int:
                 device_batch=args.device_batch,
                 workers=args.workers,
                 precision=args.precision,
+                acceptance_test=args.acceptance_test,
+                pretrained_manifest=_hpo_pretrained_manifest(args.pretrained_manifest_root, model),
             )
             for model in select_hpo_models(
                 args.candidate_table.resolve(), protocol.datasets.training
@@ -110,6 +140,14 @@ def main() -> int:
         weight_decay=args.weight_decay,
         scheduler=args.scheduler,
         warmup_ratio=args.warmup_ratio,
+        run_name=args.run_name,
+        max_steps_override=args.max_steps,
+        crop_size_override=(
+            (args.crop_height, args.crop_width)
+            if args.crop_height is not None and args.crop_width is not None
+            else None
+        ),
+        intentional_interrupt_optimizer_step=args.intentional_interrupt_step,
     )
     print(canonical_json(result))
     return 0

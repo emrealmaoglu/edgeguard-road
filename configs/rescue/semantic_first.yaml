@@ -6,7 +6,7 @@ crop_size: [512, 1024]
 base_scale: [2048, 1024]
 device_batch: 4
 gradient_accumulation: 1
-workers: 2
+workers: 12
 optimizer:
   name: AdamW
   learning_rate: 0.00006
@@ -26,17 +26,17 @@ stages:
   smoke:
     max_steps: 50
   pilot:
-    max_steps: 2000
+    max_steps: 600
   screening:
-    max_steps: 6000
+    max_steps: 2500
   hpo:
-    max_steps: 6000
+    max_steps: 1200
   final:
-    max_steps: 40000
+    max_steps: 10000
 hpo:
-  trials_per_model: 12
-  max_steps: 6000
-  pruning_steps: [1500, 3000]
+  trials_per_model: 3
+  max_steps: 1200
+  pruning_steps: [300, 600]
   learning_rate: [0.00002, 0.0003]
   weight_decay: [0.0001, 0.05]
   schedulers: [poly, cosine]

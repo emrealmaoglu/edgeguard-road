@@ -1,125 +1,703 @@
 # Project State
 
-Updated 2026-07-31 on branch `rescue/semantic-first`.
+Updated 2026-08-13 on `stabilize/colab-v2`.
 
-The published delivery notebooks are pinned to implementation commit
-`5cc578cb9f15aa7a560108840f3055ae2f4e4733`; a later branch update cannot silently alter
-the Colab runtime code or scientific protocol.
+## Current delivery
 
-The Colab-resilience revision replaces the previous snapshot model with content-addressed,
-current/previous-generation recovery. Training publishes full optimizer/scheduler/AMP/RNG
-state every 500 optimizer steps or ten minutes; HPO persists per rung with an atomic SQLite
-backup. IDD preparation publishes verified 500-sample shards, audit publishes 250-sample
-catalog chunks, archive hashes use stable receipts, and stage completion is accepted only
-through output/input hash receipts. The active source contract is Cityscapes + IDD20K.
+The Colab v3 application commit is
+`a5519f4` (see `git log` for the full SHA). The only generated notebook is
+`notebooks/EdgeGuard_Master_Colab.ipynb`; it pins and verifies that exact commit. The
+campaign ID is `semantic-cs-idd-v3`.
 
-Colab enforces that pin after checkout. The external-action-free local notebook harness
-intentionally runs the current checkout without cloning, so it records a pin mismatch
-instead of rejecting a legitimate later documentation/CI commit. GitHub CI installs the
-`rescue` extras as well as development tools, keeping thesis-figure tests representative.
+The old two delivery notebooks and twelve numbered notebooks are deleted from the current
+tree but recoverable through Git history. No old Drive campaign, prepared dataset, audit,
+or artifact is deleted.
 
-The first real preflight initially exposed only an exit code. After command-tail logging
-was added, the rerun established the exact root cause: the child process started in
-`/content` and resolved a relative `configs/...` default outside the checkout. All notebook
-subprocesses now run from the exact repository root, and active CLI config defaults are
-anchored to their script checkout. Inventory also records mounted-Drive hash read errors
-without weakening mandatory post-copy verification.
+**2026-08-12 delegation; 2026-08-13 model-scope decision (supersedes the 2026-08-12
+pick) and `final`-stage restructure.** With a hard external deadline (presentation video
+due in 4 days, report in 8, end of a 6-week development window), the owner explicitly
+delegated scientific/HPO-scope decisions to Claude Code for the rest of this campaign
+(see `CLAUDE.md`'s 2026-08-12 entry; the sealed-test-opening gate and the non-fabrication
+contract are unaffected). With full real screening evidence for all five models now
+in hand (real, measured 6000-iter mIoU: `pidnet_s` 27.19, `ddrnet_23_slim` 24.50,
+`fast_scnn` 20.10, `segformer_b0` 16.50, `bisenetv2` incomplete/smoke-only 6.57) and
+real per-iteration throughput showing `fast_scnn`/`bisenetv2` are 15-25x slower than the
+other three, `final_models` in
+`configs/campaign/semantic_cs_idd_v3_authorization.json` is now `segformer_b0`,
+`pidnet_s`, `ddrnet_23_slim` (~24 GPU-hours for a full 40000-step final run, vs. ~155
+GPU-hours for all five). `colab_pipeline.py`'s previously hard-coded "final requires all
+five models" check was relaxed to accept any frozen-order subset; see
+`docs/AGENT_HANDOFF.md`'s 2026-08-13 note for the full evidence, reasoning, and code
+change list. `fast_scnn` and `bisenetv2` keep their real screening evidence in the
+report — excluded from further compute, never dropped from the record. Not yet confirmed
+on real L4 hardware.
 
-The first official IDD20K preparation then remained silent for more than 12 hours after
-archive copy. This is not accepted as normal execution evidence. Inspection found a
-pathological gzip TAR access pattern (`getmembers` followed by name-sorted random access),
-two full archive reads for MD5/SHA-256, serial full-resolution dual-mask rendering, no
-heartbeat, and no reliable child-process cancellation. The preparation path now streams
-TAR members once in physical order, computes both hashes in one read, applies a vectorized
-ontology LUT with bounded mask workers, emits live progress, preserves verified ephemeral
-archive copies for retry, hashes bundles while writing, and terminates subprocess groups
-on notebook interruption. These corrections are locally verified but require a new exact
-Colab pin before the real IDD run is retried.
+**2026-08-13 follow-up: the user had to force-stop the entire Colab runtime**, so
+there is currently no running session. Added a matching `screening_models` field
+(same mechanism as `final_models`) so a fresh session's `Runtime → Run all` does not
+automatically try to resume and finish `bisenetv2`'s abandoned screening run (~8 more
+GPU-hours for a result that cannot change `final_models`); the policy JSON's
+`screening_models` is now the four models that actually reached the real 6000-step
+ceiling. Also clarified: the private_inputs archive-inventory cell "not running" on a
+fresh session is expected, intentional content-addressed caching
+(`scripts/inventory_private_inputs.py`), not a defect — see
+`docs/AGENT_HANDOFF.md`'s 2026-08-13 note and `docs/AI_USAGE_LOG.md` for the full
+restart plan given to the user.
 
-## Implemented and locally verified
+**2026-08-13 second follow-up: the fix above was itself invalidated by the exact
+problem it targeted.** `project_commit` is baked into every training run's immutable
+`identity_sha256` (see `mmseg_runtime.py`'s per-run identity dict), so the `6b30275`
+commit itself made the real, already-completed screening runs from the `f2f2110`
+session look stale and about to be retrained from scratch (~20+ wasted GPU-hours) —
+even though `6b30275` only changed orchestration-level CLI flags, nothing about how
+any model is actually trained. Added `scripts/migrate_recovery_identity.py`
+(commit `90b6bea`): recomputes each model's identity under the old and new commit,
+verifies the recomputed old-commit identity matches what was actually recorded on
+Drive (proof nothing besides `project_commit` differs) and that `project_commit` is
+the only differing field, then republishes the same real checkpoint bytes under the
+new commit's identity. Fail-closed — refuses to migrate on any mismatch, never
+retrains or fabricates. See `docs/AGENT_HANDOFF.md`'s second 2026-08-13 note and
+`docs/AI_USAGE_LOG.md` for the exact command the user needs to run before resuming.
 
-- Five-model, two-source scientific training/evaluation/HPO contracts are active for
-  Cityscapes + IDD20K. The available Kaggle BDD mirror is audit/smoke-only.
-- Safe dataset-specific preparation now consumes untouched Cityscapes, BDD100K, and
-  IDD20K archives. It verifies published identities where available, rejects unsafe
-  members/collisions/unknown labels, supports IDD Part II JPG, renders pinned AutoNUE
-  source masks, and never overwrites native annotations.
-- BDD `kaggle_mirror` is automatically marked scientifically ineligible. Only the two
-  official BDD 10K Semantic packages can support final scientific training.
-- The Colab preflight now prepares one dataset at a time in `/content`, streams it into
-  a hash-bound Drive bundle, and removes the temporary tree. Training staging retains
-  the 175 GiB dataset/25 GiB runtime reservation.
-- Prediction and Streamlit now expose road, ego-reachable corridor, confidence,
-  normalized entropy, unreliable pixels, semantic regions, deterministic attention
-  contributions, and optional source-frozen frame shift alerts.
-- Perception evaluation includes road IoU, boundary F1, false-drivable rate,
-  fragmentation, semantic-component coverage, merge and fragmentation. These are not
-  detection metrics.
-- Frame-shift evaluation reports source-vs-external AUROC/AP and alert rates without
-  external threshold tuning.
-- Target-only tools build a static TensorRT FP16 engine and run sustained Jetson
-  benchmarks. They never change power mode and refuse evidence overwrite. No target
-  action was executed during local implementation.
-- Delivery notebooks are regenerated, output-free, and syntactically validated.
-- The prior Colab failure mode is removed: the selected hosted/fallback environment is
-  resolved from its compatibility receipt instead of hard-coding fallback Python and
-  MMSeg paths. Both paths install the complete Colab project extras.
-- Drive now has explicit archive/quarantine/bundle/manifest/campaign/download/source
-  roots. Snapshots exclude staged datasets; a bounded review ZIP makes reports and thesis
-  figures downloadable without copying checkpoints or licensed data.
-- Frozen multi-domain statistics generate measured-only CSV plus 300-DPI PNG/PDF class
-  distribution, imbalance/weights, split-size and source-example figures with hashes.
-- Both delivery notebooks executed all 16 code cells locally in safe contract mode. This
-  verifies integration and control flow, not Colab CUDA or scientific execution.
-- A read-only connected-Drive audit corrected the storage assumption. Existing
-  `private_inputs`, prepared Cityscapes v1, its 6.99 GB verified bundle, real manifests,
-  historical compatibility evidence and `EG-REAL-001` are preserved. New staging reuses
-  the exact pinned Cityscapes bundle and adds BDD/IDD roots without migration.
-- A second read-only Drive audit confirmed IDD Part I/II and the Kaggle BDD ZIP now sit
-  beside Cityscapes in `private_inputs/`. Notebook discovery accepts that exact layout;
-  no upload, move, extraction, or reorganization is required.
-- Preparation now has a conservative archive-size multiplier plus 25 GiB disk reserve,
-  bounded same-session retry cleanup, idempotent bundle reuse, and post-build inventory
-  refresh. Runtime installation adds dependency checking and imports ONNX Runtime,
-  Optuna, Streamlit and reporting packages before accepting the five-model probe.
-- Both notebooks now persist clone/bootstrap failures and all later unhandled errors as
-  redacted, append-only JSON/ZIP evidence under `EdgeGuard/failures/`. Reports include
-  stage/commit/platform/disk context and bounded hashed logs, never datasets/checkpoints
-  or environment variables. The latest ZIP can be downloaded from the final cell.
-- Long IDD preparation and bundle/staging operations emit phase, file/byte progress and
-  periodic free-disk liveness. A failed retry does not recopy already verified `/content`
-  archives, while invalid or partial cache entries remain fail-closed.
+**2026-08-13 third follow-up: made the migration automatic.** The user's runtime
+disconnected before the manual command above could be run — hand-timing "watch for
+screening, interrupt, run this" across an unpredictable disconnect is not reliable.
+`migrate_recovery_identity()` (`mmseg_runtime.py`) now reads the old `project_commit`
+directly off the existing Drive receipt instead of requiring it as an argument, and
+`scripts/run_colab_master.py` runs it automatically as its own stage, right after data
+staging and before the production pipeline, for every `screening_models` entry — no
+manual command needed anymore, safe to run unattended every session (fail-closed: it
+only republishes what it just verified, and does nothing if there's nothing to
+migrate). Application commit `a5519f4`.
 
-## Available external archives
+## Data state
 
-The connected Drive contains official Cityscapes packages, official IDD20K Part I/II,
-and a Kaggle BDD mirror under `private_inputs/`. Local archive directories now contain
-only metadata files because the user removed the large bytes to recover disk space. The
-BDD mirror is retained for preparation/catalog/audit but cannot enter HPO or main claims.
-Dataset bytes and machine-local paths are not tracked in Git.
+A read-only Drive review confirmed:
 
-## Evidence boundary
+- the 8.26 GB verified Cityscapes prepared tar includes train and validation image/label
+  roots and remains scientifically eligible;
+- the official IDD20K index contains 33 verified shards and 16,063 train+val samples;
+- official Cityscapes and IDD source archives remain available in `private_inputs/`;
+- v2 audit candidates are reusable by exact identity.
 
-The historical pretrained PIDNet-S Cityscapes-val reference remains separately
-documented. No project-trained multi-domain checkpoint, current CUDA model comparison,
-HPO result, official source validation, ACDC/sealed-external result, ONNX finalist,
-TensorRT engine, or Jetson performance measurement exists yet. Fixture tests and dry
-runs are engineering evidence only.
+The owner policy freezes only Cityscapes candidate
+`74801b9c174778c7c13f5edbed6fdbe9d548139780d6906c6e940fee5281d8db`
+(2,975 valid) and IDD20K candidate
+`ba76d17b94dfaed93036ba2b3c46675c0b34fde1766f6879576ec862e0ac1762`
+(14,018 valid, nine quarantined). Any identity/count drift stops before training.
 
-## Immediate external execution order
+## Pipeline state
 
-1. Run `EdgeGuard_Data_Preflight_Colab.ipynb` from the existing `private_inputs/` uploads
-   with Run all; retain digest, Cityscapes bundle and IDD shard receipts.
-2. Stage/audit Cityscapes + IDD20K and review/freeze their group-safe manifests and rare
-   classes. Review BDD separately as provisional, non-scientific evidence.
-3. If official BDD packages are later obtained, add them as a new source ablation rather
-   than replacing the already recorded mirror evidence.
-4. Advance `CAMPAIGN_TARGET` through smoke, pilot, screening, HPO and final. Reset recovery
-   is automatic; do not delete campaign recovery objects.
-5. Only after final completes, set `source_eval` plus `ALLOW_FINAL_DATA=True`; prepare/open
-   ACDC separately and never use its result to change model or preprocessing.
-6. Build/benchmark TensorRT FP16 manually on Jetson, then decide whether the detection
-   phase gate passes.
+One versioned orchestrator owns:
 
-Implementation, local tests, Colab measurements, external results, Jetson measurements,
-and human acceptance remain distinct states.
+```text
+preflight → restore → stage-data → canary → smoke → pilot → extension-smoke →
+screening → hpo → final → selection → ablation → accept → validation-data →
+evaluate → export → report → package
+```
+
+The hermetic stack is uv 0.8.8, CPython 3.11.13, NumPy 1.26.4, PyTorch
+2.1.1/cu121, MMEngine 0.10.7, mmcv-lite 2.1.0, OpenCV headless 4.10.0.84, and
+MMSegmentation commit `c685fe6767c4cadf6b051983ca6208f1b9d1ccb8`. The host uv and
+host Python stack are not training inputs. GUI OpenCV and dependency re-resolution are
+rejected.
+
+The hosted Colab interpreter now imports only Python standard-library modules. A
+standard-library bootstrap installs the entire hash-locked environment before any
+EdgeGuard, NumPy, Pydantic, Torch, MMCV, or MMSegmentation import. Restore, data staging,
+canary, training, evaluation, export, and reporting then run only through the verified
+Python 3.11 interpreter. The v3 work root is isolated at `/content/edgeguard-work-v3`.
+Ephemeral evidence from another application commit is preserved under an incompatible
+suffix and never resumed; a Drive state from another commit is preserved and skipped.
+
+The first real master run at application commit `2495354d…` stopped before useful child
+diagnostics were retained. The corrected notebook streams and records the complete child
+output, current stage, bootstrap failure, and a bounded log tail in its Drive failure ZIP,
+so a future external failure cannot collapse into an unactionable exit-code-only traceback.
+
+The next real run at application commit `1da25ef…` proved that Colab system pip installs
+prefix scripts under `local/bin` rather than the previously assumed `bin`. Both bootstrap
+layers now discover, execute, and version-check the exact private uv binary across both
+POSIX prefix layouts, and the verified discovered directory—not a reconstructed path—is
+prepended to the hermetic runtime PATH.
+
+The following L4 run at application commit `55e13db…` completed the full 92-package
+hash sync, the two-wheel OpenMMLab install, and both editable installs. It then failed in
+the old combined import/CUDA probe, which discarded its child stderr and redundantly ran
+the complete dependency sync a second time. The exact lock imports successfully in a
+clean Linux x86 GitHub runner. The corrected runtime now puts wheel-owned Torch/NVIDIA
+libraries ahead of Colab toolkit libraries while retaining the host driver paths,
+isolates every dependency import and CUDA initialization with preserved stderr, and
+validates the standard-library bootstrap receipt instead of uninstalling/reinstalling the
+environment. Setuptools is held at 80.9.0 so MMEngine's `pkg_resources` runtime path
+remains available. A failed, receipt-less canary evidence root is preserved under a
+timestamped quarantine name before retry, preventing old failure state from contaminating
+the next Run-all attempt.
+
+The next L4 run at application commit `005eb03…` proved that the exact locked environment
+and all editable installs completed, then exposed one remaining hosted-notebook leak:
+Colab exported `MPLBACKEND=module://matplotlib_inline.backend_inline`, while the locked
+headless runtime intentionally does not install `matplotlib-inline`. Application commit
+`3f3ef8f…` now removes hosted Python/virtualenv/pip/uv routing state, forces Matplotlib
+`Agg`, isolates plotting and framework caches, records a non-secret environment-contract
+hash, and renders a real headless PNG before the model canary. The same firewall reaches
+bootstrap, canary, training, evaluation, export and report children. The combined
+OOM → reduced device batch → intentional interruption path now adds `--resume` and verifies
+the interruption checkpoint instead of reopening a non-empty run directory.
+
+All five models pass the runtime canary contract. Core smoke intentionally interrupts at
+step 25 of 50 and must resume from the same optimizer/checkpoint identity. Checkpoints are
+published every 500 optimizer steps or ten minutes. A single OOM retry may change device
+batch only when accumulation keeps effective batch four.
+
+All five models receive 40,000-step final training. Only train-select evidence selects the
+recommended model. Official validation opens after policy acceptance and cannot change the
+choice. The selected model receives weighted-CE and 256×512 ablations; deployment remains
+512×1024.
+
+A cross-file review at application commit `8ed15194…` (Claude Code, real-stack review
+against the pinned MMSeg checkout) found that no test in the repository ever ran the real
+`Runner.train()`/`model.loss()` path against the five pinned architectures, and that this
+let two real defects reach every stage without detection: PIDNet-S's shared training
+pipeline was missing the upstream `GenerateEdge` step, so `PIDHead`'s boundary loss raised
+`AttributeError: 'SegDataSample' object has no attribute 'gt_edge_map'` on the first
+optimizer step of any stage; and the CE-versus-weighted-CE override only matched
+`CrossEntropyLoss` nodes, so it silently changed nothing for DDRNet-23-Slim and almost
+nothing for PIDNet-S, whose dominant loss terms are `OhemCrossEntropy`. Both are fixed and
+were confirmed by actually building each real model from its resolved config and running
+one real forward/backward step against the pinned MMSeg checkout
+(`tests/unit/test_mmseg_real_training_step.py`, now wired into
+`semantic-framework-cpu-probe.yml`). The `stage-data` phase previously only checked that
+manifest JSON files existed; it now verifies every referenced image/mask file is present on
+local disk (`verify_manifest_data_is_staged`), and Drive archive/shard copies now fail
+closed on a stalled read via a bounded stall-timeout guard instead of risking an indefinite
+hang.
+
+The same review's follow-up commit `1387322…` fixed a lower-severity bug found in the same
+pass — `resize_train_ids()` validated a resized mask against the source label-ID space
+(0-33) instead of the train-ID space (0-18/255) — and reconciled several stale docs
+(`SYSTEM_ARCHITECTURE.md`'s status boundary, `DATA_CATALOG.md`'s pre-ADR-0008/0009
+acquisition status, the eval-config resolution mismatch). The IDD20K native-label-loss
+finding from the same review was deliberately left unresolved as a recorded limitation
+(`docs/TASKS.md`) rather than acted on, since fixing it means re-processing already-staged
+Drive shards.
+
+Commit `42be8d6…` raised `workers` from 2 to 6 in
+`configs/rescue/semantic_first.yaml` so a Colab High-RAM instance's vCPUs are used more
+fully during data loading; `effective_batch` and every frozen HPO/step budget in
+`PROJECT_CHARTER.md` are unchanged. Training precision was confirmed already optimal
+(`train_model`'s `precision="auto"` selects bf16 on CUDA without any code change). The
+same commit adds `scripts/jetson/run_video_demo.py` (DEMO-02): reads a video frame by
+frame, runs it through the static-shape semantic engine (ONNX Runtime locally, or a
+target-device TensorRT engine via `scripts/jetson/benchmark.py`'s `TensorRTTorchRunner`),
+overlays the semantic mask and derived perception regions, and writes an annotated output
+video plus a JSON summary using the same non-fabrication contract as `scripts/predict.py`.
+Only the ONNX/CPU path is tested here; real TensorRT execution remains a human-gated
+on-device action per `scripts/jetson/AGENTS.md`.
+
+The first real L4 run at application commit `42be8d6…` proved the bootstrap, hermetic
+92-package sync, and OpenMMLab install all complete cleanly on real hardware, then failed
+`five-model-runtime-canary` on PIDNet-S with "AMP/FP16 stack-probe gradient is missing or
+non-finite." `scripts/train/train_semantic.py::_probe_model` hardcoded `torch.float16` for
+its mixed-precision canary regardless of what the real training path would ever select;
+`train_model`'s own `precision="auto"` policy prefers bf16 whenever the device supports it
+(L4 does) specifically because fp16's narrow exponent range can overflow in wide
+multi-scale modules like PIDNet's SPP even when bf16 would not. Application commit
+`b22fd12…` extracts that decision into
+`edgeguard.rescue.mmseg_runtime.resolve_auto_precision()` and makes the probe call it, so
+the probe validates the precision that will actually run instead of a stricter one that
+never will.
+
+The next real L4 run at application commit `b22fd12…` confirmed that fix empirically: all
+five models passed the AMP stack-probe outright (`fp16_finite_model_count: 5`, GPU
+`NVIDIA L4`), and full Cityscapes+IDD20K data staging also completed. The run then entered
+`production-pipeline` and failed building `val_dataloader` for the first stage
+(`smoke`/`segformer_b0`) with `TypeError: Pad.__init__() got an unexpected keyword argument
+'seg_pad_val'`. `_evaluation_pipeline()` in `mmseg_runtime.py` passed `pad_val` and
+`seg_pad_val` as two separate keyword arguments to the `Pad` transform; the pinned
+mmcv-lite `Pad` (`mmcv/transforms/processing.py`) has no `seg_pad_val` parameter at all —
+it accepts only `pad_val`, either a plain number or a `dict(img=..., seg=...)`. Application
+commit `ff26422…` fixes this by passing `pad_val={"img": 0, "seg": config.ignore_index}` as
+a single argument; `_inference_pipeline()`'s bare `pad_val=0` was made the equivalent
+explicit `{"img": 0}` for consistency (mmcv's `Pad` already treated a bare int as
+image-only padding, so behavior is unchanged there). This fix was reproduced and confirmed
+against the real pinned MMSeg checkout by building both the evaluation and inference
+pipelines through `Compose()` with the mmseg registry scope active — the same mechanism
+real training uses.
+
+The next real L4 run at application commit `ff26422…` confirmed that fix too: all five
+models passed the canary again, data staging reused the frozen candidates, and
+`smoke`/`segformer_b0` training actually started, ran to the intentional interruption at
+optimizer step 25 (by design — the recovery hook saves a checkpoint and raises on purpose
+to prove interruption/resume), and the interrupted process exited cleanly. The resume
+subprocess then failed with `FileNotFoundError: recovery_25.pth can not be found.`.
+Root cause: `EdgeGuardRecoveryHook.after_train_iter` (`mmseg_components.py`) wrote only the
+bare checkpoint filename into `<work_dir>/last_checkpoint`. This codebase's own reader
+(`latest_checkpoint()` in `colab_recovery.py`) resolves a relative marker against
+`work_dir` defensively, but MMEngine's own built-in auto-resume
+(`Runner.load_or_resume()` → `find_latest_checkpoint()`) does not — it returns the raw
+marker content verbatim and resolves it relative to the process's current working
+directory, which is the project root for every child process `colab_pipeline.py` spawns,
+not the run's `work_dir`. The identical bare-filename bug also existed in `train_model`'s
+Drive cross-session recovery path (`mmseg_runtime.py`), reachable whenever a new Colab
+session restores a checkpoint published by a dead prior session and resumes training on
+it — the exact scenario this recovery system exists to survive. Application commit
+`e3f3159…` fixes both write sites to write the absolute path instead, matching MMEngine's
+own `CheckpointHook` convention; a new regression test reproduces the exact failure via
+MMEngine's real `find_latest_checkpoint()` against the marker the hook writes and confirms
+it fails on the old code and passes on the fix.
+
+The next real L4 run at application commit `e3f3159…` confirmed that fix too: the resume
+subprocess found and loaded `recovery_25.pth` and continued training. At this point every
+bug found so far had been discovered one at a time on a real Colab GPU, each costing a full
+Colab round-trip — three real training-pipeline bugs (never a Drive/staging bug) that a
+CPU-only local run could have caught, because nothing in this repository had ever driven
+the real orchestrator end to end. The existing "claim-safe local cell execution" check
+(`scripts/dev/run_campaign_notebook_harness.py`) only proves the generated notebook's cells
+import and execute correctly; the actual training call is stubbed behind a hardcoded
+`{"scientific_status": "not_run"}` dict under `EDGEGUARD_NOTEBOOK_LOCAL_TEST=1` and never
+touches `Runner.train()`, `EdgeGuardRecoveryHook`, or `val_dataloader`.
+
+Application commit `d7a4430…` builds a real local CPU rehearsal harness
+(`tests/support/tiny_pipeline_fixture.py`,
+`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) that drives the real
+subprocess-spawning `ColabPipeline` — not a mock — through a real smoke-stage
+interrupt-then-resume cycle for all 5 models on CPU with tiny synthetic fixture data,
+asserting on the real `interruption_resume` records in `metrics.json`. Building it
+immediately surfaced a **fourth** real bug, because it is the first thing in this
+repository to ever exercise a real end-of-stage validation pass:
+`_evaluation_pipeline()`/`_inference_pipeline()`'s `Pad` step passed `config.crop_size`
+(this codebase's own `(h, w)` convention, used unchanged everywhere else, e.g.
+`RandomCrop`) directly as `Pad`'s `size` argument. The pinned mmcv-lite `Pad` documents
+`size` as `(w, h)` and internally reverses it before calling `mmcv.impad(shape=...)`, which
+itself expects `(h, w)` — so the pad target was silently transposed. Invisible for a square
+crop or when the swap happens to survive; real Cityscapes' non-square 512×1024 crop would
+not have survived it, but no real Colab run had ever reached validation to find out (every
+prior run crashed or was interrupted before completing a smoke stage). Fixed by reversing
+`crop_size` the same way the `Resize` step right above it already does. Application commit
+`c4008d9…` adds the rehearsal harness itself and wires it into
+`semantic-framework-cpu-probe.yml` as a mandatory CI step, confirmed locally to pass end to
+end for all 3 core models — including a real computed mIoU at the final validation
+step — closing the exact gap that let all four bugs above reach a real Colab GPU before
+being caught. The notebook is repinned to commit `c4008d9…`; the hostile-context remote
+Linux workflow and a real L4 run exercising the fixed validation step have not yet been
+re-run against it.
+
+A real L4 run at `c4008d9…` confirmed the five-model canary and data staging both pass
+cleanly, then crashed on the very first `smoke`/`segformer_b0` attempt — no training step
+ever ran — with `ValueError("Drive recovery checkpoint belongs to a different immutable
+run")`. This is a **fifth** real bug: on a fresh Colab session with no local
+`run_identity.json`, `ColabPipeline._run_training_phase` decides to append `--resume` purely
+because a Drive recovery pointer *file* exists for the artifact_id
+(`_recovery_pointer_exists` has no identity awareness at all); `train_model()`'s `identity`
+dict includes `project_commit` among its ~20 fields, so every commit — even one unrelated to
+the model/stage in question — invalidates every previously-published Drive checkpoint's
+`identity_sha256` campaign-wide; `train_model()` then correctly detected the resulting
+mismatch but incorrectly treated it as fatal, crashing the whole 5-model campaign rather
+than simply abandoning an opportunistic resume that turned out to be stale. Fixed by
+distinguishing this *speculative* auto-resume (no local run ever existed) from an *explicit*
+resume of a known local run: the speculative path now degrades gracefully to a fresh run
+(recording a `stale_recovery_skipped.json` evidence file) instead of raising; the explicit
+local-resume identity check is untouched, since that one is a genuine safety property.
+Application commit `3262af8…` adds this fix, a new `peek_recovery_metadata()` helper in
+`colab_recovery.py`, and a CPU rehearsal regression test that reproduces the exact crash
+(confirmed to fail on the pre-fix code with the identical error message, and pass on the
+fix). **Left open, not implemented:** whether `project_commit` should remain part of the
+strict identity-compare value at all, or be recorded as provenance-only metadata so only
+scientifically-relevant fields (protocol/dataset/hyperparameter hashes) invalidate a Drive
+checkpoint — a reproducibility-policy call reserved for the human project owner. Not yet
+confirmed on real L4 hardware.
+
+A real L4 run at `3262af8…` got further than any prior run: canary, data staging, and a
+fresh `smoke`/`segformer_b0` start plus the intentional interruption at optimizer step 25
+all confirmed working, then the local resume subprocess crashed with `TypeError: RNG state
+must be a torch.ByteTensor in EdgeGuardRecoveryHook`. This is a **sixth** real bug:
+`Runner.resume()` loads checkpoints with `map_location=get_device()`, which on Colab is
+CUDA, so every tensor in the pickle — including the RNG state
+`EdgeGuardRecoveryHook.before_save_checkpoint` stores — comes back on CUDA, and
+`torch.set_rng_state`/`torch.cuda.set_rng_state` both reject anything but a CPU uint8
+tensor. mmengine 0.10.7 has no RNG save/restore of its own, so this hook is genuine
+capability, not deletable duplication; both the save and load paths now coerce every RNG
+tensor to CPU/uint8, so checkpoints already published to Drive under the buggy format keep
+resuming. Reproduced and regression-tested with no GPU at all:
+`mmengine.device.get_device()` returns `"mps"` on this dev machine, itself a real foreign
+device relative to a CPU RNG tensor, so `.to("mps")` reproduces the identical `TypeError`
+without CUDA — confirmed failing pre-fix, passing post-fix. This also surfaced why the CPU
+rehearsal harness missed it: a local, never-committed `sitecustomize.py` had been forcing
+`mmengine.device.utils.DEVICE = "cpu"` to route around unrelated MPS operator gaps, which
+incidentally hid every device-class bug too; the new RNG test avoids this entirely by
+checking `torch.backends.mps.is_available()` directly rather than depending on mmengine's
+device detection.
+
+Separately, application commit `c88ac8f…` contains a deliberate architecture change: the
+intentional-interrupt self-test (proves interrupt+resume on real hardware) used to run once
+per model — 5 deliberate crash+resume cycles per campaign, no way to disable it — and three
+of this session's six bugs (bare-filename marker, stale Drive recovery, this RNG bug) all
+surfaced through it, each one killing the whole 5-model campaign when it hit. It now runs
+once per campaign (`PipelineInputs.recovery_self_test_model`, default the first core
+model); a failed resume leg is recorded as durable, hash-sealed evidence
+(`recovery_self_test_failure.json`) and the model restarts from scratch instead of aborting
+the campaign, while `pilot`/`screening`/`hpo`/`final` refuse to start with any unresolved
+failure record present — cheap phases can absorb a self-test failure, but the phases that
+cost real hours cannot proceed on an unproven recovery path. Also added a CPU-visible
+config-shape test for the `AmpOptimWrapper` branch that is unreachable in every CPU
+rehearsal run (`resolve_auto_precision` always returns `fp32` without CUDA) — exactly how
+the session's very first bug (a hardcoded AMP dtype) escaped local testing. Not yet
+confirmed on real L4 hardware.
+
+A real L4 run at `2b078d3…` reached the furthest point yet: `segformer_b0` completed its
+full smoke cycle end to end (fresh start, interruption at step 25, real resume via the
+RNG-device fix, training to step 50, validation, mIoU computed), and `fast_scnn` trained
+straight through under the now-once-per-campaign self-test. Then `pidnet_s` crashed on its
+very first training step with `RuntimeError: Index put requires the source and destination
+dtypes match, got BFloat16 for the destination and Float for the source` inside
+`boundary_loss.py:52`. This is a **seventh** real bug: upstream `BoundaryLoss.forward`
+builds `weight = torch.zeros_like(log_p)`, and under real `AmpOptimWrapper(dtype='bfloat16')`
+autocast on real CUDA, `log_p` (the boundary head's raw logits) is already bfloat16; the
+ratio assigned into `weight` comes from summing a float32 label mask autocast never
+touches, so it stays float32 — `index_put_` rejects the mismatch on the pinned Colab torch
+(2.1.1+cu121). Fixed by registering `EdgeGuardBoundaryLoss` (application commit `4917c49…`)
+via this repo's existing `force=True` override idiom — identical to upstream except the two
+assignments are cast to `weight.dtype` first. Only `pidnet_s` uses `BoundaryLoss` among the
+five models; a scan of the pinned checkout's other loss files for the same pattern found
+only one other occurrence, used by none of our five model configs. This fix cannot be
+reproduced as a "raises pre-fix" test on this dev machine even in principle: its torch
+(2.13.0) silently permits the same implicit downcast that torch 2.1.1 (pinned for
+Colab/CI) rejects — a torch-version difference, not a device one. The new test instead
+asserts the fix's actual guarantee (dtype-aligned `weight`, finite loss under mismatched
+inputs, and bit-identical output to upstream when dtypes already match), and `git stash`
+confirms the override registration itself is present only post-fix. The fast-tier CPU
+rehearsal (a real `pidnet_s` smoke run, fp32, unaffected by this bf16-only bug) was re-run
+and still passes. Not yet confirmed on real L4 hardware — that is the only test that can
+actually exercise the bf16 code path this fixes.
+
+A full technical-takeover audit (application commit `a50b635…`) was performed at the human
+owner's explicit request: read the repository with no loyalty to prior architectural
+decisions and issue an architecture verdict. Three parallel read-only audits (repo hygiene/
+CI/ADRs; model registry/reliability/HPO/ONNX/TensorRT/Jetson; data ontology/notebook/Drive
+architecture), plus direct reading of all 5 pinned upstream MMSeg configs, produced
+**VERDICT B — sound concept, real but bounded defects**. This is not the "repeatedly failed"
+prior the audit's own framing assumed: ADR-0008 (2026-07-28) already demoted the pre-existing
+detection/temporal campaign to non-blocking legacy and pivoted to the semantic-first rescue
+architecture; ADR-0009 (2026-07-28, amended 2026-07-30) already built the explicit
+multi-domain dataset ontology and role system this kind of audit would normally have to
+demand from scratch. The seven bugs fixed earlier this session were real but narrowly-scoped
+orchestration/precision defects, each fixed in isolation with a regression test — evidence of
+a sound design surviving real-world contact, not architectural rot. The audit found no
+component meeting the bar for REBUILD or REPLACE; the dataset ontology, reliability/OOD
+stack, dependency tri-tier separation, single generated notebook, ONNX export, and data
+inventory tooling (`scripts/audit_dataset.py`) were all confirmed real, tested, and already
+matching what the audit's own mandate asked for — left untouched.
+
+The audit found one real, quantified, previously undetected methodology defect:
+`build_training_config` in `mmseg_runtime.py` unconditionally overwrote every model's
+`optim_wrapper` with one shared `AdamW(lr=6e-5, wd=0.01)`, regardless of architecture.
+Reading each of the five models' own pinned upstream MMSeg configs directly (not just
+trusting a sub-agent's summary) found that only `segformer_b0` actually matches this recipe;
+`fast_scnn` (SGD, lr=0.12), `pidnet_s` (SGD, lr=0.01), `ddrnet_23_slim` (SGD, lr=0.01), and
+`bisenetv2` (SGD, lr=0.05) all natively train with SGD+momentum at learning rates 150-2000x
+higher than what was actually being applied, in the wrong optimizer family entirely. Optuna's
+HPO search space (`hpo_runtime.py`) only ever searched learning-rate/weight-decay *within* a
+fixed AdamW assumption, so it could never have self-corrected this — a real, previously
+unnoticed risk to the upcoming `pilot`/`screening` model comparison, since it would have made
+every non-SegFormer model look artificially weak for reasons unrelated to architecture
+quality. Application commit `a50b635…` fixes this with a new
+`resolve_model_optimizer_defaults()`, which reads each model's real upstream
+`optim_wrapper.optimizer` as the training baseline; explicit overrides (what every HPO trial
+already supplies) still apply on top, now preserving the model's own optimizer type and
+momentum instead of forcing AdamW. `train_model()`'s identity record now includes
+`optimizer_type`. The frozen HPO learning-rate/weight-decay *search range*
+(`[2e-5, 3e-4]`, tuned for AdamW-scale) was deliberately left untouched — that is now an open
+question for the SGD-native models once real HPO execution begins, flagged rather than
+silently resolved, since dataset/HPO scope decisions are the human owner's per this project's
+governance. The same commit retargets `semantic-framework-cpu-probe.yml`'s push trigger from
+the stale `feat/first-vertical-slice` to `stabilize/colab-v2`/`main` — this CI job runs the
+exact CPU rehearsal that caught most of this session's real bugs, and had never run
+automatically on the branch where all current work happens — and documents (in
+`docs/canonical-colab-runbook.md`) the exact `scripts/audit_dataset.py` invocation for
+inspecting staged Cityscapes/IDD20K training data before a full campaign; no inventory
+artifacts are claimed locally, since this dev machine has no real dataset by design.
+
+Full audit findings, evidence, and the explicit KEEP/REPAIR/REBUILD classification are
+recorded in the approved plan; **left open for the human owner, not decided by this audit:**
+whether to eventually trim the 5-model comparison to fewer models (defer until real
+`pilot`-stage signal exists — the current smoke-stage numbers are 50-step noise, not signal),
+and whether to ever pull BDD100K/ACDC/WildDash into training roles (ADR-0009's existing
+answer — Cityscapes+IDD20K as the frozen scientific core, the others correctly scoped
+narrower — is recommended as final).
+
+A real L4 run at `a50b635…` reached the furthest point yet: all five models completed
+`smoke`, `pilot`, and — for the first time in this project's history — a full real
+6000-step `screening` run, with real measured mIoU (segformer_b0 16.48%, fast_scnn
+20.53%, pidnet_s 26.54%, ddrnet_23_slim 25.21%, bisenetv2 17.41%, all `scientific_status:
+"measured"`, `synthetic_or_smoke: false`, from a real ~20-hour combined L4 session). The
+run then crashed in the screening-evidence evaluation step with `NameError: name 'inf' is
+not defined`. This is an **eighth real bug**: `build_training_config()`'s
+`clip_grad.max_norm` was `float("inf")` (`error_if_nonfinite=True` is the actual safety
+net; `max_norm` was never meant to bind). `train_model()` dumps the resolved config to
+`resolved.py` via `mmengine.Config.dump()` before every training call, including no-op
+resume-and-skip re-entries; `scripts/evaluate.py` (used by the screening/final evidence
+phases — the first phase in this project to ever reload a dumped config rather than use
+the in-memory `cfg`) reloads it via `mmengine.Config.fromfile()`, which `eval()`s the
+dumped Python source. mmengine's dumper serializes `float("inf")` as the bare token
+`inf`, not a valid Python literal without `float(...)`/`math.inf` in scope — crashing on
+reload. This bug was structurally unreachable by any prior test or training stage, since
+none of them ever re-parsed a dumped config from disk; it survived undetected through all
+seven prior bug fixes and roughly 20 hours of real L4 compute until the pipeline finally
+reached this one, previously-unexercised code path. Application commit `2b1ebff…` fixes
+this by replacing `float("inf")` with a large finite sentinel (`1e9`), which round-trips
+cleanly through dump/reload and stays effectively unbounded for any real gradient norm
+observed this session (even a visibly diverging `bisenetv2` screening run topped out
+around `grad_norm ~560`). Reproduced and regression-tested with zero GPU dependency — the
+dump/reload path is pure Python — confirmed via `git stash` to fail pre-fix with the
+identical error and pass post-fix. Separately noted, not fixed, confirmed pre-existing
+and unrelated (identical on both pre-fix and post-fix code via the same `git stash`
+check): the full `tests/integration/test_colab_pipeline_cpu_rehearsal.py` suite currently
+fails on this dev machine with `RuntimeError: view size is not compatible with input
+tensor's size and stride` during `backward()` — the known MPS operator-gap class of issue
+already documented in `canonical-colab-runbook.md`. This needs its own investigation in a
+future session; it does not affect the validity of the `clip_grad` fix, which is verified
+independently via a direct dump/reload unit test plus the full local suite (500
+passed/32 skipped) and the mmseg-gated test files (27/27, up from 24 — adds the new
+dump/reload round-trip test).
+
+Because `train_model()` dumps `resolved.py` fresh on every entry — including the
+near-instant resume-and-skip re-entry a completed stage takes on a new Colab session —
+no manual Drive cleanup is required for this fix to take effect: the next Colab run will
+regenerate a correctly-serializable `resolved.py` automatically the moment it re-enters
+each stage, and the screening-evidence step that crashed should then complete cleanly for
+all five models. The real next milestone after that is HPO for the top-two screening
+models, then `final` (40000 steps) for all five.
+
+**2026-08-13 update:** at commit `a5519f4`, a real L4 session reached `data` cleanly (see
+`docs/AGENT_HANDOFF.md`'s 2026-08-13 note for the full account) but the new automatic
+`recovery-identity-migration` stage refused to migrate all four `screening_models`
+(`verification_failed`, root cause not confirmed) — those four models' screening will
+retrain from scratch (~11-12 GPU-hours) rather than resume from the real `f2f2110`-era
+6000-step checkpoints. This does not invalidate the screening mIoU evidence already
+recorded from the earlier `a50b635…` run (segformer_b0 16.48%, fast_scnn 20.53%, pidnet_s
+26.54%, ddrnet_23_slim 25.21%, bisenetv2 17.41%) — only the checkpoint bytes can't resume.
+**HPO, `final`, `selection`, `ablation`, `accept`, `evaluate`, `export`,
+`thesis`/`report`, and `package` remain entirely unverified on real Colab hardware** —
+nothing past `screening` has real evidence yet, so the next full run is genuinely new
+territory for roughly 8-10 hours of pipeline, not a repeat of previously-proven stages.
+
+## Deliveries
+
+The package stage produces `EdgeGuard_Jetson_Release.zip`,
+`EdgeGuard_Thesis_Bundle.zip`, `EdgeGuard_Streamlit_Demo.zip`, and
+`release_index.json`, each hash verified. The Jetson archive contains five ONNX graphs,
+checkpoints/configs and golden vectors, but never a TensorRT engine. Jetson telemetry stays
+`not_run` until a target-device benchmark is supplied.
+
+Separately, as of application commit `7ffef5c…` (see the bootstrap-fix note below —
+the initial `7b604c9…` cell failed on real Colab with `ModuleNotFoundError: No module
+named 'edgeguard'` before this fix), every notebook session also produces
+`EdgeGuard_Data_Inventory.zip` (`dataset_inventory.json`/`.md`, `record_type:
+"raw_archive_inventory"`) — an exhaustive, name-agnostic scan of every raw file in
+`Drive/EdgeGuard/private_inputs/`: byte sizes, entry/image counts, resolution/format/mode
+histograms, corrupt-file detection, and real *measured* per-class pixel/image frequency
+histograms for any label-like image found (not sampled, not just declared ontology
+counts). This is independent of the four package-stage deliveries above: it runs early,
+before the campaign subprocess, is wrapped so it can never block or fail the campaign,
+and is content-addressed so an unchanged `private_inputs/` folder reuses the prior
+session's report instead of re-scanning. It is an engineering/audit artifact (no
+`scientific_status` field) for the thesis report and for spotting optimization targets —
+not a training or acceptance result.
+
+**Bootstrap fix (`7ffef5c…`):** the inventory cell's first real-Colab run
+(`7b604c9…`) crashed cleanly with `ModuleNotFoundError: No module named 'edgeguard'`
+(caught by the cell's own try/except; the campaign was unaffected, exactly as designed,
+but no report was produced). The cell invoked the CLI via bare `/usr/bin/python3` the
+same way `run_colab_master.py` is invoked, but unlike that script (which never imports
+`edgeguard` at its own top level), the CLI imports `edgeguard.rescue.archive_inventory`
+immediately, and nothing had put `src/` on that interpreter's `sys.path`. Fixed by
+giving the inventory subprocess its own scoped environment dict with `PYTHONPATH` set to
+`src/`, and by installing the small set of pure-Python packages
+(`numpy`/`Pillow`/`pydantic`/`PyYAML`) its import chain needs before invoking it —
+verified directly against a throwaway venv with only those four packages installed and
+no `edgeguard-road` install at all.
+
+**Ninth real Colab bug (`24dd782…`):** with the inventory bootstrap fixed, the same real
+L4 attempt (application commit `7ffef5c…`) crashed later, in the main campaign's `data`
+stage, with `ValueError: cityscapes bundle identity mismatch` from
+`_canonical_bundle_receipt` in `src/edgeguard/rescue/colab_data.py`. That check compared
+the receipt's `plan_sha256` — a hash of the *entire* `colab_data_access_v1.yaml` at
+bundle-creation time — against a fresh hash of the *entire current file*, so any edit
+anywhere in that YAML invalidates every dataset's already-built Drive bundle, not just
+the edited one. Commit `bd3ea56` (WildDash2/RailSem19 role assignment) had edited only
+the `wilddash2` section; `cityscapes`'s own config was untouched, but the whole-file
+hash changed anyway, rejecting the already-published ~8.26 GB `cityscapes` bundle.
+Fixed by comparing the receipt's `required_paths` field directly instead — already
+stored verbatim in every existing receipt, so no Drive-side rebuild is needed — while
+still failing closed if a dataset's own `required_paths` genuinely changes. Two new
+regression tests in `tests/unit/test_colab_data.py` cover both directions.
+
+**Live progress output (`f2f2110…`):** the user watched a real Colab run of the
+inventory cell with no visible output for a while and asked whether it was still
+working. `build_inventory_report()` now prints, per file, which archive it's about to
+scan, which have finished (with type/image/corrupt counts and elapsed time), and an
+overall ETA (a bytes-remaining/bytes-per-second-observed estimate); `_inspect_zip()`/
+`_inspect_tar()` additionally print an intra-archive progress line at the first entry,
+the last entry, and at least every 2 seconds while scanning a single large archive
+(e.g. IDD20K's 32127-entry shards). All prints use `flush=True` to stream live through
+`run_visible()`'s subprocess output, matching the periodic-progress-line pattern
+already used elsewhere (`create_dataset_bundle`'s per-1000-files prints). Purely an
+observability change — no scan logic, statistics, or report schema changed.
+
+## Verification boundary
+
+Local Ruff, mypy, pytest, deterministic notebook generation, claim-safe local cell
+execution, and the new real `ColabPipeline` CPU rehearsal (see below) validate engineering
+contracts only. No local test creates a scientific metric. "Claim-safe local cell
+execution" specifically proves only that the generated notebook's cells import and execute
+their own syntax correctly — the real training call is stubbed behind a hardcoded
+`{"scientific_status": "not_run"}` dict; it does not exercise `Runner.train()`,
+`EdgeGuardRecoveryHook`, or `val_dataloader`. The real orchestrator rehearsal
+(`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) does exercise all three, on CPU,
+against tiny synthetic fixture data, and is what actually caught the fourth (`Pad`
+orientation) bug above before any Colab GPU time was spent on it.
+As of application commit `a5519f4…` (automatic recovery-identity migration), the
+current delivery passes 547 tests with thirty-two environment-gated skips without the
+pinned MMSeg stack present (up from 542/32 — 5 new `test_migrate_recovery_identity.py`
+cases). Mypy passes for all 119 configured source modules (unchanged count).
+`tests/unit/test_colab_master_bootstrap.py`'s full 17-test suite, including the
+stdlib-only import check, stayed green — `run_colab_master.py` shells out to the
+migration script rather than importing `edgeguard.rescue`. This commit changes both
+`ColabPipeline`'s recovery path and the master runner's own stage sequence, so the
+next real Colab session is the load-bearing confirmation; no manual step is required
+of the user anymore.
+At the prior commit `90b6bea…` (recovery-identity migration tool, manual), the
+delivery passed 542 tests with thirty-two environment-gated skips without the pinned
+MMSeg stack present (up from 539/32 — 3 new `test_compute_run_identity.py` cases;
+these run locally, unusually for `mmseg_runtime.py`-touching tests, since
+`compute_run_identity` only needs `mmengine.Config.fromfile` on a fake fixture, not
+the full pinned stack). Mypy passed for all 119 configured source modules (unchanged
+count).
+At the prior commit `6b30275…` (screening-stage model-scope restriction), the
+current delivery passes 539 tests with thirty-two environment-gated skips without the
+pinned MMSeg stack present (up from 536/32 — 3 new `test_colab_pipeline.py` cases for
+`screening_models`, mirroring `final_models`). Mypy passes for all 119 configured
+source modules (unchanged count). This commit directly changes `ColabPipeline`'s
+`screening` orchestration, so the environment-gated CPU rehearsal suite staying
+skipped locally is again a real verification gap, not a pass-through — the next real
+Colab run is load-bearing for this commit too.
+At the prior commit `5135f69…` (final-stage model-scope restriction), the delivery
+passed 536 tests with thirty-two environment-gated skips without the pinned
+MMSeg stack present (up from 533/32 — replaced one over-strict `test_colab_pipeline.py`
+case asserting "final requires exactly five models" with four narrower cases covering
+the relaxed, frozen-order-subset `final_models` validation). Mypy passes for all 119
+configured source modules (unchanged count — no new source module, `colab_pipeline.py`/
+`release_acceptance.py`/`scripts/colab_pipeline.py`/`scripts/run_colab_master.py` edited
+in place). This commit directly changes `ColabPipeline`'s `final`/`selection`/`accept`
+orchestration, so the environment-gated CPU rehearsal suite
+(`tests/integration/test_colab_pipeline_cpu_rehearsal.py`) staying skipped locally is a
+real verification gap this round, not a "no relevant code touched" pass-through like
+most prior entries below — the next real Colab run is the load-bearing confirmation.
+At the prior commit (`38df2ae…`), the delivery passed 533 tests with
+thirty-two environment-gated skips without the pinned MMSeg stack present (up from
+523/32 — 10 new cases in `test_training_log_analysis.py`, using the user's own real
+pasted Colab log excerpt as the primary fixture rather than a synthetic one). Mypy
+passes for all 119 configured source modules (up from 118 — adds
+`training_log_analysis.py`). At the prior commit (`f2f2110…`), the suite passed 523
+tests with the same thirty-two skips (up from
+522/32 — 1 new case in `test_archive_inventory.py` locking in the live-progress-output
+shape via `capsys`). At the commit before that (`24dd782…`), the suite passed 522 tests with
+the same thirty-two skips (up from 520/32 — 2 new cases in `test_colab_data.py`
+covering the ninth-bug fix: one reproduces the exact real-world scenario of an unrelated
+dataset's config being edited and confirms staging still succeeds, one confirms the
+check still rejects a genuine change to the affected dataset's own `required_paths`).
+At the commit before that (`7ffef5c…`), the suite passed 520 tests with the same
+thirty-two skips (up from 499/32 — 20 new cases in
+`test_archive_inventory.py` for the raw-archive inventory feature, plus corrections to
+`test_delivery_notebooks.py`'s hardcoded cell count and `test_notebook.py`'s PYTHONPATH
+guard made while fixing the private_inputs inventory bootstrap bug). This range touches
+no mmseg/training code path so the mmseg-gated counts below and the CPU rehearsal suite
+were not re-run this round. Mypy passes for
+all 118 configured source modules (`mypy src/edgeguard`, up from 116 — adds
+`archive_inventory.py` and `stall_guard.py`). At the prior commit (`2b1ebff…`), the
+suite passed 499 tests with
+thirty-two environment-gated skips without the pinned MMSeg stack present (up from 489/21
+— several new tests, including the per-model native-optimizer tests, are gated on the
+checkout); with the pinned stack available
+(`EDGEGUARD_MMSEG_CHECKOUT` pointed at the exact commit
+`c685fe6767c4cadf6b051983ca6208f1b9d1ccb8` checkout) the mmseg-gated test files pass 27 of
+27 (up from 24 — adds `test_native_optimizer_matches_each_models_own_upstream_recipe`,
+parametrized over all 5 models, and `test_build_training_config_wires_the_native_optimizer_through`),
+including the real per-architecture `model.loss()` regression tests, the `last_checkpoint`
+marker regression test, the `Pad` orientation regression test, the stale-Drive-recovery
+regression test, the RNG checkpoint-device regression test, and the PIDNet `BoundaryLoss`
+dtype regression test. **Noted, not fixed, out of scope for this commit:** running the
+entire test suite (every file) with `EDGEGUARD_MMSEG_CHECKOUT` set produces 12 failures in
+`tests/unit/test_dataset_preparation.py` that do not reproduce when that file runs alone or
+alongside only the mmseg-gated files above — a pre-existing test-isolation/ordering issue,
+since that file has no connection to `mmseg_runtime.py` or this session's changes. The full
+`tests/integration/test_colab_pipeline_cpu_rehearsal.py` suite (all 3 tests) was re-run end
+to end and still passes (18m40s). The `BoundaryLoss` test still cannot be a "raises pre-fix"
+reproduction even in principle on this machine — its torch (2.13.0) silently permits the
+exact implicit downcast that the pinned Colab/CI torch (2.1.1) rejects, a torch-version
+difference, not a device one — so it asserts the fix's actual guarantee (dtype-aligned
+output, bit-identical to upstream when dtypes already match) instead, and `git stash`
+confirms the override registration is present only post-fix. The new optimizer-defaults
+regression tests use the same `git stash` technique: stashing only the fix produces a clean
+`ImportError` on `resolve_model_optimizer_defaults` at test collection, confirmed to fail
+pre-fix and pass post-fix. At commit `a50b635…`, the master notebook was generated twice
+byte-identically at SHA-256
+`263e9c1efec73ee18778ac460133c9fabc71e248d475250c3eccc153a72bc43b`. At commit
+`7b604c9…` (the private_inputs inventory feature, before the bootstrap fix), it was
+generated twice byte-identically at SHA-256
+`b06b373a2c5c3ab9e1a02f891abcc9d1973655cb69fb1d04281f3f24ddcd6e8d` (5 code cells, up
+from 4). At commit `7ffef5c…` (bootstrap fix applied), it was regenerated twice
+byte-identically again at SHA-256
+`2e89a7ba32ed9b5f5c451650231aaca0bd67a6a5de2b4a790a8434f43a2a73d7` (still 5 code cells).
+At commit `24dd782…` (ninth-bug fix — no cell text changed, only the pinned commit), it
+was regenerated twice byte-identically at SHA-256
+`1110e0ef65fa675cdf247fb967a860931c848ae62ea3a2e72e505cd4b617ba77`. At commit
+`f2f2110…` (live progress output — again no cell text changed), it was regenerated
+twice byte-identically at SHA-256
+`97198ac21eddf1ed1ffca4376c6ae4cebe0212a2d0fab95ffe4816cfceb5c427`. At commit
+`38df2ae…` (real-evidence training-log analysis tool — no notebook cell text
+changed either, this tool is deliberately a standalone script, not wired into the
+notebook), it was regenerated twice byte-identically at SHA-256
+`7237aee68f3cd53ea346abe2874c173f235e3e775774eee02671648f42a70290`. At commit
+`5135f69…` (final-stage model-scope restriction — no notebook cell text changed,
+`run_colab_master.py`/`scripts/colab_pipeline.py` are called by the notebook but not
+embedded in it), it was regenerated twice byte-identically at SHA-256
+`ba0f377549e1eb54354f1df6b0f98b0b916faf191b9ec1b9ce74da9da485d208`. At commit
+`6b30275…` (screening-stage model-scope restriction — again no notebook cell text
+changed), it was regenerated twice byte-identically at SHA-256
+`e277eb9ba5653bf407b0ab7e09985c384473d9128a5a168c576078a4176a5791`. At commit
+`90b6bea…` (recovery-identity migration tool, manual — again no notebook cell text
+changed, the new script was called on-demand by the user, not embedded), it was
+regenerated twice byte-identically at SHA-256
+`24aed1497ad4759663b4498b0e940ac38458a513c56115fd35af05492c6e6ffe`. At the current
+commit `a5519f4…` (automatic recovery-identity migration — again no notebook cell
+text changed; `run_colab_master.py` calls the migration script itself now, still not
+embedded in the notebook), it was regenerated twice byte-identically at SHA-256
+`e8597fdd473c4a74f5c4ce671c03f3687f83ff12d5e590c7b5e88dea5e9627b1`, and both
+`tests/integration/test_notebook.py` (including `test_delivery_notebooks.py`'s
+corrected assertion) and the local claim-safe execution harness
+(`scripts/dev/run_delivery_notebooks_local.py`) pass at this commit.
+Remote Linux workflow `31129018003` completed successfully at an earlier application commit
+(`3f3ef8f…`) with the exact Colab failure context injected
+(`MPLBACKEND=module://matplotlib_inline.backend_inline`, host uv and virtualenv state); it
+has not yet been re-run at the current commit (including the rehearsal CI step), and
+claim-safe local cell execution has not been re-verified at this commit either — both remain
+pending before the next real Colab attempt. As of application commit `a50b635…`, this
+workflow's push trigger now covers `stabilize/colab-v2`/`main` (previously scoped only to
+the stale `feat/first-vertical-slice`, where it never ran on real work), so the next push to
+this branch should be its first automatic run. The AMP-probe precision fix, the
+`Pad`/`seg_pad_val` fix, the `last_checkpoint` absolute-path fix, the stale-Drive-recovery
+fix, and the RNG checkpoint-device fix have all since been confirmed by real L4 runs (the
+RNG-device fix specifically got `segformer_b0` and `fast_scnn` both through a full smoke
+cycle before the next, newly-fixed bug was reached); neither the `BoundaryLoss` dtype fix nor
+the per-model native-optimizer fix (`a50b635…`) has yet been confirmed by an actual L4 run.
+The `BoundaryLoss` fix cannot be confirmed any other way, since it depends on real bf16
+autocast on real CUDA; the optimizer fix *could* in principle be judged by smoke-stage loss
+behavior on CPU, but the CPU rehearsal's 50-step budget and tiny synthetic fixture are too
+short/small to say anything meaningful about optimizer-family correctness — real L4
+`smoke`/`pilot`-stage loss curves for the four newly-SGD models are the actual test.
+The notebook is not eligible for a Colab-ready tag until two independent clean L4
+five-model FP32/AMP canaries and a real interruption/resume smoke have passed. No training
+result, accepted scientific release, TensorRT engine, Jetson measurement, merge, or tag is
+claimed by this state file.

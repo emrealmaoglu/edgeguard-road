@@ -1,123 +1,143 @@
-# Semantic-First Execution Runbook
+# Semantic-first production runbook
 
-This is the canonical execution order. Replace example paths; never put licensed data,
-credentials, checkpoints, generated models, or result ledgers in Git.
+## Phase-by-phase Colab campaign
 
-## 1. Prepare Drive data
+Open `notebooks/EdgeGuard_Master_Colab.ipynb`, select an **L4/A100 GPU** and **High-RAM**,
+then run the cells in order. Each campaign phase is its own cell: it runs
+`run_colab_master.py --target <phase>` and then zips and downloads that phase's
+logs and evidence. Put those zips under `docs/colab-logs/` — they are the input to
+`scripts/analyze_training_results.py`.
 
-Upload untouched archives under `MyDrive/EdgeGuard/archives/<dataset>/`. Run
-`notebooks/EdgeGuard_Data_Preflight_Colab.ipynb` with **Run all**. The default prepares
-only missing scientific sources. Cityscapes is one verified tar; IDD is published as
-500-sample canonical shards so a reset can lose only the open shard. `DEEP_VERIFY_ARCHIVES`
-stays false after the first pinned digest receipt. Do not extract archives on the Mac or Drive.
+A finished phase is never retrained. `colab_pipeline.run()` records phase completion in the
+Drive state store and skips every verified phase, and dataset staging short-circuits with
+`already_staged` once the local copy verifies, so a dropped session resumes from the cell it
+died in rather than replaying the campaign. There are no manual stage, finalist,
+review-receipt, or accepted-release controls in the notebook.
 
-Required final-science packages:
+**2026-08-14 initialisation and budget change.** Training now starts from ImageNet-1k
+**classification** backbones instead of random weights. Until this change every model
+trained from scratch — `_strip_pretrained` nulls every `Pretrained` init_cfg and
+`colab_pipeline` never emitted `--initialization` — which is why screening mIoU stalled at
+16-26% with half the classes at 0.0. The three manifests in `configs/pretrained/` are
+committed with fixed `checkpoint_sha256`/`access_date`/`checkpoint_path` because
+`pretrained_manifest_sha256` is part of every run's immutable identity; the new
+`pretrained-backbones` stage only downloads and hash-verifies what they already declare.
+`fast_scnn` and `bisenetv2` declare no upstream `Pretrained` init_cfg, so they keep random
+initialisation. Segmentation checkpoints are structurally inadmissible here: the manifest
+verifier requires `source_task="image_classification"`, so weights that had seen Cityscapes
+cannot be used. Stage budgets were cut to fit a 3-day deadline (pilot 600, screening 2,500,
+HPO 3 trials x 1,200, final 10,000, ablation 4,000) — roughly 14 GPU-hours in total against
+the ~69 the previous protocol needed. See `docs/AI_USAGE_LOG.md` for the full record. The committed owner policy binds the exact
+Cityscapes/IDD audit candidates, model order, train-select selection rule, and the
+post-acceptance official-source evaluation gate.
 
-- Cityscapes: `leftImg8bit_trainvaltest.zip`, `gtFine_trainvaltest.zip`.
-- IDD20K: official `idd-20k-I.tar.gz` and `idd-20k-II.tar.gz`.
+**2026-08-13 model-scope decisions.** Real per-iteration throughput showed `fast_scnn`
+(~5.3 s/iter) and `bisenetv2` (~6.5-7 s/iter) are 15-25x slower than `segformer_b0`/
+`pidnet_s`/`ddrnet_23_slim`; a full 40,000-step final run on all five would cost roughly
+155 GPU-hours, incompatible with a 4-day presentation deadline. Under CLAUDE.md's
+2026-08-12 broad scientific-decision delegation, `final_models` in
+`configs/campaign/semantic_cs_idd_v3_authorization.json` is narrowed to `segformer_b0`,
+`pidnet_s`, `ddrnet_23_slim` (~24 GPU-hours total). Separately, `bisenetv2`'s own
+screening run was interrupted live mid-session (owner-directed stop, since resuming it
+would cost ~8 more hours for a result that cannot change `final_models` either way);
+`screening_models` in the same policy file is narrowed to the four models that actually
+completed the full 6,000-step screening ceiling
+(`segformer_b0`/`fast_scnn`/`pidnet_s`/`ddrnet_23_slim`), so a fresh Colab session does
+not automatically try to resume and finish `bisenetv2`'s screening. `fast_scnn`
+(screening mIoU 20.10) and `bisenetv2` (interrupted, smoke-only mIoU 6.57) keep their
+real evidence in the report with an explicit exclusion note — never silently dropped.
+See `docs/AI_USAGE_LOG.md` for the full evidence and decision record.
 
-The existing Kaggle BDD zip may use `BDD_SOURCE_PROFILE="kaggle_mirror"` for smoke only.
-Its receipt and every downstream manifest remain scientifically ineligible.
+**2026-08-13 `fast_scnn` also excluded from `screening_models`.** The automatic
+recovery-identity migration above could not migrate `fast_scnn`'s real, complete
+6000-step screening checkpoint (mIoU 20.10) to the current commit — see the migration
+finding in `docs/AI_USAGE_LOG.md`. Real pilot-stage throughput measured on both L4
+(~5.2 s/iter) and A100 (~5.3-5.6 s/iter — no speedup for this model at the frozen
+`device_batch: 4`, this workload appears CPU/dataloader-bound rather than
+GPU-compute-bound at this batch size) puts a fresh 6000-step run at ~9 GPU-hours.
+`fast_scnn` is already excluded from `final_models`, so rerunning its screening cannot
+change any downstream decision; its real evidence already exists and is preserved.
+`screening_models` is narrowed to `segformer_b0`/`pidnet_s`/`ddrnet_23_slim`.
 
-BDD is provisional and excluded from the active campaign. Drive separates immutable
-recovery objects, small campaign state, HPO SQLite backups, prepared shards, runtime cache,
-failure packages and `review_packages/`. Staged datasets are never snapshotted.
+**2026-08-13 automatic recovery-identity migration.** A commit that only changes
+orchestration code (e.g. the `screening_models`/`final_models` decision above) still
+changes `project_commit`, which is baked into every training run's immutable identity
+hash — so, without this step, resuming on a new commit would make every real,
+already-completed checkpoint look "stale" and get silently retrained from scratch. The
+master runner now runs `scripts/migrate_recovery_identity.py` automatically, right
+after data staging and before the production pipeline starts, for every model in
+`screening_models`: it recomputes each model's identity under the commit actually
+recorded on its existing Drive receipt and verifies that matches the real recorded
+hash, recomputes it again under the current commit and verifies `project_commit` is
+the *only* field that differs, and only then republishes the same real checkpoint
+bytes under the new identity. It refuses outright (never retrains, never fabricates)
+if either check fails, or does nothing if there is nothing to migrate — so this is
+always safe to run, unattended, on every session. **No manual step is needed**; this
+happens automatically inside **Runtime → Run all**.
 
-## 2. Audit and freeze source manifests
+The campaign ID is `semantic-cs-idd-v3`. The master runner performs:
 
-After the training notebook stages verified bundles into `/content/edgeguard-data`:
-
-```bash
-python scripts/audit_dataset.py --dataset cityscapes --dataset-root /content/edgeguard-data/cityscapes --output-root /content/work/audit/cityscapes
-python scripts/audit_dataset.py --dataset idd20k --dataset-root /content/edgeguard-data/idd20k --output-root /content/work/audit/idd20k --checkpoint-root /content/drive/MyDrive/EdgeGuard/campaigns/semantic-cs-idd-v1/state/audit-catalog
+```text
+preflight → restore → data → recovery-identity-migration → canary → smoke → pilot →
+screening → HPO → final → selection → ablations → acceptance → evaluation → export →
+thesis → package
 ```
 
-Review corrupt/geometry/unknown-label/ignore/class/group/duplicate evidence. Freeze only
-group-atomic candidates with no cross-role leakage. Generate rare-five classes and
-median-frequency weights from the three `train_fit` roles only. Official validation,
-ACDC, and sealed datasets remain inaccessible to training, selection, calibration, HPO,
-and threshold fitting.
+Cityscapes 2,975 accepted training samples and IDD20K 14,018 accepted plus nine quarantined
+samples are reused from their exact v2 audit candidates. Cityscapes train/val and IDD20K
+train/val directories must all exist after local staging. A changed candidate hash, count,
+or quarantine identity stops before training.
 
-The statistics command also writes thesis-ready 300-DPI PNG/PDF figures and their CSV:
-per-domain class distribution, pooled imbalance/CE weights, frozen split sizes, and
-deterministically selected source examples. Every file is hash-listed in
-`thesis_figures.json`; use only real frozen-manifest output in the thesis.
+## Training protocol
 
-## 3. Model campaign
+- Five-model canary: SegFormer-B0, Fast-SCNN, PIDNet-S, DDRNet-23-Slim, BiSeNetV2.
+- Core smoke: 50 steps with a deliberate interruption at optimizer step 25 and verified
+  resume from the same checkpoint identity.
+- Core pilot: 2,000 optimizer steps.
+- Screening (segformer_b0, fast_scnn, pidnet_s, ddrnet_23_slim as of 2026-08-13; see the
+  model-scope decision above): 6,000 optimizer steps. `bisenetv2`'s screening is
+  intentionally abandoned at its interrupted checkpoint.
+- Top-two HPO: 12 trials per model, 1,500/3,000-step pruning, 6,000-step ceiling.
+- Final (segformer_b0, pidnet_s, ddrnet_23_slim as of 2026-08-13; see the model-scope
+  decision above): 40,000 optimizer steps. HPO winners use their selected parameters;
+  the remaining final-set models use the frozen common protocol.
+- Recommendation order: Cityscapes–IDD train-select macro mIoU, rare-class mIoU, ONNX
+  bytes, then fixed model name.
+- Recommended-model ablations: weighted CE and 256×512. The deployment model remains
+  512×1024.
 
-Use repeated `--data-manifest` arguments for the two frozen scientific sources; never
-concatenate native folders. Run one-batch validation, then stages `smoke`, `pilot`, and `screening`
-for each model in `configs/rescue/semantic_first.yaml`. Source batches are domain-uniform.
-Record every failure and allow at most two substantial integration repairs/model.
+Device batch may be reduced once after CUDA OOM only when gradient accumulation preserves
+effective batch four. Crop size and scientific configuration do not change silently.
+Training state is atomically published every 500 optimizer steps or ten minutes, including
+optimizer, scheduler, AMP scaler, RNG/sampler identity and immutable input hashes.
 
-Use `CAMPAIGN_TARGET` and Run all in this order: `audit`, `smoke`, `pilot`, `screening`,
-`hpo`, `final`. Every later target runs only missing prerequisites. HPO rungs and training
-checkpoints survive resets; final training automatically uses each finalist's frozen HPO
-parameters. After screening, the equivalent CLI is:
+## Outputs
 
-```bash
-python scripts/train.py --stage hpo --candidate-table /content/work/reports/screening/candidate_table.json --data-manifest /content/work/manifests/cityscapes.frozen.json --data-manifest /content/work/manifests/idd20k.frozen.json --rare-classes-file /content/work/statistics/rare_classes.json --output-root /content/work/runs --mmseg-root /content/mmsegmentation
-```
+The completed release directory in Drive contains:
 
-The scientific finalist automatically receives the separate CE/weighted-CE final ablation.
-Random initialization is the primary table; pretrained models remain a separate reference.
+- `EdgeGuard_Jetson_Release.zip`: one checkpoint/config/ONNX graph per accepted final
+  model (see the model-scope decision above), golden vectors,
+  preprocessing, ontology, ONNX validation, recommendation, and Jetson build/benchmark
+  tools. No TensorRT engine is included.
+- `EdgeGuard_Thesis_Bundle.zip`: source CSV/JSON, LaTeX tables, 300-DPI PNG and PDF/SVG
+  figures, model/class/ablation/calibration/domain comparisons, measured gallery, and a
+  hash-bound `thesis_index.md`.
+- `EdgeGuard_Streamlit_Demo.zip`: accepted final-model-set demo, comparison data, calibration,
+  overlays and honest Jetson `not_run` status.
+- `release_index.json`: SHA-256 and byte size for every ZIP.
 
-## 4. Reliability and frozen evaluation
+## Jetson
 
-Fit one global temperature using equal valid-pixel contributions from the two scientific
-source calibration roles. Report ECE/NLL/Brier before and after. Create source frame summaries
-and freeze the shift reference:
+Extract the Jetson release on the target device. Record JetPack/L4T/CUDA/TensorRT versions,
+then run `scripts/jetson/build_tensorrt.py` and `scripts/jetson/benchmark.py`. Do not build
+the engine in Colab and do not copy an engine between platforms. The 25W acceptance run
+uses 200 warm-ups, at least 5,000 frames and 600 seconds; UI/network/video encoding time is
+excluded. No automatic JetPack upgrade or power-mode change is authorized.
 
-```bash
-python scripts/evaluate.py calibrate-shift --help
-python scripts/evaluate.py evaluate-shift --help
-```
+## Acceptance status
 
-First complete `CAMPAIGN_TARGET="final"`. Only in a later run set
-`CAMPAIGN_TARGET="source_eval"` and `ALLOW_FINAL_DATA=True`; optionally set `RUN_ACDC=True`
-after preparing its validation bundle. Report mIoU, 19 class IoUs,
-rare-class mIoU, confidence/entropy/logit/energy, reliability, frame-shift AUROC/AP and
-alert rate. Open MUSES/WildDash only after the sealed release record; do not iterate on
-its result. Use KITTI only if both preferred external routes are unavailable.
-
-## 5. Prediction and demo
-
-```bash
-python scripts/predict.py --help
-python scripts/predict.py --emit-regions --emit-risk --shift-reference /artifacts/shift-reference.json ...
-streamlit run app.py
-```
-
-The JSON output explicitly labels regions as semantic connected components and attention
-as a heuristic operational score. Validate missing-checkpoint messaging and CPU fallback.
-
-## 6. ONNX and target-only TensorRT
-
-Export static batch-one `1×3×512×1024` raw logits and require PyTorch/ONNX shape,
-19-class, finiteness, and numerical agreement before target transfer.
-
-On the Jetson, review before execution:
-
-```bash
-python scripts/jetson/build_tensorrt.py --onnx model.onnx --engine model.fp16.engine --manifest model.fp16.build.json
-python scripts/jetson/build_tensorrt.py --onnx model.onnx --engine model.fp16.engine --manifest model.fp16.build.json --execute
-```
-
-The first command is dry-run. The script does not change `nvpmodel`. Start `tegrastats`
-separately, select and record the intended 25W or MAXN SUPER mode manually, then run:
-
-```bash
-python scripts/jetson/benchmark.py --engine model.fp16.engine --engine-manifest model.fp16.build.json --image-root /data/benchmark-images --telemetry-log /artifacts/tegrastats.log --output /artifacts/jetson-25w.json --power-profile 25W
-```
-
-Repeat for MAXN SUPER only as a secondary thermal/performance comparison. Preserve
-engine/build/benchmark hashes. UI timing is excluded from the hardware acceptance gate.
-
-## 7. Conditional detector decision
-
-Do not start detection until every gate in `PROJECT_CHARTER.md` is evidenced. If all
-pass, add only RTMDet-Tiny with official BDD detection labels and a separate metrics table.
-
-```bash
-python scripts/check_detection_gate.py --help
-```
+Local pytest/Ruff/mypy, deterministic generation and claim-safe notebook execution are
+engineering gates. The branch is not `colab-v0.1.0-rc1` eligible until two independent
+clean L4 sessions pass the five-model FP32/AMP canary and a real 50-step interruption/resume
+smoke. Real training metrics, release ZIPs, TensorRT and Jetson telemetry do not exist until
+those external runs actually produce them.

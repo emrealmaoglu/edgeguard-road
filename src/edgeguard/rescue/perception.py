@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
+from edgeguard.evaluation.components import label_components
 from edgeguard.rescue.dataset import CITYSCAPES_CLASSES
 
 REGION_CLASS_IDS = (6, 7, 11, 12, 13, 14, 15, 16, 17, 18)
@@ -96,32 +96,150 @@ def _validate_semantic_inputs(
             raise ValueError(f"{name} must be finite and lie in [0,1]")
 
 
+# The deployment path derives perception from stride-8 logits (64x128 = 8192 px). This
+# limit sits well above that and well below any full-resolution frame, so the device keeps
+# the propagation labeller that its measured frame times describe, and off-device callers
+# get the labeller whose cost does not follow component width.
+_PROPAGATION_PIXEL_LIMIT = 65536
+
+
 def _label_components(binary: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
-    labels = np.zeros(binary.shape, dtype=np.int32)
-    components: list[np.ndarray] = []
-    height, width = binary.shape
-    next_label = 0
-    for start_y, start_x in zip(*np.nonzero(binary & (labels == 0)), strict=True):
-        if labels[start_y, start_x] != 0:
-            continue
-        next_label += 1
-        queue: deque[tuple[int, int]] = deque([(int(start_y), int(start_x))])
-        labels[start_y, start_x] = next_label
-        pixels: list[tuple[int, int]] = []
-        while queue:
-            y, x = queue.popleft()
-            pixels.append((y, x))
-            for next_y, next_x in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-                if (
-                    0 <= next_y < height
-                    and 0 <= next_x < width
-                    and binary[next_y, next_x]
-                    and labels[next_y, next_x] == 0
-                ):
-                    labels[next_y, next_x] = next_label
-                    queue.append((next_y, next_x))
-        components.append(np.asarray(pixels, dtype=np.int32))
-    return labels, components
+    """Label four-connected components, numbered by raster order of first pixel.
+
+    Labels propagate by whole-array maxima rather than a per-pixel breadth-first search.
+    The two were timed against each other twice, and the answer depended on the machine:
+    on the development Mac the search won at 1.4-2.5x, so propagation was written and
+    reverted; on the Jetson Orin Nano Super that actually runs this, propagation won at
+    1.59x (3.154 ms -> 1.989 ms per call over 220 real 64x128 masks), because an ARM CPU
+    runs the Python interpreter far slower relative to NumPy. `derive_perception` calls
+    this eleven times per frame, so that is 34.7 ms against 21.9 ms of a frame already
+    dominated by CPU-side work. The target device decides.
+
+    Component order and the returned label values are part of the contract: callers map a
+    component's index onto its label (`labels == selected`) and derive `region_id` from
+    list position. Pixel order *within* a component is not -- every consumer takes areas,
+    extents or means -- so pixels come back in raster order rather than BFS order.
+
+    Propagation needs one pass per unit of component width, which is why it is only used
+    below `_PROPAGATION_PIXEL_LIMIT`. Above it -- `predict.py` and the evaluation drivers
+    derive perception at full image resolution, where a road spans 2048 px and one frame
+    costs 76 s -- the run-based labeller in `evaluation.components` answers instead. The
+    two return identical output (`test_labellers_agree`), so this is a cost decision only,
+    and the limit sits far above every deployment mask so the device keeps the variant its
+    frame times were measured on.
+    """
+    if binary.size > _PROPAGATION_PIXEL_LIMIT:
+        return label_components(binary)
+    if not binary.any():
+        return np.zeros(binary.shape, dtype=np.int32), []
+    seeds = np.arange(1, binary.size + 1, dtype=np.int64).reshape(binary.shape)
+    labels = np.where(binary, seeds, 0)
+    while True:
+        merged = labels.copy()
+        merged[1:, :] = np.maximum(merged[1:, :], labels[:-1, :])
+        merged[:-1, :] = np.maximum(merged[:-1, :], labels[1:, :])
+        merged[:, 1:] = np.maximum(merged[:, 1:], labels[:, :-1])
+        merged[:, :-1] = np.maximum(merged[:, :-1], labels[:, 1:])
+        merged[~binary] = 0
+        if np.array_equal(merged, labels):
+            break
+        labels = merged
+
+    flat = labels.reshape(-1)
+    foreground = np.flatnonzero(flat)
+    unique, inverse = np.unique(flat[foreground], return_inverse=True)
+    # The search numbered components by the raster position of the pixel that started
+    # them, so rank each component by its own first pixel to reproduce that numbering.
+    first_index = np.full(unique.size, flat.size, dtype=np.int64)
+    np.minimum.at(first_index, inverse, foreground)
+    ranking = np.empty(unique.size, dtype=np.int32)
+    ranking[np.argsort(first_index)] = np.arange(1, unique.size + 1, dtype=np.int32)
+    renumbered = ranking[inverse]
+
+    ordered = np.zeros(flat.size, dtype=np.int32)
+    ordered[foreground] = renumbered
+    grouped = np.argsort(renumbered, kind="stable")
+    boundaries = np.searchsorted(renumbered[grouped], np.arange(1, unique.size + 2))
+    width = binary.shape[1]
+    components = [
+        np.stack(
+            (foreground[grouped[start:end]] // width, foreground[grouped[start:end]] % width),
+            axis=1,
+        ).astype(np.int32)
+        for start, end in zip(boundaries[:-1], boundaries[1:], strict=True)
+    ]
+    return ordered.reshape(binary.shape), components
+
+
+def _label_components_by_class(
+    semantic_mask: np.ndarray, class_ids: tuple[int, ...]
+) -> dict[int, list[np.ndarray]]:
+    """Label every requested class's components in a single propagation.
+
+    Calling `_label_components` once per class walks the whole array once per class --
+    eleven full passes per frame for the road plus ten attention classes, on the stage
+    that already dominates the Jetson frame budget. Components of different classes can
+    never merge, so restricting propagation to same-class neighbours resolves all of them
+    at once for the cost of one.
+
+    Ordering matches the per-class calls it replaces: within each class, components are
+    numbered by the raster position of their first pixel.
+
+    Above `_PROPAGATION_PIXEL_LIMIT` the single-pass advantage is worth less than what
+    propagation costs at that size, so each class is labelled separately by the run-based
+    labeller instead -- ten passes whose cost does not follow component width, rather than
+    one whose does. See `_label_components` for why the limit exists.
+    """
+    if semantic_mask.size > _PROPAGATION_PIXEL_LIMIT:
+        return {class_id: label_components(semantic_mask == class_id)[1] for class_id in class_ids}
+    wanted = np.isin(semantic_mask, class_ids)
+    if not wanted.any():
+        return {class_id: [] for class_id in class_ids}
+    seeds = np.arange(1, semantic_mask.size + 1, dtype=np.int64).reshape(semantic_mask.shape)
+    labels = np.where(wanted, seeds, 0)
+    vertical = semantic_mask[1:, :] == semantic_mask[:-1, :]
+    horizontal = semantic_mask[:, 1:] == semantic_mask[:, :-1]
+    while True:
+        merged = labels.copy()
+        merged[1:, :] = np.where(vertical, np.maximum(merged[1:, :], labels[:-1, :]), merged[1:, :])
+        merged[:-1, :] = np.where(
+            vertical, np.maximum(merged[:-1, :], labels[1:, :]), merged[:-1, :]
+        )
+        merged[:, 1:] = np.where(
+            horizontal, np.maximum(merged[:, 1:], labels[:, :-1]), merged[:, 1:]
+        )
+        merged[:, :-1] = np.where(
+            horizontal, np.maximum(merged[:, :-1], labels[:, 1:]), merged[:, :-1]
+        )
+        merged[~wanted] = 0
+        if np.array_equal(merged, labels):
+            break
+        labels = merged
+
+    flat = labels.reshape(-1)
+    foreground = np.flatnonzero(flat)
+    unique, inverse = np.unique(flat[foreground], return_inverse=True)
+    first_index = np.full(unique.size, flat.size, dtype=np.int64)
+    np.minimum.at(first_index, inverse, foreground)
+    grouped = np.argsort(inverse, kind="stable")
+    boundaries = np.searchsorted(inverse[grouped], np.arange(unique.size + 1))
+    width = semantic_mask.shape[1]
+    classes = semantic_mask.reshape(-1)
+
+    by_class: dict[int, list[tuple[int, np.ndarray]]] = {int(c): [] for c in class_ids}
+    for index in range(unique.size):
+        members = foreground[grouped[boundaries[index] : boundaries[index + 1]]]
+        class_id = int(classes[members[0]])
+        by_class[class_id].append(
+            (
+                int(first_index[index]),
+                np.stack((members // width, members % width), axis=1).astype(np.int32),
+            )
+        )
+    return {
+        class_id: [pixels for _, pixels in sorted(entries, key=lambda entry: entry[0])]
+        for class_id, entries in by_class.items()
+    }
 
 
 def drivable_corridor_from_semantics(
@@ -154,26 +272,44 @@ def drivable_corridor_from_semantics(
     return road, labels == selected
 
 
+def _axis_distance(distance: np.ndarray, axis: int) -> np.ndarray:
+    """Propagate a one-dimensional min-plus sweep along one axis, in both directions.
+
+    A forward sweep `d[i] = min(d[i], d[i-1] + 1)` expands to `d[i] = i + min(d[j] - j)`
+    over `j <= i`, which is a running minimum -- so the sequential scan becomes a single
+    `np.minimum.accumulate` instead of a Python loop.
+    """
+    length = distance.shape[axis]
+    shape = [1] * distance.ndim
+    shape[axis] = length
+    # Both directions index from their own origin, so the reverse sweep reuses this same
+    # ramp against the flipped array rather than a flipped ramp.
+    offsets = np.arange(length, dtype=np.float32).reshape(shape)
+    forward = np.minimum.accumulate(distance - offsets, axis=axis) + offsets
+    flipped = np.flip(distance, axis=axis)
+    backward = np.flip(np.minimum.accumulate(flipped - offsets, axis=axis) + offsets, axis=axis)
+    return np.minimum(forward, backward)
+
+
 def _distance_from_mask(mask: np.ndarray) -> np.ndarray:
-    """Compute four-neighbour distance to a boolean mask without SciPy."""
-    height, width = mask.shape
-    distance = np.full(mask.shape, np.inf, dtype=np.float32)
-    queue: deque[tuple[int, int]] = deque()
-    for y, x in zip(*np.nonzero(mask), strict=True):
-        distance[y, x] = 0.0
-        queue.append((int(y), int(x)))
-    while queue:
-        y, x = queue.popleft()
-        candidate = distance[y, x] + 1.0
-        for next_y, next_x in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-            if (
-                0 <= next_y < height
-                and 0 <= next_x < width
-                and candidate < distance[next_y, next_x]
-            ):
-                distance[next_y, next_x] = candidate
-                queue.append((next_y, next_x))
-    return distance
+    """Compute four-neighbour distance to a boolean mask without SciPy.
+
+    Breadth-first search on an obstacle-free four-connected grid is exactly the L1
+    distance to the nearest source, and the L1 transform is separable: sweep each row,
+    then each column. That replaces a per-pixel Python queue -- which shared the blame for
+    `derive_perception` costing 96 ms of a 146 ms Jetson frame -- with four accumulate
+    passes, while returning the same distances.
+    """
+    if not mask.any():
+        return np.full(mask.shape, np.inf, dtype=np.float32)
+    # A finite sentinel keeps the min-plus arithmetic free of inf-minus-inf; anything
+    # still holding it afterwards is genuinely unreachable, which cannot happen here but
+    # is restored as `inf` so the caller's `np.isfinite` guard keeps its meaning.
+    unreachable = np.float32(mask.size + mask.shape[0] + mask.shape[1])
+    distance = np.where(mask, np.float32(0.0), unreachable).astype(np.float32)
+    distance = _axis_distance(distance, axis=1)
+    distance = _axis_distance(distance, axis=0)
+    return np.where(distance >= unreachable, np.inf, distance).astype(np.float32)
 
 
 def _attention_level(score: float) -> str:
@@ -208,9 +344,9 @@ def derive_perception(
     relation_scale = max(1.0, height * 0.25)
     regions: list[SemanticRegion] = []
     attention_map = np.zeros(semantic_mask.shape, dtype=np.float32)
+    components_by_class = _label_components_by_class(semantic_mask, REGION_CLASS_IDS)
     for class_id in REGION_CLASS_IDS:
-        _labels, components = _label_components(semantic_mask == class_id)
-        for pixels in components:
+        for pixels in components_by_class[class_id]:
             area = int(pixels.shape[0])
             if area < minimum_region_area:
                 continue

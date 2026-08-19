@@ -1,0 +1,160 @@
+================================================================================
+EdgeGuard-Road — LİSANS BİLGİLERİ
+Kaynak Kısıtlı Uç Cihazlarda Belirsizlik Farkındalıklı Açık Küme Yol Tehlikesi
+Algılama ve Bağlamsal Risk Analizi
+================================================================================
+
+Bu dosya, teslim paketinde bulunan yazılımın lisans durumunu ve kullanılan üçüncü
+taraf bileşenlerin lisanslarını listeler. Bu bir envanterdir; hukuki tavsiye değildir.
+
+
+--------------------------------------------------------------------------------
+1. PROJENİN KENDİ KAYNAK KODU
+--------------------------------------------------------------------------------
+
+DURUM: Açık kaynak lisansı henüz seçilmemiştir.
+
+Bu proje bir lisans metni taşımamaktadır. Dolayısıyla varsayılan telif hakkı
+kuralları geçerlidir: kod, yazarının telif hakkı altındadır ve yeniden kullanım,
+değiştirme veya dağıtım için açık bir izin verilmemiştir.
+
+Bu teslim, Düzce Üniversitesi Bilgisayar Mühendisliği Bölümü'ne BM498 Mezuniyet
+Tezi kapsamında akademik değerlendirme amacıyla yapılmaktadır.
+
+>>> ÖĞRENCİ NOTU: Kodu daha sonra kamuya açmak isterseniz bir lisans seçmeniz
+>>> gerekir. Bitirme projeleri için yaygın tercih MIT lisansıdır; proje zaten
+>>> Apache-2.0 lisanslı MMSegmentation üzerine kuruludur ve MIT bununla
+>>> uyumludur. Karar sizindir ve bu dosya karar verildiğinde güncellenmelidir.
+
+
+--------------------------------------------------------------------------------
+2. DOĞRUDAN PYTHON BAĞIMLILIKLARI
+--------------------------------------------------------------------------------
+
+Bileşen        Amaç                                      Lisans
+-------------  ----------------------------------------  --------------
+NumPy          Dizi işlemleri, ölçüm hesapları           BSD-3-Clause
+Pillow         Görüntü kod çözme ve ön işleme            HPND
+PyYAML         Yapılandırma dosyalarının okunması        MIT
+Pydantic       Yapılandırma ve kayıt doğrulaması         MIT
+Streamlit      Sunum paneli ve demo arayüzü              Apache-2.0
+Matplotlib     Şekil üretimi                             PSF-benzeri (BSD uyumlu)
+ONNX           Model grafiği dışa aktarımı               Apache-2.0
+ONNX Runtime   Grafik doğrulaması                        MIT
+Optuna         Hiperparametre araması                    MIT
+
+Geliştirme araçları (yalnızca geliştirme, çalışma zamanında gerekmez):
+
+pytest         Birim testleri                            MIT
+Ruff           Linting ve biçimlendirme                  MIT
+mypy           Statik tip denetimi                       MIT
+types-Pillow   Tip bilgisi                               Apache-2.0
+
+
+--------------------------------------------------------------------------------
+3. DERİN ÖĞRENME YIĞINI
+--------------------------------------------------------------------------------
+
+Bu bileşenler çekirdek bağımlılık değildir; çalışma zamanında ayrıca kurulur.
+
+Bileşen          Sürüm                                   Lisans
+---------------  --------------------------------------  ------------
+MMSegmentation   v1.2.2 (commit c685fe6767c4cadf6b05...)  Apache-2.0
+MMEngine         0.10.7                                  Apache-2.0
+MMCV             2.1.0                                   Apache-2.0
+OpenMIM          0.3.9                                   Apache-2.0
+PyTorch          Çalışma zamanında çözümlenir            BSD-3-Clause
+TensorRT         10.3.0 (JetPack 6)                      NVIDIA tescilli;
+                                                         cihazla birlikte gelir
+
+
+--------------------------------------------------------------------------------
+4. KARŞILAŞTIRILAN MİMARİLERİN KAYNAK YAYINLARI
+--------------------------------------------------------------------------------
+
+Ölçümler, mmsegmentation model zoo'sunda yayımlanmış referans checkpoint'lerle
+yapılmıştır (Apache-2.0). Mimarilerin özgün yayınları tezin kaynakçasındadır:
+
+  PIDNet          [1]  Xu, Xiong, Bhattacharyya — CVPR 2023
+  SegFormer       [2]  Xie ve ark. — NeurIPS 2021
+  DDRNet          [3]  Hong, Pan, Sun, Jia — arXiv 2021
+  BiSeNetV2       [4]  Yu ve ark. — IJCV 2021
+
+PIDNet'in resmî kaynak deposu MIT lisanslıdır.
+
+
+--------------------------------------------------------------------------------
+5. MODEL AĞIRLIKLARI — TESLİM PAKETİNDE BULUNMAZ
+--------------------------------------------------------------------------------
+
+ÖNEMLİ: Bu teslim paketi hiçbir eğitilmiş model ağırlığı içermemektedir.
+
+Kullanılan referans checkpoint'lerin kaynak deposu MIT lisanslı olsa da, bu
+lisansın eğitilmiş ağırlıkları kapsadığı iddia edilememektedir. Bu belirsizlik
+projenin lisans envanterinde açık soru olarak kayıtlıdır (bkz. kaynak kodda
+LICENSES.md).
+
+Bu nedenle ağırlıklar bilinçli olarak teslim dışında bırakılmıştır. Ölçümleri
+yeniden üretmek isteyen bir kişi ağırlıkları resmî kaynağından kendisi edinmelidir.
+
+Ölçüm kayıtlarının her biri kullanılan ağırlığın sha256 özetini taşır; bu sayede
+hangi ağırlığın ölçüldüğü ağırlık paylaşılmadan doğrulanabilir.
+
+
+--------------------------------------------------------------------------------
+6. VERİ SETLERİ — TESLİM PAKETİNDE BULUNMAZ
+--------------------------------------------------------------------------------
+
+Kullanılan veri setlerinin hiçbiri yeniden dağıtılmamaktadır. Hepsi resmî
+kaynağından, kendi lisans koşulları kabul edilerek edinilmiştir.
+
+Veri seti     Kullanım                        Dağıtım durumu
+------------  ------------------------------  -----------------------------
+Cityscapes    Doğruluk, kalibrasyon           Yeniden dağıtılamaz; hesap ve
+                                              şart kabulü gerekir
+ACDC          Olumsuz koşul dayanıklılığı     Yeniden dağıtılamaz
+RoadAnomaly   Open-set değerlendirmesi        Yeniden dağıtılamaz
+IDD20K        Çok-domainli eğitim             Yeniden dağıtılamaz
+
+Teslim paketinde yalnızca ölçüm kayıtları (JSON) ve manifestler bulunur; hiçbir
+veri seti arşivi, görüntüsü veya etiketi bulunmaz.
+
+
+--------------------------------------------------------------------------------
+7. TÜRETİLMİŞ GÖRSELLER HAKKINDA AÇIKLAMA
+--------------------------------------------------------------------------------
+
+Uygulama/Panel_Sonuc_Paketi/ klasöründe, Cityscapes görüntülerinden türetilmiş
+görselleştirmeler bulunmaktadır (segmentasyon bindirmeleri, belirsizlik haritaları,
+bölge kırpmaları). Bunlar sunum panelinin nitel sayfalarını göstermesi için
+gereklidir ve bu görsellerin ikisi tezde de şekil olarak yer almaktadır
+(Şekil 5.9 ve Şekil 5.10).
+
+Bunlar ham veri seti görüntüleri değil, model çıktısıyla üretilmiş türetilmiş
+görselleştirmelerdir ve akademik değerlendirme kapsamında sunulmaktadır. Ham
+görüntüler, etiketler ve veri seti arşivleri paylaşılmamaktadır.
+
+>>> ÖĞRENCİ NOTU: Bölümünüz türetilmiş görsellerin dağıtımı konusunda kısıtlayıcı
+>>> bir kural uyguluyorsa Panel_Sonuc_Paketi/qualitative/ ve
+>>> Panel_Sonuc_Paketi/figures/ klasörleri çıkarılabilir; panelin sayısal sayfaları
+>>> bunlarsız da çalışır, yalnızca nitel görseller boş kalır.
+
+
+--------------------------------------------------------------------------------
+8. ÜRETKEN YAPAY ZEKÂ KULLANIMI
+--------------------------------------------------------------------------------
+
+Bu projede üretken yapay zekâ araçları kullanılmıştır. Yapılan her materyal
+değişiklik, tarihi, dokunduğu dosyalar, uygulanan doğrulama ve gerekçesiyle
+birlikte ekle-sadece bir kayıtta tutulmuştur:
+
+  Kaynak_Kod/edgeguard-road/docs/AI_USAGE_LOG.md
+
+Bu kayıt, tezin "Üretken Yapay Zeka Kullanım Beyanı" sayfasının dayanağıdır ve
+tezin EK 2 bölümünde anlatılmaktadır.
+
+
+================================================================================
+Bu dosya bir envanterdir, hukuki tavsiye değildir ve EdgeGuard-Road için bir
+lisans izni vermez.
+================================================================================

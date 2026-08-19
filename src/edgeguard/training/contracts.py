@@ -39,7 +39,7 @@ class ModelFamily(str, Enum):
 
 
 class SemanticFrameworkConfig(StrictConfigModel):
-    """Pinned framework proposal whose runtime compatibility needs a Colab probe."""
+    """Single hermetic Colab framework and CUDA-wheel identity."""
 
     schema_version: Literal["1.0"]
     record_type: Literal["semantic_framework_config"]
@@ -50,19 +50,22 @@ class SemanticFrameworkConfig(StrictConfigModel):
     mmengine_version: str = Field(pattern=r"^0\.[0-9]+\.[0-9]+$")
     mmcv_version: str = Field(pattern=r"^2\.[0-9]+\.[0-9]+$")
     preferred_mmcv_distribution: Literal["mmcv-lite"]
-    fallback_python_version: Literal["3.11"]
-    fallback_numpy_version: Literal["1.26.4"]
-    fallback_torch_version: Literal["2.1.1"]
-    fallback_torchvision_version: Literal["0.16.1"]
-    fallback_torchaudio_version: Literal["2.1.1"]
-    fallback_cuda_wheel: Literal["cu121"]
+    uv_version: Literal["0.8.8"]
+    python_version: Literal["3.11.13"]
+    numpy_version: Literal["1.26.4"]
+    torch_version: Literal["2.1.1"]
+    torchvision_version: Literal["0.16.1"]
+    torchaudio_version: Literal["2.1.1"]
+    cuda_wheel: Literal["cu121"]
+    opencv_headless_version: Literal["4.10.0.84"]
+    lockfile: Literal["requirements/colab-py311-cu121.lock"]
     supported_mmengine: Literal[">=0.5.0,<1.0.0"]
     supported_mmcv: Literal[">=2.0.0rc4,<2.2.0"]
-    torch_resolution: Literal["hosted_preserved_then_isolated_fallback"]
-    cuda_wheel_policy: Literal["hosted_unchanged_or_official_cu121_fallback"]
+    torch_resolution: Literal["hermetic_locked"]
+    cuda_wheel_policy: Literal["official_cu121_locked"]
     install_scope: Literal["isolated_colab_runtime_only"]
     source_license: Literal["Apache-2.0"]
-    status: Literal["compatibility_cascade_pending_colab_probe"]
+    status: Literal["hermetic_lock_pending_colab_probe"]
 
 
 class DatasetRoleContract(StrictConfigModel):

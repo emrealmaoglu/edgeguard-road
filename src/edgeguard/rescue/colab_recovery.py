@@ -26,12 +26,12 @@ TARGETS = (
     "screening",
     "hpo",
     "final",
-    "source_eval",
+    "evaluate",
     "export",
-    "review",
+    "report",
 )
 TRAINING_STAGES = ("smoke", "pilot", "screening", "final")
-RUNTIME_TARGETS = frozenset(TARGETS[1:8])
+RUNTIME_TARGETS = frozenset(TARGETS[1:])
 
 
 def utc_now() -> str:
@@ -43,6 +43,37 @@ def _label(value: str, field: str) -> str:
     if not value or re.fullmatch(r"[a-z0-9][a-z0-9._-]*", value) is None:
         raise ValueError(f"{field} must use lowercase ASCII letters, digits, '.', '_' or '-'")
     return value
+
+
+def supersede_stale_evidence(directory: Path, reason: str) -> Path | None:
+    """Move evidence produced by a superseded code path aside so it can be rebuilt.
+
+    The screening reuse guards key on `checkpoint_sha256`, which answers "was this record
+    built from this checkpoint" but not "was it built by code that worked". When the
+    evaluation runner was fixed to actually load the checkpoint, every cached
+    `evaluation.json` still matched its checkpoint hash and would have been reused
+    verbatim, so the corrected run would have re-published the same untrained-weights
+    numbers. Nothing is deleted -- the directory is renamed and a note left beside it, so
+    the discarded record stays auditable.
+    """
+    if not directory.exists():
+        return None
+    superseded = directory.with_name(f"{directory.name}.superseded")
+    index = 1
+    while superseded.exists():
+        index += 1
+        superseded = directory.with_name(f"{directory.name}.superseded-{index}")
+    shutil.move(str(directory), str(superseded))
+    atomic_json(
+        superseded / "superseded.json",
+        {
+            "schema_version": "1.0",
+            "record_type": "edgeguard_superseded_evidence",
+            "original_path": directory.name,
+            "reason": reason,
+        },
+    )
+    return superseded
 
 
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -174,6 +205,34 @@ def _pointer_candidates(store_root: Path, artifact_id: str) -> list[Path]:
         if receipt.is_file():
             result.append(receipt)
     return result
+
+
+def peek_recovery_metadata(store_root: Path, *, artifact_id: str) -> dict[str, Any] | None:
+    """Return the current receipt's metadata without copying the object bytes.
+
+    Returns None only when no pointer exists yet for this artifact_id. A corrupted
+    or tampered pointer/receipt still raises, since that is a store-integrity
+    problem, not "nothing to resume".
+    """
+    receipt = peek_recovery_receipt(store_root, artifact_id=artifact_id)
+    return None if receipt is None else receipt.get("metadata", {})
+
+
+def peek_recovery_receipt(store_root: Path, *, artifact_id: str) -> dict[str, Any] | None:
+    """Return the current full receipt (project_commit, metadata, generation, ...)
+    without copying the object bytes.
+
+    Returns None only when no pointer exists yet for this artifact_id. A corrupted
+    or tampered pointer/receipt still raises, since that is a store-integrity
+    problem, not "nothing to resume".
+    """
+    pointer_path = store_root / "pointers" / f"{_label(artifact_id, 'artifact_id')}.json"
+    if not pointer_path.is_file():
+        return None
+    receipt_paths = _pointer_candidates(store_root, artifact_id)
+    if not receipt_paths:
+        return None
+    return _receipt_payload(receipt_paths[0])
 
 
 def restore_recovery_file(
@@ -359,9 +418,13 @@ def completion_is_valid(
     return True
 
 
-def quarantine_incomplete(output_root: Path) -> Path | None:
-    """Move a partial stage aside so a clean idempotent retry cannot mistake it for success."""
-    if not output_root.exists() or completion_is_valid(output_root):
+def quarantine_incomplete(
+    output_root: Path, *, expected_inputs: dict[str, str] | None = None
+) -> Path | None:
+    """Move stale or partial output aside before a clean idempotent retry."""
+    if not output_root.exists() or completion_is_valid(
+        output_root, expected_inputs=expected_inputs
+    ):
         return None
     suffix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     quarantine = output_root.with_name(f"{output_root.name}.incomplete-{suffix}")
@@ -451,9 +514,7 @@ def planned_stages(target: str) -> tuple[str, ...]:
     """Return ordered campaign prerequisites for one notebook target."""
     if target not in TARGETS:
         raise ValueError(f"target must be one of: {', '.join(TARGETS)}")
-    if target == "review":
-        return ("review",)
-    order = ("audit", "smoke", "pilot", "screening", "hpo", "final", "source_eval", "export")
+    order = ("audit", "smoke", "pilot", "screening", "hpo", "final", "evaluate", "export", "report")
     return order[: order.index(target) + 1]
 
 
@@ -463,11 +524,10 @@ def action_requirements(
     """Resolve staging/runtime needs without touching Drive or the local runtime."""
     stages = planned_stages(target)
     datasets: list[str] = []
-    if target != "review":
-        datasets.extend(("cityscapes", "idd20k"))
+    datasets.extend(("cityscapes", "idd20k"))
     if provisional_bdd:
         datasets.append("bdd100k")
-    if allow_final_data and target in {"source_eval", "export"}:
+    if allow_final_data and target in {"evaluate", "export", "report"}:
         datasets.append("cityscapes_official_val")
     return {
         "target": target,

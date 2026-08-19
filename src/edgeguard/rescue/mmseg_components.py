@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 import shutil
 import time
@@ -15,9 +16,28 @@ from edgeguard.rescue.colab_recovery import (
     publish_recovery_file,
     write_campaign_status,
 )
-from edgeguard.rescue.multidomain import uniform_domain_indices, validate_dataset_manifest
+from edgeguard.rescue.multidomain import (
+    manifest_image_and_mask_paths,
+    uniform_domain_indices,
+    validate_dataset_manifest,
+)
 
 _REGISTERED = False
+
+
+def _cpu_rng_state(torch: Any, value: Any) -> Any:
+    """Coerce a checkpointed RNG state back to the CPU uint8 tensor that
+    torch.set_rng_state / torch.cuda.set_rng_state require.
+
+    Runner.resume loads with map_location=get_device(), so on Colab every
+    tensor in the checkpoint dict -- including these -- comes back on CUDA
+    (and on this dev machine, on MPS). Coerce on load as well as save:
+    checkpoints already published to Drive were written by the pre-fix code
+    and must keep resuming without republishing.
+    """
+    if not isinstance(value, torch.Tensor):
+        raise TypeError("recovery RNG state is not a tensor")
+    return value.detach().to(device="cpu", dtype=torch.uint8)
 
 
 def register_mmseg_components() -> None:
@@ -30,7 +50,8 @@ def register_mmseg_components() -> None:
         mmengine_dist = __import__("mmengine.dist", fromlist=["get_dist_info", "sync_random_seed"])
         mmengine_registry = __import__("mmengine.registry", fromlist=["DATA_SAMPLERS"])
         mmseg_datasets = __import__("mmseg.datasets", fromlist=["BaseSegDataset"])
-        mmseg_registry = __import__("mmseg.registry", fromlist=["DATASETS"])
+        mmseg_registry = __import__("mmseg.registry", fromlist=["DATASETS", "MODELS"])
+        mmseg_losses = __import__("mmseg.models.losses", fromlist=["BoundaryLoss"])
     except ModuleNotFoundError as error:
         raise RuntimeError(
             "MMSeg runtime is required to register multi-domain components"
@@ -74,32 +95,21 @@ def register_mmseg_components() -> None:
 
         def load_data_list(self) -> list[dict[str, Any]]:
             payload = validate_dataset_manifest(self.edgeguard_manifest_path)
-            records = payload["roles"].get(self.edgeguard_role)
-            if not isinstance(records, list):
+            if self.edgeguard_role not in payload["roles"]:
                 raise ValueError(f"manifest has no role {self.edgeguard_role!r}")
-            dataset_root = Path(payload["dataset_root"])
-            prepared_root = Path(payload["prepared_root"])
-            data_list: list[dict[str, Any]] = []
-            for record in records:
-                canonical = record.get("canonical_mask")
-                if canonical is None:
-                    raise ValueError("scientific segmentation record has no canonical mask")
-                if payload["dataset_id"] == "idd20k":
-                    mask_path = prepared_root / str(canonical)
-                else:
-                    mask_path = dataset_root / str(canonical)
-                data_list.append(
-                    {
-                        "img_path": str(dataset_root / str(record["image"])),
-                        "seg_map_path": str(mask_path),
-                        "label_map": None,
-                        "reduce_zero_label": False,
-                        "seg_fields": [],
-                        "dataset_id": payload["dataset_id"],
-                        "sample_id": record["sample_id"],
-                    }
-                )
-            return data_list
+            resolved = manifest_image_and_mask_paths(payload, roles=(self.edgeguard_role,))
+            return [
+                {
+                    "img_path": str(image_path),
+                    "seg_map_path": str(mask_path),
+                    "label_map": None,
+                    "reduce_zero_label": False,
+                    "seg_fields": [],
+                    "dataset_id": payload["dataset_id"],
+                    "sample_id": sample_id,
+                }
+                for sample_id, image_path, mask_path in resolved
+            ]
 
     @mmengine_registry.DATA_SAMPLERS.register_module(force=True)
     class EdgeGuardDomainBalancedSampler(sampler_base):
@@ -180,6 +190,7 @@ def register_mmseg_components() -> None:
             optimizer_interval: int = 500,
             maximum_seconds: int = 600,
             status_seconds: int = 300,
+            intentional_interrupt_optimizer_step: int | None = None,
         ) -> None:
             self.store_root = Path(store_root)
             self.artifact_id = artifact_id
@@ -194,6 +205,7 @@ def register_mmseg_components() -> None:
             self.started = time.monotonic()
             self.last_publish = time.monotonic()
             self.last_status = 0.0
+            self.intentional_interrupt_optimizer_step = intentional_interrupt_optimizer_step
 
         def before_train(self, runner: Any) -> None:
             sampler: Any = getattr(runner.train_dataloader, "sampler", None)
@@ -207,9 +219,11 @@ def register_mmseg_components() -> None:
             checkpoint["edgeguard_recovery_state"] = {
                 "python_random": random.getstate(),
                 "numpy_random": np.random.get_state(),
-                "torch_random": torch.get_rng_state(),
+                "torch_random": _cpu_rng_state(torch, torch.get_rng_state()),
                 "cuda_random": (
-                    torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+                    [_cpu_rng_state(torch, item) for item in torch.cuda.get_rng_state_all()]
+                    if torch.cuda.is_available()
+                    else None
                 ),
                 "dataloader_iteration": int(runner.iter + 1),
                 "accumulation": self.accumulation,
@@ -223,9 +237,13 @@ def register_mmseg_components() -> None:
             torch = __import__("torch")
             random.setstate(state["python_random"])
             np.random.set_state(state["numpy_random"])
-            torch.set_rng_state(state["torch_random"])
-            if torch.cuda.is_available() and state.get("cuda_random") is not None:
-                torch.cuda.set_rng_state_all(state["cuda_random"])
+            torch.set_rng_state(_cpu_rng_state(torch, state["torch_random"]))
+            cuda_state = state.get("cuda_random")
+            if torch.cuda.is_available() and cuda_state is not None:
+                states = [_cpu_rng_state(torch, item) for item in cuda_state]
+                states = states[: torch.cuda.device_count()]
+                if states:
+                    torch.cuda.set_rng_state_all(states)
 
         def after_train_iter(
             self,
@@ -272,7 +290,14 @@ def register_mmseg_components() -> None:
                 and iteration % self.accumulation == 0
             )
             due_final = iteration >= int(runner.max_iters)
-            if not (due_interval or due_time or due_final):
+            interrupt_marker = Path(runner.work_dir) / ".intentional-interruption-complete.json"
+            optimizer_step = iteration // self.accumulation
+            due_interrupt = (
+                self.intentional_interrupt_optimizer_step is not None
+                and optimizer_step == self.intentional_interrupt_optimizer_step
+                and not interrupt_marker.exists()
+            )
+            if not (due_interval or due_time or due_final or due_interrupt):
                 return
             marker = Path(runner.work_dir) / "last_checkpoint"
             current: Path | None = None
@@ -290,8 +315,8 @@ def register_mmseg_components() -> None:
                     save_param_scheduler=True,
                     meta={"iter": iteration, "epoch": int(runner.epoch)},
                 )
-                marker.write_text(filename + "\n", encoding="utf-8")
                 current = Path(runner.work_dir) / filename
+                marker.write_text(f"{current}\n", encoding="utf-8")
             receipt = publish_recovery_file(
                 current,
                 self.store_root,
@@ -317,6 +342,26 @@ def register_mmseg_components() -> None:
                     last_checkpoint_sha256=receipt["sha256"],
                     recovery_generation=receipt["generation"],
                 )
+            if (
+                self.intentional_interrupt_optimizer_step is not None
+                and optimizer_step == self.intentional_interrupt_optimizer_step
+                and not interrupt_marker.exists()
+            ):
+                interrupt_marker.write_text(
+                    json.dumps(
+                        {
+                            "record_type": "edgeguard_intentional_interruption",
+                            "optimizer_step": optimizer_step,
+                            "checkpoint_sha256": receipt["sha256"],
+                            "recovery_generation": receipt["generation"],
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                raise RuntimeError("EDGEGUARD_INTENTIONAL_INTERRUPTION_AFTER_VERIFIED_CHECKPOINT")
             recovery_files = sorted(
                 Path(runner.work_dir).glob("recovery_*.pth"),
                 key=lambda path: path.stat().st_mtime_ns,
@@ -324,5 +369,93 @@ def register_mmseg_components() -> None:
             )
             for stale in recovery_files[2:]:
                 stale.unlink(missing_ok=True)
+
+    @hooks_registry.HOOKS.register_module(force=True)
+    class EdgeGuardMetricsHistoryHook(hook_base):
+        """Append sparse optimizer-step loss history for thesis plots and diagnostics."""
+
+        priority = "LOW"
+
+        def __init__(self, *, accumulation: int, optimizer_interval: int = 50) -> None:
+            self.accumulation = accumulation
+            self.iteration_interval = optimizer_interval * accumulation
+            self.seen: set[int] = set()
+
+        def before_train(self, runner: Any) -> None:
+            path = Path(runner.work_dir) / "metrics_history.jsonl"
+            if not path.is_file():
+                return
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    self.seen.add(int(json.loads(line)["optimizer_step"]))
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+
+        def after_train_iter(
+            self,
+            runner: Any,
+            batch_idx: int,
+            data_batch: Any = None,
+            outputs: Any = None,
+        ) -> None:
+            del batch_idx, data_batch
+            iteration = int(runner.iter + 1)
+            if iteration % self.accumulation:
+                return
+            optimizer_step = iteration // self.accumulation
+            if (
+                iteration % self.iteration_interval and iteration < int(runner.max_iters)
+            ) or optimizer_step in self.seen:
+                return
+            scalars: dict[str, float] = {}
+            if isinstance(outputs, dict):
+                for name, value in outputs.items():
+                    try:
+                        scalar = float(value.detach().cpu().item())
+                    except (AttributeError, TypeError, ValueError, RuntimeError):
+                        continue
+                    if np.isfinite(scalar):
+                        scalars[str(name)] = scalar
+            record = {
+                "optimizer_step": optimizer_step,
+                "dataloader_iteration": iteration,
+                "scalars": scalars,
+            }
+            with (Path(runner.work_dir) / "metrics_history.jsonl").open(
+                "a", encoding="utf-8"
+            ) as stream:
+                stream.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+            self.seen.add(optimizer_step)
+
+    boundary_loss_base: Any = mmseg_losses.BoundaryLoss
+
+    @mmseg_registry.MODELS.register_module(name="BoundaryLoss", force=True)
+    class EdgeGuardBoundaryLoss(boundary_loss_base):
+        """PIDNet's BoundaryLoss under real bf16 autocast (real Colab L4, not
+        this repo's fp32-only CPU rehearsal): `weight = torch.zeros_like(log_p)`
+        inherits log_p's autocast dtype (bfloat16), but the ratio assigned into
+        it (`neg_num * 1.0 / sum_num`) is plain float32, since pos_num/neg_num
+        come from summing a float32 label mask that autocast never touches.
+        `index_put_` refuses the implicit cast. Identical to upstream except
+        for the two `.to(weight.dtype)` casts before assignment -- numerics
+        are unchanged, only the dtype is aligned.
+        """
+
+        def forward(self, bd_pre: Any, bd_gt: Any) -> Any:
+            torch = __import__("torch")
+            log_p = bd_pre.permute(0, 2, 3, 1).contiguous().view(1, -1)
+            target_t = bd_gt.view(1, -1).float()
+            pos_index = target_t == 1
+            neg_index = target_t == 0
+            weight = torch.zeros_like(log_p)
+            pos_num = pos_index.sum()
+            neg_num = neg_index.sum()
+            sum_num = pos_num + neg_num
+            weight[pos_index] = (neg_num * 1.0 / sum_num).to(weight.dtype)
+            weight[neg_index] = (pos_num * 1.0 / sum_num).to(weight.dtype)
+            loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                log_p, target_t, weight, reduction="mean"
+            )
+            return self.loss_weight * loss
 
     _REGISTERED = True

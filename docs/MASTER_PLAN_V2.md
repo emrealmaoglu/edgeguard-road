@@ -58,7 +58,8 @@ semantic segmentation or OOD.
 ## Training and selection sequence
 
 ```text
-five-model smoke
+three-model canary/smoke/pilot
+→ two-model extension smoke
 → five-model short screening
 → early export-feasibility gate
 → top-three medium-budget training

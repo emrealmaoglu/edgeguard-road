@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +16,9 @@ import pytest
 import yaml
 
 from edgeguard.rescue.colab_data import (
+    _HashingProgressReader,
     _load_idd_shard_index,
+    _StallTimeout,
     copy_archive_to_local,
     create_dataset_bundle,
     initialize_drive_layout,
@@ -313,6 +318,44 @@ def test_bundle_receipt_tampering_is_rejected(tmp_path: Path) -> None:
         stage_dataset_bundles(plan, drive, tmp_path / "content", ("cityscapes",))
 
 
+def test_staging_survives_an_unrelated_dataset_config_edit(tmp_path: Path) -> None:
+    plan, drive = _fixture_plan(tmp_path)
+    prepared = drive / "EdgeGuard/datasets/cityscapes"
+    for relative in plan["datasets"]["cityscapes"]["required_paths"]:
+        directory = prepared / relative
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "fixture.bin").write_bytes(str(relative).encode())
+    create_dataset_bundle(plan, drive, "cityscapes")
+    # An edit to a completely different dataset's config (mirroring the real
+    # WildDash2/RailSem19 role commit that broke this) must not invalidate the
+    # already-built, still-correct cityscapes bundle.
+    plan["datasets"]["bdd100k"]["packages"].append(
+        {"filename": "unrelated_new_package.zip", "purpose": "unrelated edit"}
+    )
+    staged = stage_dataset_bundles(plan, drive, tmp_path / "content", ("cityscapes",))
+    assert staged["datasets"] == [
+        {
+            "dataset_id": "cityscapes",
+            "status": "staged_verified",
+            "bundle_profile": "canonical_v1:official",
+        }
+    ]
+
+
+def test_staging_rejects_when_the_datasets_own_required_paths_change(tmp_path: Path) -> None:
+    plan, drive = _fixture_plan(tmp_path)
+    prepared = drive / "EdgeGuard/datasets/cityscapes"
+    for relative in plan["datasets"]["cityscapes"]["required_paths"]:
+        (prepared / relative).mkdir(parents=True, exist_ok=True)
+    create_dataset_bundle(plan, drive, "cityscapes")
+    plan["datasets"]["cityscapes"]["required_paths"] = [
+        *plan["datasets"]["cityscapes"]["required_paths"],
+        "leftImg8bit/test",
+    ]
+    with pytest.raises(ValueError, match="bundle identity mismatch"):
+        stage_dataset_bundles(plan, drive, tmp_path / "content", ("cityscapes",))
+
+
 def test_stage_rejects_duplicate_dataset_ids(tmp_path: Path) -> None:
     plan, drive = _fixture_plan(tmp_path)
     with pytest.raises(ValueError, match="non-empty and unique"):
@@ -406,3 +449,59 @@ def test_kaggle_bdd_bundle_is_physically_separate_and_science_blocked(tmp_path: 
         allow_ineligible=True,
     )
     assert staged["datasets"][0]["bundle_profile"] == "canonical_v1:kaggle_mirror"
+
+
+class _StalledStream:
+    """A stream whose read() never returns in time, like a hung Drive FUSE mount."""
+
+    def read(self, size: int = -1) -> bytes:
+        time.sleep(2)
+        return b"unreachable"
+
+    def __enter__(self) -> _StalledStream:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+def test_hashing_reader_raises_on_a_stalled_read_instead_of_hanging() -> None:
+    reader = _HashingProgressReader(
+        _StalledStream(), label="fixture", phase="test", stall_timeout_seconds=1
+    )
+    started = time.monotonic()
+    with pytest.raises(_StallTimeout, match="Drive/FUSE hang"):
+        reader.read(1024)
+    assert time.monotonic() - started < 2
+
+
+def test_hashing_reader_stall_guard_does_not_disturb_normal_reads() -> None:
+    reader = _HashingProgressReader(
+        io.BytesIO(b"payload-bytes"), label="fixture", phase="test", stall_timeout_seconds=1
+    )
+    assert reader.read(1024) == b"payload-bytes"
+    assert reader.hexdigest() == hashlib.sha256(b"payload-bytes").hexdigest()
+
+
+def test_archive_copy_retries_past_a_stalled_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "drive/archive.zip"
+    source.parent.mkdir()
+    source.write_bytes(b"archive-payload")
+    destination = tmp_path / "content/archive.zip"
+    calls = 0
+    real_open = Path.open
+
+    def stalling_open(self: Path, *args: object, **kwargs: object) -> object:
+        nonlocal calls
+        if self == source:
+            calls += 1
+            if calls == 1:
+                return _StalledStream()
+        return real_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "open", stalling_open)
+    receipt = copy_archive_to_local(source, destination, attempts=3, stall_timeout_seconds=1)
+    assert receipt["attempts"] == 2
+    assert destination.read_bytes() == source.read_bytes()

@@ -30,7 +30,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def export_and_verify(args: argparse.Namespace) -> dict[str, Any]:
     """Perform static export, checker validation, equivalence, and CPU timing."""
-    if args.output.exists():
+    golden_input_path = args.output.with_suffix(".golden-input.npy")
+    golden_output_path = args.output.with_suffix(".golden-output.npy")
+    if args.output.exists() or golden_input_path.exists() or golden_output_path.exists():
         raise FileExistsError(f"refusing to overwrite ONNX artifact: {args.output}")
     if min(args.input_height, args.input_width, args.iterations) <= 0 or args.warmup < 0:
         raise ValueError("input size/iterations must be positive and warmup cannot be negative")
@@ -65,11 +67,15 @@ def export_and_verify(args: argparse.Namespace) -> dict[str, Any]:
                 decoded = decoded[indices[name]]
             return decoded
 
-    wrapper = NativeLogits(model).eval()
+    # ONNX Runtime evaluates this graph in FP32 on the CPU. Tracing and measuring the
+    # PyTorch reference on CUDA compared TF32 matmuls (10-bit mantissa, enabled for
+    # training throughput) against FP32, which put every screened model's worst logit
+    # delta at 2.3e-3..7.3e-3 and failed the 1e-4 parity gate on arithmetic precision
+    # rather than on export fidelity -- silently emptying the screening candidate table.
+    # Export and compare on the CPU so the gate measures what it claims to measure.
+    wrapper = NativeLogits(model).eval().to("cpu")
     torch.manual_seed(20260728)
-    tensor = torch.randn(
-        (1, 3, args.input_height, args.input_width), dtype=torch.float32, device=args.device
-    )
+    tensor = torch.randn((1, 3, args.input_height, args.input_width), dtype=torch.float32)
     with torch.no_grad():
         expected = wrapper(tensor).detach().cpu().numpy()
     if expected.ndim != 4 or expected.shape[1] != 19:
@@ -93,6 +99,18 @@ def export_and_verify(args: argparse.Namespace) -> dict[str, Any]:
     if expected.shape != actual.shape or not bool(np.isfinite(actual).all()):
         raise RuntimeError("ONNX output shape/finiteness check failed")
     difference = np.abs(expected.astype(np.float64) - actual.astype(np.float64))
+    # What Jetson consumes from this graph is the per-pixel class, so measure that
+    # directly instead of inferring it from a float tolerance. Measured 2026-08-14 on CPU:
+    # SegFormer-B0 and DDRNet-23-slim agree to 2.7e-6/6.9e-5, while PIDNet-S shows a
+    # 3.2e-3 worst-case logit delta against a 3.5e-5 mean -- a handful of interpolation
+    # boundary pixels, from its align_corners=True head, not a broken graph -- and all
+    # three assign identical labels to every pixel.
+    expected_labels = expected.argmax(axis=1)
+    actual_labels = actual.argmax(axis=1)
+    disagreeing = int((expected_labels != actual_labels).sum())
+    agreement = float((expected_labels == actual_labels).mean())
+    np.save(golden_input_path, feed["normalized_rgb"], allow_pickle=False)
+    np.save(golden_output_path, expected.astype(np.float32), allow_pickle=False)
     for _ in range(args.warmup):
         session.run(["native_logits"], feed)
     timings = []
@@ -107,6 +125,8 @@ def export_and_verify(args: argparse.Namespace) -> dict[str, Any]:
         "input_name": "normalized_rgb",
         "input_shape": list(tensor.shape),
         "input_contract": "RGB float32 normalized by ImageNet mean/std outside graph",
+        "model_load_device": str(args.device),
+        "parity_device": "cpu",
         "output_name": "native_logits",
         "output_shape": list(actual.shape),
         "class_count": int(actual.shape[1]),
@@ -116,7 +136,14 @@ def export_and_verify(args: argparse.Namespace) -> dict[str, Any]:
         "allclose_atol_1e_4_rtol_1e_4": bool(
             np.allclose(expected, actual, atol=1.0e-4, rtol=1.0e-4)
         ),
+        "argmax_agreement_ratio": agreement,
+        "disagreeing_pixel_count": disagreeing,
+        "prediction_equivalent": disagreeing == 0,
         "onnx_sha256": sha256_file(args.output),
+        "golden_input_sha256": sha256_file(golden_input_path),
+        "golden_output_sha256": sha256_file(golden_output_path),
+        "golden_input_file": golden_input_path.name,
+        "golden_output_file": golden_output_path.name,
         "checkpoint_sha256": sha256_file(args.checkpoint),
         "onnx_bytes": args.output.stat().st_size,
         "onnxruntime_cpu": {

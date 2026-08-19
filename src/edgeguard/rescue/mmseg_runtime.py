@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import shutil
 import sys
 import time
 import types
@@ -19,8 +20,16 @@ import numpy as np
 
 from edgeguard.calibration import apply_temperature, calibration_metrics, fit_temperature
 from edgeguard.evaluation.semantic import SemanticConfusionMatrix
-from edgeguard.rescue.colab_recovery import latest_checkpoint, restore_recovery_file
-from edgeguard.rescue.config import RescueConfig, model_by_name
+from edgeguard.rescue.colab_recovery import (
+    latest_checkpoint,
+    peek_recovery_metadata,
+    peek_recovery_receipt,
+    publish_recovery_file,
+    restore_recovery_file,
+    temporary_directory,
+    utc_now,
+)
+from edgeguard.rescue.config import ModelConfig, RescueConfig, model_by_name
 from edgeguard.rescue.dataset import (
     CITYSCAPES_CLASSES,
     discover_cityscapes,
@@ -100,7 +109,27 @@ def _imports() -> tuple[Any, Any, Any]:
     from edgeguard.rescue.mmseg_components import register_mmseg_components
 
     register_mmseg_components()
+    _force_cpu_device_if_requested(mmengine)
     return torch, mmengine, mmseg
+
+
+def _force_cpu_device_if_requested(mmengine: Any) -> bool:
+    """Honour `EDGEGUARD_FORCE_CPU=1` so the pipeline can be rehearsed off-GPU.
+
+    mmengine picks its device once at import time and `Runner` moves the model there
+    unconditionally, which on an Apple-silicon developer machine means MPS -- where
+    `adaptive_avg_pool2d` raises "input sizes must be divisible by output sizes" inside
+    several of these backbones. Colab never takes that branch (CUDA outranks MPS), so
+    rehearsing locally has to pin the device to CPU. `get_device()` reads this module
+    global on every call, so rebinding it before any `Runner` is built is sufficient.
+
+    Inert unless the variable is set, and set by nothing in the production path.
+    """
+    if os.environ.get("EDGEGUARD_FORCE_CPU") != "1":
+        return False
+    device_utils = __import__("mmengine.device.utils", fromlist=["DEVICE"])
+    device_utils.DEVICE = "cpu"  # type: ignore[attr-defined]
+    return True
 
 
 def _config_import() -> Any:
@@ -108,6 +137,266 @@ def _config_import() -> Any:
         return __import__("mmengine")
     except ModuleNotFoundError as error:
         raise RuntimeError("install MMEngine before resolving an MMSeg config") from error
+
+
+def resolve_auto_precision(precision: str, *, torch: Any) -> str:
+    """Resolve "auto" to the project's real training precision policy.
+
+    bf16 (same exponent range as fp32, so no overflow risk) is preferred over
+    fp16 whenever the device supports it; fp16 is only ever selected as a
+    fallback on hardware without bf16 support. Any code that probes/validates
+    "does this model survive mixed precision on this GPU" must resolve
+    "auto" through this same function instead of hardcoding a dtype, or the
+    probe can reject a model (e.g. on fp16 overflow in a wide multi-scale
+    module) that the real training run would never actually expose to that
+    dtype in the first place.
+    """
+    if precision != "auto":
+        return precision
+    if not torch.cuda.is_available():
+        return "fp32"
+    if bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)()):
+        return "bf16"
+    return "fp16"
+
+
+def resolve_model_optimizer_defaults(mmseg_root: Path, model: ModelConfig) -> dict[str, Any]:
+    """Return one model's own upstream-config optimizer as the training baseline.
+
+    Each of this project's five model configs already defines its own
+    optimizer, either inline or via an MMSeg `_base_/schedules/` include:
+    SegFormer-B0 uses AdamW at 6e-5, but Fast-SCNN (SGD, lr=0.12),
+    PIDNet-S (SGD, lr=0.01), DDRNet-23-Slim (SGD, lr=0.01), and BiSeNetV2
+    (SGD, lr=0.05) all train with SGD+momentum at learning rates one to
+    three orders of magnitude higher than SegFormer's. Read that baseline
+    from the real upstream config file instead of assuming one optimizer
+    family fits every architecture.
+    """
+    mmengine = _config_import()
+    upstream = mmseg_root / model.upstream_config
+    if not upstream.is_file():
+        raise FileNotFoundError(f"missing upstream MMSeg config: {upstream}")
+    cfg = mmengine.Config.fromfile(str(upstream))
+    optimizer = cfg.get("optim_wrapper", {}).get("optimizer") if "optim_wrapper" in cfg else None
+    if not isinstance(optimizer, dict) or "type" not in optimizer or "lr" not in optimizer:
+        raise ValueError(f"model {model.name} upstream config has no usable optimizer")
+    resolved: dict[str, Any] = {
+        "type": str(optimizer["type"]),
+        "learning_rate": float(optimizer["lr"]),
+        "weight_decay": float(optimizer.get("weight_decay", 0.0)),
+    }
+    if "momentum" in optimizer:
+        resolved["momentum"] = float(optimizer["momentum"])
+    return resolved
+
+
+def compute_run_identity(
+    protocol: RescueConfig,
+    *,
+    model_name: str,
+    stage_name: str,
+    mmseg_root: Path,
+    loss: str,
+    audit_report: Path | None,
+    split_manifest: Path | None,
+    manifests: Sequence[Path],
+    datasets: Sequence[str],
+    learning_rate: float | None,
+    weight_decay: float | None,
+    scheduler: str,
+    warmup_ratio: float,
+    initialization: str,
+    pretrained_manifest: Path | None,
+    precision: str,
+    max_steps: int,
+    scheduler_steps: int,
+    intentional_interrupt_optimizer_step: int | None,
+    project_commit: str | None,
+) -> dict[str, Any]:
+    """Compute the immutable per-run identity dict `train_model` would use for this
+    exact configuration, without running any training.
+
+    A Drive-published checkpoint is only ever reused when a freshly computed
+    `identity_sha256` matches the one recorded at publish time (see
+    `EdgeGuardRecoveryHook`/`peek_recovery_metadata`); this is the single source of
+    truth both `train_model` and any recovery-migration tooling must share, so it is
+    factored out rather than duplicated. `protocol` must already reflect the resolved
+    `device_batch`/`workers`/`gradient_accumulation` a real run would use (only
+    `effective_batch`/`workers` feed into the identity). `precision` must already be
+    resolved (not `"auto"`).
+    """
+    scientific_protocol = asdict(protocol)
+    scientific_protocol["device_batch"] = None
+    scientific_protocol["gradient_accumulation"] = None
+    model = model_by_name(protocol, model_name)
+    upstream = mmseg_root / model.upstream_config
+    native_optimizer = resolve_model_optimizer_defaults(mmseg_root, model)
+    return {
+        "schema_version": "1.0",
+        "model": model_name,
+        "stage": stage_name,
+        "loss": loss,
+        "protocol_sha256": sha256_payload(scientific_protocol),
+        "split_manifest_sha256": sha256_file(split_manifest) if split_manifest else None,
+        "dataset_manifest_sha256s": [sha256_file(path) for path in manifests],
+        "datasets": list(datasets),
+        "optimizer_type": native_optimizer["type"],
+        "learning_rate": (
+            native_optimizer["learning_rate"] if learning_rate is None else learning_rate
+        ),
+        "weight_decay": (
+            native_optimizer["weight_decay"] if weight_decay is None else weight_decay
+        ),
+        "scheduler": scheduler,
+        "warmup_ratio": warmup_ratio,
+        "initialization": initialization,
+        "pretrained_manifest_sha256": (
+            sha256_file(pretrained_manifest) if pretrained_manifest else None
+        ),
+        "upstream_config_sha256": sha256_file(upstream),
+        "effective_batch": protocol.effective_batch,
+        "workers": protocol.workers,
+        "precision": precision,
+        "max_steps": max_steps,
+        "scheduler_steps": scheduler_steps,
+        "intentional_interrupt_optimizer_step": intentional_interrupt_optimizer_step,
+        "project_commit": project_commit,
+        "class_weights_sha256": (
+            sha256_file(audit_report) if loss == "median_frequency" and audit_report else None
+        ),
+    }
+
+
+def migrate_recovery_identity(
+    *,
+    recovery_root: Path,
+    campaign_id: str,
+    new_project_commit: str,
+    protocol: RescueConfig,
+    mmseg_root: Path,
+    manifests: Sequence[Path],
+    datasets: Sequence[str],
+    model_name: str,
+    stage_name: str,
+    loss: str,
+    max_steps: int,
+    precision: str,
+    execute: bool = True,
+) -> dict[str, Any]:
+    """Re-publish one model's real Drive checkpoint under `new_project_commit`, but
+    only after verifying that project_commit is the only thing that changed since it
+    was published.
+
+    A commit that only touches orchestration code (which models a phase loops over,
+    for example) still changes `project_commit`, and `project_commit` is one of the
+    fields baked into a run's immutable `identity_sha256` -- so the resume check would
+    otherwise treat every real, already-completed checkpoint as belonging to "a
+    different immutable run" and retrain it from scratch. This recomputes the identity
+    under the commit actually recorded on the existing Drive receipt and asserts it
+    matches the real recorded `identity_sha256` (proof the reconstruction is faithful),
+    then recomputes it under `new_project_commit` and asserts `project_commit` is the
+    ONLY field that differs (proof nothing training-relevant changed), before
+    republishing the same checkpoint bytes. Refuses outright -- never retrains, never
+    fabricates a checkpoint's provenance -- if either check fails, or if there is
+    nothing to migrate (no existing pointer, or it already matches the new commit).
+    """
+    artifact_id = f"{stage_name}-{model_name}-{loss}".replace("_", "-")
+    receipt = peek_recovery_receipt(recovery_root, artifact_id=artifact_id)
+    if receipt is None:
+        return {"model": model_name, "artifact_id": artifact_id, "status": "no_existing_pointer"}
+    old_project_commit = str(receipt.get("project_commit", ""))
+    if old_project_commit == new_project_commit:
+        return {"model": model_name, "artifact_id": artifact_id, "status": "already_current"}
+    recorded_identity_sha256 = receipt.get("metadata", {}).get("identity_sha256")
+
+    def _identity(commit: str) -> dict[str, Any]:
+        return compute_run_identity(
+            protocol,
+            model_name=model_name,
+            stage_name=stage_name,
+            mmseg_root=mmseg_root,
+            loss=loss,
+            audit_report=None,
+            split_manifest=None,
+            manifests=manifests,
+            datasets=datasets,
+            learning_rate=None,
+            weight_decay=None,
+            scheduler="poly",
+            warmup_ratio=0.03,
+            initialization="random",
+            pretrained_manifest=None,
+            precision=precision,
+            max_steps=max_steps,
+            scheduler_steps=max_steps,
+            intentional_interrupt_optimizer_step=None,
+            project_commit=commit,
+        )
+
+    old_identity = _identity(old_project_commit)
+    old_identity_sha256 = sha256_payload(old_identity)
+    if old_identity_sha256 != recorded_identity_sha256:
+        return {
+            "model": model_name,
+            "artifact_id": artifact_id,
+            "status": "verification_failed",
+            "old_project_commit": old_project_commit,
+            "recorded_identity_sha256": recorded_identity_sha256,
+            "recomputed_old_identity_sha256": old_identity_sha256,
+            "recomputed_old_identity": old_identity,
+            "reason": (
+                "recomputed old-commit identity does not match the real recorded one -- "
+                "something besides project_commit differs; refusing to migrate. The "
+                "recorded receipt only stores identity_sha256, not the original identity "
+                "dict, so this failure cannot say which field is wrong -- only that one is. "
+                "recomputed_old_identity is included so a future session can compare it "
+                "field-by-field against a known-good identity (e.g. one dumped from a "
+                "successful migration or a fresh train_model run) without re-deriving it."
+            ),
+        }
+    new_identity = _identity(new_project_commit)
+    new_identity_sha256 = sha256_payload(new_identity)
+    diff_keys = sorted(key for key in old_identity if old_identity[key] != new_identity[key])
+    if diff_keys != ["project_commit"]:
+        return {
+            "model": model_name,
+            "artifact_id": artifact_id,
+            "status": "unexpected_diff",
+            "old_project_commit": old_project_commit,
+            "diff_keys": diff_keys,
+            "reason": "more than project_commit differs between commits; refusing to migrate",
+        }
+    result: dict[str, Any] = {
+        "model": model_name,
+        "artifact_id": artifact_id,
+        "status": "verified_dry_run",
+        "old_project_commit": old_project_commit,
+        "old_identity_sha256": old_identity_sha256,
+        "new_identity_sha256": new_identity_sha256,
+    }
+    if not execute:
+        return result
+    tmp = temporary_directory(recovery_root.parent)
+    try:
+        destination = tmp / f"{artifact_id}.pth"
+        restore_recovery_file(recovery_root, artifact_id=artifact_id, destination=destination)
+        published = publish_recovery_file(
+            destination,
+            recovery_root,
+            artifact_id=artifact_id,
+            campaign_id=campaign_id,
+            project_commit=new_project_commit,
+            metadata={
+                "identity_sha256": new_identity_sha256,
+                "migrated_from_project_commit": old_project_commit,
+                "migrated_from_identity_sha256": old_identity_sha256,
+            },
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    result["status"] = "migrated"
+    result["receipt_generation"] = published["generation"]
+    return result
 
 
 def _strip_pretrained(value: Any) -> None:
@@ -162,11 +451,17 @@ def _verified_pretrained_checkpoint(manifest_path: Path, model_name: str) -> Pat
     return checkpoint
 
 
+# Loss types whose upstream MMSeg implementation accepts a `class_weight` argument.
+# BoundaryLoss is deliberately excluded: it has no class_weight parameter, so
+# leaving it untouched is correct rather than an omission.
+_WEIGHTABLE_LOSS_TYPES = {"CrossEntropyLoss", "OhemCrossEntropy"}
+
+
 def _set_num_classes_and_loss(value: Any, *, class_weights: list[float] | None) -> None:
     if isinstance(value, dict):
         if "num_classes" in value:
             value["num_classes"] = 19
-        if value.get("type") == "CrossEntropyLoss":
+        if value.get("type") in _WEIGHTABLE_LOSS_TYPES:
             value["class_weight"] = class_weights
         for child in value.values():
             _set_num_classes_and_loss(child, class_weights=class_weights)
@@ -213,7 +508,16 @@ def validate_scientific_split(dataset_root: Path, manifest_path: Path) -> dict[s
     return payload
 
 
-def _train_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
+# Model families whose upstream MMSeg decode head reads an extra pipeline output
+# unconditionally in its loss computation. PIDHead._stack_batch_gt() requires
+# gt_edge_map, which only GenerateEdge produces; without it every PIDNet-S
+# optimizer step raises AttributeError on the first training iteration.
+_MODEL_PIPELINE_EXTRA_STEPS: dict[str, list[dict[str, Any]]] = {
+    "pidnet_s": [{"type": "GenerateEdge", "edge_width": 4}],
+}
+
+
+def _train_pipeline(config: RescueConfig, *, model_name: str) -> list[dict[str, Any]]:
     return [
         {"type": "LoadImageFromFile"},
         {"type": "LoadAnnotations", "reduce_zero_label": False},
@@ -226,6 +530,7 @@ def _train_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
         {"type": "RandomCrop", "crop_size": config.crop_size, "cat_max_ratio": 0.75},
         {"type": "RandomFlip", "prob": 0.5},
         {"type": "PhotoMetricDistortion"},
+        *_MODEL_PIPELINE_EXTRA_STEPS.get(model_name, []),
         {"type": "PackSegInputs"},
     ]
 
@@ -241,9 +546,8 @@ def _evaluation_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
         {"type": "LoadAnnotations", "reduce_zero_label": False},
         {
             "type": "Pad",
-            "size": config.crop_size,
-            "pad_val": 0,
-            "seg_pad_val": config.ignore_index,
+            "size": (config.crop_size[1], config.crop_size[0]),
+            "pad_val": {"img": 0, "seg": config.ignore_index},
         },
         {"type": "PackSegInputs"},
     ]
@@ -258,7 +562,11 @@ def _inference_pipeline(config: RescueConfig) -> list[dict[str, Any]]:
             "scale": (config.crop_size[1], config.crop_size[0]),
             "keep_ratio": True,
         },
-        {"type": "Pad", "size": config.crop_size, "pad_val": 0},
+        {
+            "type": "Pad",
+            "size": (config.crop_size[1], config.crop_size[0]),
+            "pad_val": {"img": 0},
+        },
         {"type": "PackSegInputs"},
     ]
 
@@ -267,10 +575,17 @@ def _cityscapes_dataset(
     dataset_root: Path,
     config: RescueConfig,
     *,
+    model_name: str | None = None,
     ann_file: Path | None,
     split: str,
     training: bool,
 ) -> dict[str, Any]:
+    if training:
+        if model_name is None:
+            raise ValueError("a training pipeline requires model_name")
+        pipeline = _train_pipeline(config, model_name=model_name)
+    else:
+        pipeline = _evaluation_pipeline(config)
     return {
         "type": "CityscapesDataset",
         "data_root": str(dataset_root),
@@ -279,7 +594,7 @@ def _cityscapes_dataset(
             "seg_map_path": f"gtFine/{split}",
         },
         "ann_file": str(ann_file) if ann_file is not None else "",
-        "pipeline": _train_pipeline(config) if training else _evaluation_pipeline(config),
+        "pipeline": pipeline,
     }
 
 
@@ -332,16 +647,23 @@ def _manifest_dataset(
     manifest_path: Path,
     config: RescueConfig,
     *,
+    model_name: str | None = None,
     role: str,
     training: bool,
 ) -> dict[str, Any]:
     """Build an explicit-pair dataset without relying on vendor filename inference."""
     validate_dataset_manifest(manifest_path)
+    if training:
+        if model_name is None:
+            raise ValueError("a training pipeline requires model_name")
+        pipeline = _train_pipeline(config, model_name=model_name)
+    else:
+        pipeline = _evaluation_pipeline(config)
     return {
         "type": "EdgeGuardManifestDataset",
         "manifest_path": str(manifest_path),
         "role": role,
-        "pipeline": _train_pipeline(config) if training else _evaluation_pipeline(config),
+        "pipeline": pipeline,
     }
 
 
@@ -349,11 +671,15 @@ def _manifest_dataloader(
     manifests: Sequence[Path],
     config: RescueConfig,
     *,
+    model_name: str | None = None,
     role: str,
     training: bool,
 ) -> dict[str, Any]:
     """Build a single- or multi-domain loader with uniform domain probability."""
-    datasets = [_manifest_dataset(path, config, role=role, training=training) for path in manifests]
+    datasets = [
+        _manifest_dataset(path, config, model_name=model_name, role=role, training=training)
+        for path in manifests
+    ]
     sampler: dict[str, Any]
     if len(datasets) == 1:
         dataset: dict[str, Any] = datasets[0]
@@ -436,6 +762,7 @@ def build_training_config(
     campaign_id: str | None = None,
     project_commit: str | None = None,
     identity_sha256: str | None = None,
+    intentional_interrupt_optimizer_step: int | None = None,
 ) -> Any:
     """Resolve one standard MMSeg Runner config with no custom loop or hook."""
     mmengine = _config_import()
@@ -491,10 +818,10 @@ def build_training_config(
     cfg.load_from = None
     if manifests:
         cfg.train_dataloader = _manifest_dataloader(
-            manifests, protocol, role="train_fit", training=True
+            manifests, protocol, model_name=model_name, role="train_fit", training=True
         )
         cfg.val_dataloader = _manifest_dataloader(
-            manifests, protocol, role="train_select", training=False
+            manifests, protocol, model_name=model_name, role="train_select", training=False
         )
     else:
         if dataset_root is None or split_manifest is None:
@@ -505,7 +832,12 @@ def build_training_config(
         materialize_role_file(split_manifest, "train_select", select_file)
         cfg.train_dataloader = _dataloader(
             _cityscapes_dataset(
-                dataset_root, protocol, ann_file=train_file, split="train", training=True
+                dataset_root,
+                protocol,
+                model_name=model_name,
+                ann_file=train_file,
+                split="train",
+                training=True,
             ),
             protocol,
             training=True,
@@ -513,7 +845,12 @@ def build_training_config(
         )
         cfg.val_dataloader = _dataloader(
             _cityscapes_dataset(
-                dataset_root, protocol, ann_file=select_file, split="train", training=False
+                dataset_root,
+                protocol,
+                model_name=model_name,
+                ann_file=select_file,
+                split="train",
+                training=False,
             ),
             protocol,
             training=False,
@@ -541,22 +878,32 @@ def build_training_config(
         "val_interval": validation_interval,
     }
     scheduler_end = scheduler_iterations
-    resolved_lr = protocol.learning_rate if learning_rate is None else learning_rate
-    resolved_weight_decay = protocol.weight_decay if weight_decay is None else weight_decay
+    native_optimizer = resolve_model_optimizer_defaults(mmseg_root, model)
+    resolved_lr = native_optimizer["learning_rate"] if learning_rate is None else learning_rate
+    resolved_weight_decay = (
+        native_optimizer["weight_decay"] if weight_decay is None else weight_decay
+    )
     if resolved_lr <= 0 or resolved_weight_decay < 0:
         raise ValueError("optimizer overrides must be positive")
     if precision not in {"fp32", "fp16", "bf16"}:
         raise ValueError("precision must be fp32, fp16, or bf16")
+    optimizer_cfg: dict[str, Any] = {
+        "type": native_optimizer["type"],
+        "lr": resolved_lr,
+        "weight_decay": resolved_weight_decay,
+    }
+    if "momentum" in native_optimizer:
+        optimizer_cfg["momentum"] = native_optimizer["momentum"]
     cfg.optim_wrapper = {
         "type": "OptimWrapper" if precision == "fp32" else "AmpOptimWrapper",
-        "optimizer": {
-            "type": "AdamW",
-            "lr": resolved_lr,
-            "weight_decay": resolved_weight_decay,
-        },
+        "optimizer": optimizer_cfg,
         "accumulative_counts": protocol.gradient_accumulation,
         "clip_grad": {
-            "max_norm": float("inf"),
+            # Effectively unclipped: error_if_nonfinite is the real safety net (raises on
+            # NaN/Inf gradients). A literal float("inf") here would dump-then-reload as the
+            # bare token `inf` via mmengine.Config.dump()/fromfile()'s eval()-based .py
+            # round-trip, which is not a valid Python literal and crashes on reload.
+            "max_norm": 1e9,
             "norm_type": 2.0,
             "error_if_nonfinite": True,
         },
@@ -611,8 +958,17 @@ def build_training_config(
             "status_path": str(recovery_root.parents[1] / "state/status.json"),
             "optimizer_interval": 500,
             "maximum_seconds": 600,
+            "intentional_interrupt_optimizer_step": intentional_interrupt_optimizer_step,
         }
         cfg.custom_hooks = [*list(cfg.get("custom_hooks", [])), recovery_hook]
+    cfg.custom_hooks = [
+        *list(cfg.get("custom_hooks", [])),
+        {
+            "type": "EdgeGuardMetricsHistoryHook",
+            "accumulation": protocol.gradient_accumulation,
+            "optimizer_interval": 50,
+        },
+    ]
     cfg.default_hooks.pop("visualization", None)
     cfg.visualizer = {
         "_scope_": "mmengine",
@@ -679,9 +1035,18 @@ def train_model(
     recovery_root: Path | None = None,
     campaign_id: str | None = None,
     project_commit: str | None = None,
+    crop_size_override: tuple[int, int] | None = None,
+    intentional_interrupt_optimizer_step: int | None = None,
 ) -> dict[str, Any]:
     """Train through the stock MMEngine Runner and record only measured evidence."""
     torch, mmengine, mmseg = _imports()
+    if crop_size_override is not None:
+        if len(crop_size_override) != 2 or min(crop_size_override) <= 0:
+            raise ValueError("crop override must contain two positive integers")
+        protocol = replace(protocol, crop_size=crop_size_override)
+    scientific_protocol = asdict(protocol)
+    scientific_protocol["device_batch"] = None
+    scientific_protocol["gradient_accumulation"] = None
     resolved_device_batch = protocol.device_batch if device_batch is None else device_batch
     if resolved_device_batch <= 0 or protocol.effective_batch % resolved_device_batch:
         raise ValueError("device batch must be a positive divisor of frozen effective batch")
@@ -694,13 +1059,19 @@ def train_model(
         gradient_accumulation=protocol.effective_batch // resolved_device_batch,
         workers=resolved_workers,
     )
-    if precision == "auto":
-        if not torch.cuda.is_available():
-            precision = "fp32"
-        elif bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)()):
-            precision = "bf16"
-        else:
-            precision = "fp16"
+    stage = protocol.stages[stage_name]
+    assert stage.max_steps is not None
+    resolved_max_steps = stage.max_steps if max_steps_override is None else max_steps_override
+    resolved_scheduler_steps = (
+        resolved_max_steps if scheduler_steps_override is None else scheduler_steps_override
+    )
+    if resolved_max_steps <= 0 or resolved_scheduler_steps < resolved_max_steps:
+        raise ValueError("step overrides must be positive and scheduler horizon cannot be shorter")
+    if intentional_interrupt_optimizer_step is not None and not (
+        0 < intentional_interrupt_optimizer_step < resolved_max_steps
+    ):
+        raise ValueError("intentional interruption must be inside the optimizer-step budget")
+    precision = resolve_auto_precision(precision, torch=torch)
     if precision not in {"fp32", "fp16", "bf16"}:
         raise ValueError("precision must be auto, fp32, fp16, or bf16")
     if precision == "bf16" and not bool(
@@ -743,36 +1114,28 @@ def train_model(
     if work_dir.exists() and any(work_dir.iterdir()) and not resume:
         raise FileExistsError(f"refusing non-empty run directory without --resume: {work_dir}")
     work_dir.mkdir(parents=True, exist_ok=True)
-    model = model_by_name(protocol, model_name)
-    upstream = mmseg_root / model.upstream_config
-    identity = {
-        "schema_version": "1.0",
-        "model": model_name,
-        "stage": stage_name,
-        "loss": loss,
-        "protocol_sha256": sha256_payload(asdict(protocol)),
-        "split_manifest_sha256": sha256_file(split_manifest) if split_manifest else None,
-        "dataset_manifest_sha256s": [sha256_file(path) for path in manifests],
-        "datasets": datasets,
-        "learning_rate": protocol.learning_rate if learning_rate is None else learning_rate,
-        "weight_decay": protocol.weight_decay if weight_decay is None else weight_decay,
-        "scheduler": scheduler,
-        "warmup_ratio": warmup_ratio,
-        "initialization": initialization,
-        "pretrained_manifest_sha256": (
-            sha256_file(pretrained_manifest) if pretrained_manifest else None
-        ),
-        "upstream_config_sha256": sha256_file(upstream),
-        "device_batch": protocol.device_batch,
-        "gradient_accumulation": protocol.gradient_accumulation,
-        "effective_batch": protocol.effective_batch,
-        "workers": protocol.workers,
-        "precision": precision,
-        "project_commit": project_commit,
-        "class_weights_sha256": (
-            sha256_file(audit_report) if loss == "median_frequency" and audit_report else None
-        ),
-    }
+    identity = compute_run_identity(
+        protocol,
+        model_name=model_name,
+        stage_name=stage_name,
+        mmseg_root=mmseg_root,
+        loss=loss,
+        audit_report=audit_report,
+        split_manifest=split_manifest,
+        manifests=manifests,
+        datasets=datasets,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        scheduler=scheduler,
+        warmup_ratio=warmup_ratio,
+        initialization=initialization,
+        pretrained_manifest=pretrained_manifest,
+        precision=precision,
+        max_steps=resolved_max_steps,
+        scheduler_steps=resolved_scheduler_steps,
+        intentional_interrupt_optimizer_step=intentional_interrupt_optimizer_step,
+        project_commit=project_commit,
+    )
     identity_path = work_dir / "run_identity.json"
     identity_sha256 = sha256_payload(identity)
     recovery_artifact_id = f"{stage_name}-{model_name}-{suffix}".replace("_", "-")
@@ -784,18 +1147,40 @@ def train_model(
         except FileNotFoundError:
             needs_recovery_checkpoint = True
     if needs_recovery_checkpoint and recovery_root is not None:
+        speculative_auto_resume = not identity_path.is_file()
         if not identity_path.is_file():
             identity_path.write_text(canonical_json(identity) + "\n", encoding="utf-8")
-        restored = restore_recovery_file(
-            recovery_root,
-            artifact_id=recovery_artifact_id,
-            destination=work_dir / "recovered.pth",
+        pointer_metadata = peek_recovery_metadata(recovery_root, artifact_id=recovery_artifact_id)
+        stale_drive_checkpoint = (
+            pointer_metadata is not None
+            and pointer_metadata.get("identity_sha256") != identity_sha256
         )
-        metadata = restored.get("metadata", {})
-        if metadata.get("identity_sha256") != identity_sha256:
+        if stale_drive_checkpoint and not speculative_auto_resume:
             raise ValueError("Drive recovery checkpoint belongs to a different immutable run")
-        (work_dir / "last_checkpoint").write_text("recovered.pth\n", encoding="utf-8")
-        restored_from_drive = True
+        if pointer_metadata is not None and not stale_drive_checkpoint:
+            restore_recovery_file(
+                recovery_root,
+                artifact_id=recovery_artifact_id,
+                destination=work_dir / "recovered.pth",
+            )
+            recovered_checkpoint = work_dir / "recovered.pth"
+            (work_dir / "last_checkpoint").write_text(f"{recovered_checkpoint}\n", encoding="utf-8")
+            restored_from_drive = True
+        elif pointer_metadata is not None:
+            (work_dir / "stale_recovery_skipped.json").write_text(
+                canonical_json(
+                    {
+                        "schema_version": "1.0",
+                        "record_type": "edgeguard_stale_recovery_skip",
+                        "artifact_id": recovery_artifact_id,
+                        "expected_identity_sha256": identity_sha256,
+                        "found_identity_sha256": pointer_metadata.get("identity_sha256"),
+                        "detected_at": utc_now(),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
     if resume:
         if not identity_path.is_file():
             raise FileNotFoundError("resume requires an existing run_identity.json")
@@ -830,6 +1215,7 @@ def train_model(
         campaign_id=campaign_id,
         project_commit=project_commit,
         identity_sha256=identity_sha256,
+        intentional_interrupt_optimizer_step=intentional_interrupt_optimizer_step,
     )
     resolved_path = work_dir / "resolved.py"
     cfg.dump(str(resolved_path))
@@ -939,15 +1325,84 @@ def _evaluation_dataset(
     )
 
 
+def load_evaluation_weights(model: Any, checkpoint: Path) -> int:
+    """Load trained weights into an evaluation model and prove they actually landed.
+
+    `Runner.from_cfg()` only *builds* the network. mmengine consumes `cfg.load_from`
+    inside `Runner.train()`/`val()`/`test()` (`runner.py:1765/1798/1821`), and this
+    evaluation calls none of them -- it drives `runner.model` directly so it can keep the
+    raw logits for calibration. Without this explicit load the model carries PyTorch's
+    default random initialisation, so the metrics describe an untrained network: the
+    2026-08-14 screening run reported 35.48 mIoU from its own validation loop and 1.93
+    mIoU from the evaluation record built off the very same `iter_2500.pth`.
+
+    Returns the number of checkpoint tensors verified byte-for-byte against the model, and
+    raises if any of them failed to land -- a silent `strict=False` no-op would otherwise
+    reproduce exactly the failure this function exists to prevent.
+    """
+    torch = __import__("torch")
+    checkpoints = __import__("mmengine.runner", fromlist=["CheckpointLoader", "load_checkpoint"])
+    checkpoints.load_checkpoint(model, str(checkpoint), map_location="cpu")
+    # Re-read through mmengine's own loader rather than `torch.load`, whose `weights_only`
+    # default flipped in torch 2.6 and would otherwise behave differently here than in the
+    # load above.
+    payload = checkpoints.CheckpointLoader.load_checkpoint(str(checkpoint), map_location="cpu")
+    state = payload.get("state_dict", payload) if isinstance(payload, dict) else payload
+    if not isinstance(state, dict) or not state:
+        raise RuntimeError(f"evaluation checkpoint carries no state dict: {checkpoint}")
+    held = model.state_dict()
+    absent: list[str] = []
+    differing: list[str] = []
+    verified = 0
+    for raw_name, tensor in state.items():
+        if not isinstance(tensor, torch.Tensor) or not tensor.is_floating_point():
+            continue
+        # mmengine's loader strips a leading "module." (distributed wrapper) prefix.
+        name = (
+            str(raw_name)[len("module.") :]
+            if str(raw_name).startswith("module.")
+            else str(raw_name)
+        )
+        current = held.get(name)
+        if current is None or tuple(current.shape) != tuple(tensor.shape):
+            absent.append(name)
+        elif torch.equal(current.detach().cpu(), tensor.cpu()):
+            verified += 1
+        else:
+            differing.append(name)
+    if absent or differing:
+        raise RuntimeError(
+            f"evaluation checkpoint did not land in the model: {len(absent)} tensors have no "
+            f"matching parameter and {len(differing)} kept a different value "
+            f"(absent={absent[:3]}, differing={differing[:3]}). Metrics measured from this "
+            "model would describe untrained weights, not the checkpoint."
+        )
+    if verified == 0:
+        raise RuntimeError(f"evaluation checkpoint holds no float tensors to verify: {checkpoint}")
+    return verified
+
+
 def _collect_reporting_evidence(
-    runner: Any, *, max_pixels: int, temperature: float = 1.0
-) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any], list[dict[str, Any]]]:
+    runner: Any,
+    *,
+    max_pixels: int,
+    temperature: float = 1.0,
+    collect_frame_uncertainty: bool = True,
+) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any], list[dict[str, Any]] | None]:
     torch = __import__("torch")
     logits_parts: list[np.ndarray] = []
     target_parts: list[np.ndarray] = []
     collected = 0
     confusion = SemanticConfusionMatrix()
-    frame_summaries: list[dict[str, Any]] = []
+    frame_summaries: list[dict[str, Any]] | None = [] if collect_frame_uncertainty else None
+    # Pulling the full 19-channel logit volume to host memory and running
+    # `uncertainty_maps` over it in float64 costs roughly ten passes across ten million
+    # elements per image. Measured on the real L4 screening run that was ~0.42 s/image --
+    # about 85% of the evaluation wall clock -- and it produced `frame_uncertainty.json`,
+    # which no reporting, selection, HPO or thesis-bundle code reads. Skip the transfer
+    # entirely when neither the frame summaries nor a reliability sample is wanted; the
+    # shape still comes from the tensor, so the confusion matrix is computed identically.
+    needs_logit_array = collect_frame_uncertainty or max_pixels > 0
     runner.model.eval()
     for data_batch in runner.test_dataloader:
         with torch.no_grad():
@@ -955,28 +1410,31 @@ def _collect_reporting_evidence(
         for output in outputs:
             if not hasattr(output, "seg_logits") or not hasattr(output, "gt_sem_seg"):
                 raise RuntimeError("MMSeg output must preserve seg_logits and gt_sem_seg")
-            logits = output.seg_logits.data.detach().cpu().numpy()
-            maps = uncertainty_maps(logits / temperature)
-            frame_summary: dict[str, Any] = dict(
-                frame_uncertainty_summary(
-                    maps["maximum_softmax_probability"],
-                    maps["normalized_entropy"],
-                    energy=maps["energy"],
+            logits = output.seg_logits.data.detach().cpu().numpy() if needs_logit_array else None
+            logits_shape = tuple(output.seg_logits.data.shape[1:])
+            if frame_summaries is not None:
+                assert logits is not None
+                maps = uncertainty_maps(logits / temperature)
+                frame_summary: dict[str, Any] = dict(
+                    frame_uncertainty_summary(
+                        maps["maximum_softmax_probability"],
+                        maps["normalized_entropy"],
+                        energy=maps["energy"],
+                    )
                 )
-            )
-            frame_summary["mean_maximum_logit"] = float(np.mean(maps["maximum_logit"]))
-            frame_summary["negative_mean_maximum_logit"] = -float(
-                frame_summary["mean_maximum_logit"]
-            )
-            metadata = getattr(output, "metainfo", {})
-            image_path = metadata.get("img_path") if isinstance(metadata, dict) else None
-            frame_summary["sample_id"] = Path(str(image_path)).stem if image_path else None
-            frame_summaries.append(frame_summary)
+                frame_summary["mean_maximum_logit"] = float(np.mean(maps["maximum_logit"]))
+                frame_summary["negative_mean_maximum_logit"] = -float(
+                    frame_summary["mean_maximum_logit"]
+                )
+                metadata = getattr(output, "metainfo", {})
+                image_path = metadata.get("img_path") if isinstance(metadata, dict) else None
+                frame_summary["sample_id"] = Path(str(image_path)).stem if image_path else None
+                frame_summaries.append(frame_summary)
             target = output.gt_sem_seg.data.detach().cpu().numpy().squeeze(0)
-            if logits.shape[1:] != target.shape:
+            if logits_shape != target.shape:
                 resized = torch.nn.functional.interpolate(
                     torch.from_numpy(target[None, None].astype(np.float32)),
-                    size=logits.shape[1:],
+                    size=logits_shape,
                     mode="nearest",
                 )
                 target = resized[0, 0].numpy().astype(np.int64)
@@ -989,11 +1447,11 @@ def _collect_reporting_evidence(
                 )
                 prediction = resized_prediction[0, 0].numpy().astype(np.int64)
             confusion.update(prediction.astype(np.int64), target.astype(np.int64))
+            remaining = max_pixels - collected
+            if remaining <= 0 or logits is None:
+                continue
             flat_logits = logits.reshape(logits.shape[0], -1)
             flat_target = target.reshape(-1)
-            remaining = max_pixels - collected
-            if remaining <= 0:
-                continue
             stride = max(1, int(np.ceil(flat_target.size / remaining)))
             indices = np.arange(0, flat_target.size, stride, dtype=np.int64)[:remaining]
             logits_parts.append(flat_logits[:, indices])
@@ -1030,6 +1488,7 @@ def evaluate_model(
     sealed_release: Path | None = None,
     calibration_evidence_output: Path | None = None,
     collect_classwise: bool = True,
+    collect_frame_uncertainty: bool = True,
 ) -> dict[str, Any]:
     """Collect accuracy, classwise IoU, uncertainty and calibration in one inference pass."""
     _, mmengine, _ = _imports()
@@ -1060,6 +1519,7 @@ def evaluate_model(
     cfg.test_evaluator = {"type": "IoUMetric", "iou_metrics": ["mIoU"]}
     cfg.test_cfg = {"type": "TestLoop"}
     runner = mmengine.runner.Runner.from_cfg(cfg)
+    verified_weight_tensors = load_evaluation_weights(runner.model, checkpoint)
     needs_logits = (
         fit_calibrator or temperature_file is not None or calibration_evidence_output is not None
     )
@@ -1074,6 +1534,7 @@ def evaluate_model(
         runner,
         max_pixels=max_reliability_pixels if needs_logits else 0,
         temperature=reporting_temperature,
+        collect_frame_uncertainty=collect_frame_uncertainty,
     )
     metrics = {
         "mIoU": classwise["mean_iou"],
@@ -1159,6 +1620,7 @@ def evaluate_model(
         "condition": condition,
         "model": cfg.get("edgeguard_metadata", {}).get("model"),
         "checkpoint_sha256": sha256_file(checkpoint),
+        "verified_weight_tensor_count": verified_weight_tensors,
         "metrics": metrics,
         "classwise_metrics": classwise,
         "rare_class_mIoU": rare_class_miou,
@@ -1179,6 +1641,9 @@ def evaluate_model(
         "checkpoint_sha256": sha256_file(checkpoint),
         "temperature": reporting_temperature,
         "frames": frame_summaries,
+        # `null` frames mean "not collected", which is a different claim from an empty
+        # list ("collected, and there were none"). Say which one this is.
+        "frame_collection_skipped": frame_summaries is None,
         "pixel_anomaly_segmentation": False,
     }
     (output_dir / "frame_uncertainty.json").write_text(

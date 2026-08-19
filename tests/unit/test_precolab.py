@@ -18,17 +18,13 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 def _repository(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     repository = tmp_path / "repository"
-    notebook_root = repository / "notebooks/colab"
+    notebook_root = repository / "notebooks"
     notebook_root.mkdir(parents=True)
     for name in CANONICAL_NOTEBOOKS:
         _write_json(
             notebook_root / name,
             {"cells": [{"cell_type": "markdown", "source": ["# Canonical\n"]}]},
         )
-    _write_json(
-        notebook_root / "historical.ipynb",
-        {"cells": [{"cell_type": "markdown", "source": [f"# {precolab.DEPRECATED_MARKER}\n"]}]},
-    )
     _write_json(
         repository / "reports/local-final-audit/project_gap_matrix.json",
         {
@@ -111,7 +107,7 @@ def test_precolab_readiness_rejects_an_extra_active_notebook(
 ) -> None:
     repository, closure, equivalence, deployment = _repository(tmp_path)
     _write_json(
-        repository / "notebooks/colab/obsolete-active.ipynb",
+        repository / "notebooks/obsolete-active.ipynb",
         {"cells": [{"cell_type": "markdown", "source": ["# Old workflow\n"]}]},
     )
     monkeypatch.setattr(
